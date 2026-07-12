@@ -1,0 +1,17 @@
+# Dependabot 設定
+#
+# npm 依存の更新 PR を毎週自動作成する。
+# 方針: lockfile（package-lock.json）はコミット対象であり、Dependabot は
+#       それを前提に更新 PR を出す。CI（.github/workflows/ci.yml）が
+#       型・lint・テスト・ビルド・audit を検証するゲートとして働く。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    # 1 度に開く更新 PR の上限（レビュー負荷の抑制）。
+    open-pull-requests-limit: 10
+    # PR タイトルに付与する接頭辞（コミット履歴の見通し向上）。
+    commit-message:
+      prefix: "deps"

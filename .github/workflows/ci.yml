@@ -1,0 +1,82 @@
+# CI パイプライン
+#
+# 目的: main への push / PR で「型・lint・テスト・ビルド・脆弱性監査」を一気通貫で検証する。
+# 方針（リポジトリのサプライチェーン規律に従う）:
+#   - 依存解決は必ず `npm ci`（lockfile 厳守。非決定的なインストールは避ける）。
+#   - `.npmrc` の ignore-scripts=true により postinstall は走らない。
+#     ネイティブビルドが必要なパッケージを使う場合は、該当ステップで `npm rebuild <pkg>` を足す。
+#   - audit は high 閾値。moderate 以下は CI を落とさない（しきい値どおりで意図的に許容）。
+#
+# 注: 本番 env（DB / シークレット等）が build/test に不要になるよう、env 検証は遅延化し、
+#     DB を読むページは force-dynamic（リクエスト時評価）にしておくと CI が env 無しで通る。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一 ref で新しい push が来たら、進行中の旧ジョブをキャンセルして無駄打ちを防ぐ。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck / lint / test / build / audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # テンプレ未適用（package.json 無し）の段階では以降の Node ステップを全てスキップして
+      # CI を緑にする。テンプレリポ自身や、clone 直後でまだ実装の無い repo が赤くならないため。
+      # package.json が入った時点（=実プロジェクト）で通常どおり全ステップが走る。
+      - name: Detect Node project
+        id: detect
+        run: |
+          if [ -f package.json ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::package.json が無いため Node ステップをスキップ（テンプレ/初期 repo）"
+          fi
+
+      - name: Setup Node
+        if: steps.detect.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # lockfile 厳守でクリーンインストール（postinstall は .npmrc で無効）。
+      - name: Install dependencies
+        if: steps.detect.outputs.run == 'true'
+        run: npm ci
+
+      # 型チェック（tsconfig は noEmit 前提）。
+      - name: Type check
+        if: steps.detect.outputs.run == 'true'
+        run: npx tsc --noEmit
+
+      # ESLint（package.json: lint = "eslint ."）。
+      - name: Lint
+        if: steps.detect.outputs.run == 'true'
+        run: npm run lint
+
+      # 単体・結合テスト（DB 等はテスト内でモック）。
+      - name: Test
+        if: steps.detect.outputs.run == 'true'
+        run: npm run test
+
+      # 本番ビルド（env 不要にしておくこと。上記の注を参照）。
+      - name: Build
+        if: steps.detect.outputs.run == 'true'
+        run: npm run build
+
+      # 依存の脆弱性監査。high 以上で失敗。moderate 以下は許容。
+      - name: Audit dependencies
+        if: steps.detect.outputs.run == 'true'
+        run: npm audit --audit-level=high

@@ -1,0 +1,18 @@
+# 依存・ビルド成果物
+node_modules/
+.next/
+dist/
+build/
+coverage/
+
+# 環境変数（リポに出さない。lockfile は除外しない＝コミット対象）
+.env
+.env.*
+!.env.example
+
+# レビュー生成物（ローカル確認専用）
+.review-reports/
+
+# OS / エディタ
+.DS_Store
+*.log
