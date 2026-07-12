@@ -34,6 +34,18 @@ export class FixtureStationAdapter implements StationProviderPort {
     );
   }
 
+  async getBoardingPosition(
+    _stationId: string,
+    _stationName: string,
+    platformId: string,
+    _line: string,
+    _direction: string
+  ) {
+    if (!platformId) return null;
+    const positions = await this.getBoardingPositions(platformId);
+    return positions[0] ?? null;
+  }
+
   async nearestStations(latitude: number, longitude: number, limit: number) {
     return [...FIXTURE_STATIONS]
       .sort(

@@ -98,20 +98,18 @@ function buildStationProvider(facilities: StationFacility[]): StationProviderPor
     async getFacilities() {
       return facilities;
     },
-    async getBoardingPositions(): Promise<BoardingPosition[]> {
-      return [
-        {
-          boardingPositionId: "bp_1",
-          platformId: PLATFORM.platformId,
-          trainFormation: 10,
-          carNumber: 5,
-          doorPosition: "中央",
-          targetFacilityId: "gate_1",
-          reason: "テスト用の理由",
-          confidence: highConfidence,
-          verifiedAt: null,
-        },
-      ];
+    async getBoardingPosition(): Promise<BoardingPosition | null> {
+      return {
+        boardingPositionId: "bp_1",
+        platformId: PLATFORM.platformId,
+        trainFormation: 10,
+        carNumber: 5,
+        doorPosition: "中央",
+        targetFacilityId: "gate_1",
+        reason: "テスト用の理由",
+        confidence: highConfidence,
+        verifiedAt: null,
+      };
     },
     async nearestStations() {
       return Object.values(STATIONS);
@@ -200,8 +198,8 @@ describe("searchRouteGuide", () => {
   test("号車情報が無い場合は unavailable confidence を用いる", async () => {
     const stationProvider: StationProviderPort = {
       ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
-      async getBoardingPositions() {
-        return [];
+      async getBoardingPosition() {
+        return null;
       },
     };
     const deps: RouteSearchDeps = {
@@ -213,5 +211,69 @@ describe("searchRouteGuide", () => {
     if (!result.ok) return;
     const trainSegment = result.route.segments.find((s) => s.type === "train");
     expect(trainSegment?.confidence).toEqual(unavailableConfidence("推奨号車の情報が不足しています"));
+  });
+
+  test("fixture未収録駅を含むAI生成ルート(platformId空)でも stationId/line/direction で号車情報を取得する", async () => {
+    const receivedArgs: unknown[][] = [];
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      async getBoardingPosition(
+        stationId: string,
+        stationName: string,
+        platformId: string,
+        line: string,
+        direction: string
+      ) {
+        receivedArgs.push([stationId, stationName, platformId, line, direction]);
+        return {
+          boardingPositionId: "bp_ai",
+          platformId: "",
+          trainFormation: 0,
+          carNumber: 3,
+          doorPosition: "前方",
+          targetFacilityId: null,
+          reason: "AIによる推測情報。現地未確認のため参考程度に扱ってください。",
+          confidence: {
+            level: "low",
+            reasons: ["AIによる推測情報。現地未確認のため参考程度に扱ってください。"],
+            verifiedAt: null,
+            expiresAt: null,
+            sourceCount: 0,
+          },
+          verifiedAt: null,
+        };
+      },
+    };
+    const routeProvider: RouteProviderPort = {
+      async findRailRoutes() {
+        return [
+          {
+            originStationId: "origin",
+            arrivalStationId: "destination",
+            transferCount: 0,
+            estimatedDurationMinutes: 20,
+            isAiGenerated: true,
+            segments: [
+              {
+                fromStationId: "origin",
+                toStationId: "destination",
+                line: "テストAI線",
+                direction: "到着駅方面",
+                platformId: "",
+                estimatedMinutes: 20,
+              },
+            ],
+          },
+        ];
+      },
+    };
+    const deps: RouteSearchDeps = { routeProvider, stationProvider };
+    const result = await searchRouteGuide({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const trainSegment = result.route.segments.find((s) => s.type === "train");
+    expect(trainSegment?.boardingPosition?.carNumber).toBe(3);
+    expect(trainSegment?.confidence.level).toBe("low");
+    expect(receivedArgs[0]).toEqual(["origin", "出発駅", "", "テストAI線", "到着駅方面"]);
   });
 });

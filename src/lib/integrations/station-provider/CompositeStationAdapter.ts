@@ -16,8 +16,16 @@ interface FacilitiesCacheEntry {
 }
 
 interface BoardingCacheEntry {
-  platformId: string;
-  boardingPositions: BoardingPosition[];
+  key: string;
+  boardingPosition: BoardingPosition;
+}
+
+/**
+ * fixture platform に一致しない区間(fixture未収録駅を含むAI生成ルート等)向けの
+ * キャッシュキー。実在の platformId(pf_...)と衝突しないよう区切り文字で分離する。
+ */
+function lineBoardingCacheKey(stationId: string, line: string, direction: string): string {
+  return `line__${stationId}__${line}__${direction}`;
 }
 
 interface NearbyStationCacheEntry {
@@ -124,41 +132,58 @@ export class CompositeStationAdapter implements StationProviderPort {
     return withStationId;
   }
 
-  async getBoardingPositions(platformId: string): Promise<BoardingPosition[]> {
-    const fixturePositions = await this.fixture.getBoardingPositions(platformId);
-    if (fixturePositions.length > 0) return fixturePositions;
+  async getBoardingPosition(
+    stationId: string,
+    stationName: string,
+    platformId: string,
+    line: string,
+    direction: string
+  ): Promise<BoardingPosition | null> {
+    // fixture platform に一致する場合はまず fixture の号車情報を試す
+    // (西谷→渋谷のような検証済みデータを優先するため)。
+    // stationId が一致しない platformId(呼び出し元の不整合なデータ)は
+    // 別駅の号車情報を誤って返さないよう、fixture一致として扱わない。
+    const fixturePlatform = platformId ? this.findPlatform(platformId) : null;
+    const verifiedFixturePlatform =
+      fixturePlatform && fixturePlatform.stationId === stationId ? fixturePlatform : null;
+    if (verifiedFixturePlatform) {
+      const fixturePositions = await this.fixture.getBoardingPositions(platformId);
+      if (fixturePositions.length > 0) return fixturePositions[0];
+    }
+
+    // fixture platform が無い区間(fixture未収録駅を含むAI生成ルート等)は
+    // platformId に依存せず stationId+line+direction でAI下書き生成にフォールバックする。
+    // fixture platform 自体は一致しているが号車データが無いケース(新宿→渋谷等)は、
+    // 呼び出し元の line/direction ではなく fixture 側の正規値を使う
+    // (キャッシュキーが platformId 固定のため、不整合な値でキャッシュを汚染しないため)。
+    const effectiveLine = verifiedFixturePlatform ? verifiedFixturePlatform.lineId : line;
+    const effectiveDirection = verifiedFixturePlatform
+      ? verifiedFixturePlatform.direction
+      : direction;
+    const cacheKey = verifiedFixturePlatform
+      ? platformId
+      : lineBoardingCacheKey(stationId, line, direction);
 
     const cache = readCollection<BoardingCacheEntry>(BOARDING_CACHE);
-    const cached = cache.find((c) => c.platformId === platformId);
-    if (cached) return cached.boardingPositions;
-
-    const platform = this.findPlatform(platformId);
-    if (!platform) return [];
-
-    const station = await this.fixture.getStation(platform.stationId);
-    if (!station) return [];
+    const cached = cache.find((c) => c.key === cacheKey);
+    if (cached) return cached.boardingPosition;
 
     const generated = await generateBoardingPosition(
       this.geminiApiKey,
-      station.stationName,
-      platform.lineId,
-      platform.direction,
-      platformId
+      stationName,
+      effectiveLine,
+      effectiveDirection,
+      cacheKey
     );
-    if (!generated) return [];
-
-    const positions = [generated];
+    if (!generated) return null;
 
     try {
-      writeCollection(BOARDING_CACHE, [
-        ...cache,
-        { platformId, boardingPositions: positions },
-      ]);
+      writeCollection(BOARDING_CACHE, [...cache, { key: cacheKey, boardingPosition: generated }]);
     } catch {
       // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。
     }
 
-    return positions;
+    return generated;
   }
 
   private findPlatform(platformId: string): Platform | null {
