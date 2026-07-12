@@ -106,9 +106,11 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
                   ? "primary"
                   : "secondary"
               }
-              onPress={() =>
-                onChange({ type: "station", stationId: station.stationId, label: station.stationName })
-              }
+              onPress={() => {
+                onChange({ type: "station", stationId: station.stationId, label: station.stationName });
+                setManualQuery(station.stationName);
+                setManualCandidates([]);
+              }}
             >
               {station.stationName}
             </Button>
