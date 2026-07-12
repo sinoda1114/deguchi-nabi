@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { User } from "@/lib/domain/user";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 interface AppHeaderProps {
   user: User | null;
@@ -13,6 +14,7 @@ export function AppHeader({ user }: AppHeaderProps) {
           でぐちなび
         </Link>
         <nav className="flex items-center gap-3 text-sm font-semibold">
+          <ThemeToggle />
           {user ? (
             <>
               <Link href="/favorites" className="text-[var(--foreground-muted)] hover:text-[var(--foreground)]">

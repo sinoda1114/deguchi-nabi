@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist_Mono, Noto_Sans_JP } from "next/font/google";
+import { THEME_INIT_SCRIPT } from "@/lib/theme/theme-script";
 import "./globals.css";
 
 const notoSansJp = Noto_Sans_JP({
@@ -27,8 +29,14 @@ export default function RootLayout({
   return (
     <html
       lang="ja"
+      suppressHydrationWarning
       className={`${notoSansJp.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <Script id="theme-init" strategy="beforeInteractive">
+          {THEME_INIT_SCRIPT}
+        </Script>
+      </head>
       <body className="min-h-full flex flex-col font-sans">{children}</body>
     </html>
   );
