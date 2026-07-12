@@ -15,9 +15,11 @@ vi.mock("../ai-generation", () => ({
   generateStationFacilities: vi.fn(async () => []),
 }));
 
+const searchStationsFromHeartRails = vi.fn(async (_query: string) => null as unknown);
 vi.mock("../heartrails", () => ({
   fetchNearestStationsFromHeartRails: vi.fn(async () => null),
   decodeHeartRailsStationId: vi.fn(() => null),
+  searchStationsFromHeartRails: (query: string) => searchStationsFromHeartRails(query),
 }));
 
 const { CompositeStationAdapter } = await import("../CompositeStationAdapter");
@@ -44,6 +46,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
   beforeEach(() => {
     for (const key of Object.keys(storeState)) delete storeState[key];
     generateBoardingPosition.mockReset();
+    searchStationsFromHeartRails.mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -169,5 +172,109 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "到着方面"
     );
     expect(result).toBeNull();
+  });
+});
+
+describe("CompositeStationAdapter.searchStations", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(storeState)) delete storeState[key];
+    searchStationsFromHeartRails.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const NAGOYA: {
+    stationId: string;
+    stationName: string;
+    operator: string;
+    lines: string[];
+    prefecture: string;
+    latitude: number;
+    longitude: number;
+  } = {
+    stationId: "hr_%E5%90%8D%E5%8F%A4%E5%B1%8B_136.8816_35.1707",
+    stationName: "名古屋駅",
+    operator: "",
+    lines: ["JR東海道本線"],
+    prefecture: "愛知県",
+    latitude: 35.1707,
+    longitude: 136.8816,
+  };
+
+  test("fixtureにヒットしない駅名でもHeartRailsで見つかれば結果に含める", async () => {
+    searchStationsFromHeartRails.mockResolvedValue([NAGOYA]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.searchStations("名古屋");
+
+    expect(result.some((s) => s.stationId === NAGOYA.stationId)).toBe(true);
+  });
+
+  test("HeartRailsの結果はgetStationで後から解決できるようキャッシュする", async () => {
+    searchStationsFromHeartRails.mockResolvedValue([NAGOYA]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.searchStations("名古屋");
+    const resolved = await adapter.getStation(NAGOYA.stationId);
+
+    expect(resolved?.stationName).toBe("名古屋駅");
+  });
+
+  test("HeartRailsが失敗(null)してもfixtureの検索結果は返す", async () => {
+    searchStationsFromHeartRails.mockResolvedValue(null);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.searchStations("西谷");
+
+    expect(result.some((s) => s.stationId === "st_nishiya")).toBe(true);
+  });
+
+  test("fixtureとHeartRailsで同じstationIdが返っても重複しない", async () => {
+    const nishiyaFromApi = {
+      ...NAGOYA,
+      stationId: "st_nishiya",
+      stationName: "西谷駅",
+    };
+    searchStationsFromHeartRails.mockResolvedValue([nishiyaFromApi]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.searchStations("西谷");
+
+    expect(result.filter((s) => s.stationId === "st_nishiya")).toHaveLength(1);
+  });
+
+  test("HeartRailsからの結果が上限を超えても件数制限する(短い部分一致クエリでの肥大化対策)", async () => {
+    const manyStations = Array.from({ length: 50 }, (_, i) => ({
+      ...NAGOYA,
+      stationId: `hr_test_${i}`,
+      stationName: `テスト駅${i}`,
+    }));
+    searchStationsFromHeartRails.mockResolvedValue(manyStations);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.searchStations("テスト");
+
+    expect(result.length).toBeLessThanOrEqual(20);
+  });
+
+  test("fixtureとHeartRailsを並列に問い合わせる(HeartRailsが遅くてもfixture検索を待たせない設計であることの回帰確認)", async () => {
+    let resolveApi!: (v: unknown) => void;
+    searchStationsFromHeartRails.mockReturnValue(
+      new Promise((resolve) => {
+        resolveApi = resolve;
+      })
+    );
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const promise = adapter.searchStations("西谷");
+    // fixture.searchStations は同期的な文字列比較のみで即完了するため、
+    // HeartRails側が未解決の間でも呼び出し自体は既に行われているはず。
+    expect(searchStationsFromHeartRails).toHaveBeenCalledWith("西谷");
+
+    resolveApi(null);
+    const result = await promise;
+    expect(result.some((s) => s.stationId === "st_nishiya")).toBe(true);
   });
 });

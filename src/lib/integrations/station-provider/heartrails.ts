@@ -6,6 +6,7 @@ const HEARTRAILS_URL = "https://express.heartrails.com/api/json";
 const REQUEST_TIMEOUT_MS = 5000;
 const MAX_NAME_LENGTH = 50;
 const MAX_LINE_NAME_LENGTH = 50;
+const MAX_QUERY_LENGTH = 50;
 const HR_ID_PREFIX = "hr_";
 // fixtureの駅と同名でも、日本には同名の別駅が存在しうるため、
 // 座標がこの距離以内の場合のみ同一駅とみなしfixtureのstationIdへ揃える。
@@ -94,25 +95,18 @@ export function decodeHeartRailsStationId(stationId: string): Station | null {
 }
 
 /**
- * HeartRails Express API(https://express.heartrails.com/api.html、無料・
- * クレジット表記必須)で緯度経度から最寄り駅をオンデマンドに取得する。
- * 全国駅マスタを事前にダウンロード・自前DB化しない方針のため、
- * リクエストの都度この無料APIに問い合わせる。個人運営サービスで
- * 可用性の保証が無いため、失敗時は必ずnullを返し、呼び出し側
- * (CompositeStationAdapter)がfixtureにフォールバックする。
- *
+ * HeartRails Express API のレスポンスを Station[] に変換する共通処理。
  * 1駅につき乗り入れ路線ごとに1エントリが返るため、駅名+座標で
  * グルーピングしてStation[]に変換する。fixture(西谷・渋谷・新宿)と
  * 同名かつ近傍(1km以内)の駅は既存のstationIdに揃え、facility/boarding等の
  * 既存データと整合させる。事業者名(operator)はこのAPIから取得できないため
  * 空文字にする(誤った情報を作らない)。
+ *
+ * 個人運営サービスで可用性の保証が無いため、失敗時は必ずnullを返し、
+ * 呼び出し側(CompositeStationAdapter)がfixtureにフォールバックする。
  */
-export async function fetchNearestStationsFromHeartRails(
-  latitude: number,
-  longitude: number
-): Promise<Station[] | null> {
+async function fetchAndTransformStations(url: string): Promise<Station[] | null> {
   try {
-    const url = `${HEARTRAILS_URL}?method=getStations&x=${longitude}&y=${latitude}`;
     const res = await fetch(url, {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -172,4 +166,32 @@ export async function fetchNearestStationsFromHeartRails(
   } catch {
     return null;
   }
+}
+
+/**
+ * HeartRails Express API(https://express.heartrails.com/api.html、無料・
+ * クレジット表記必須)で緯度経度から最寄り駅をオンデマンドに取得する。
+ * 全国駅マスタを事前にダウンロード・自前DB化しない方針のため、
+ * リクエストの都度この無料APIに問い合わせる。
+ */
+export async function fetchNearestStationsFromHeartRails(
+  latitude: number,
+  longitude: number
+): Promise<Station[] | null> {
+  return fetchAndTransformStations(
+    `${HEARTRAILS_URL}?method=getStations&x=${longitude}&y=${latitude}`
+  );
+}
+
+/**
+ * HeartRails Express API の name パラメータ(部分一致)で駅名から検索する。
+ * fixture(西谷・渋谷・新宿)以外の駅を手入力で検索できるようにするために使う
+ * (searchStations はこれまでfixture収録駅しか見つけられなかった)。
+ */
+export async function searchStationsFromHeartRails(query: string): Promise<Station[] | null> {
+  const trimmed = query.trim();
+  if (!trimmed || trimmed.length > MAX_QUERY_LENGTH) return null;
+  return fetchAndTransformStations(
+    `${HEARTRAILS_URL}?method=getStations&name=${encodeURIComponent(trimmed)}`
+  );
 }
