@@ -1,9 +1,13 @@
 # 依存・ビルド成果物
 node_modules/
 .next/
+out/
 dist/
 build/
 coverage/
+*.tsbuildinfo
+next-env.d.ts
+.vercel
 
 # 環境変数（リポに出さない。lockfile は除外しない＝コミット対象）
 .env
@@ -13,6 +17,12 @@ coverage/
 # レビュー生成物（ローカル確認専用）
 .review-reports/
 
+# ローカル簡易永続化(JSON store)のランタイムデータ。正式版ではDBへ移行。
+/data/*.json
+
 # OS / エディタ
 .DS_Store
 *.log
+
+# Claude Code のセッション内部管理ファイル
+/.claude/

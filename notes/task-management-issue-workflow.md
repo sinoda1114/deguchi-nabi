@@ -143,9 +143,9 @@ flowchart TD
 ## AI 向けタスク取得
 
 ```bash
-gh issue list --repo {{GH_OWNER_REPO}} --state open \
+gh issue list --repo sinoda1114/deguchi-nabi --state open \
   --json number,title,labels,assignees,projectItems,updatedAt
-gh issue view <n> --repo {{GH_OWNER_REPO}} --comments \
+gh issue view <n> --repo sinoda1114/deguchi-nabi --comments \
   --json number,title,body,comments,labels,projectItems,state
 ```
 
