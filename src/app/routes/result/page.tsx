@@ -8,9 +8,11 @@ import {
   buildTransferAndExitSegments,
 } from "@/lib/services/route-search";
 import { addHistoryEntry } from "@/lib/store/history-repository";
+import { buildReturnRouteUrl } from "@/lib/services/return-route-link";
 import type { AccessibilityCondition, RouteMode } from "@/lib/domain/route";
 import { routeProvider, stationProvider, placeProvider } from "@/lib/integrations";
 import { AppHeader } from "@/components/layout/AppHeader";
+import { RetrySearchButton } from "@/components/result/RetrySearchButton";
 import { KeyInstructionCard } from "@/components/result/KeyInstructionCard";
 import { KeyInstructionText } from "@/components/result/KeyInstructionText";
 import { KeyInstructionTextSkeleton } from "@/components/result/KeyInstructionTextSkeleton";
@@ -58,6 +60,7 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
     !params.destinationType ||
     !params.destinationId
   ) {
+    // URL自体が不正なため、同じURLに再アクセスしても結果は変わらない(再試行不可能)。
     return <ErrorScreen user={user} message="検索条件が不足しています。" />;
   }
 
@@ -79,6 +82,7 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
   );
 
   if (!resolved.ok) {
+    // 駅・施設のID自体が解決できないケース(確定的な失敗)。再試行しても結果は変わらない。
     return <ErrorScreen user={user} message={resolved.error} />;
   }
 
@@ -95,7 +99,10 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
   const candidate = await resolveRouteCandidate(searchInput, { routeProvider, stationProvider });
 
   if (!candidate.ok) {
-    return <ErrorScreen user={user} message={candidate.reason} />;
+    // 経路探索(fixture未収録区間はAI/Web検索によるルート生成を含む)の失敗。
+    // タイムアウトや一時的なAPI障害の可能性があり、生成失敗はキャッシュされない
+    // ため再試行で成功しうる。
+    return <ErrorScreen user={user} message={candidate.reason} retryable />;
   }
 
   // ここから先(号車・改札・出口情報)は Gemini 呼び出しを含み数秒〜数十秒かかりうるため、
@@ -116,7 +123,9 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
   if (mode === "accessible") {
     const facilitiesResult = await facilitiesPromise;
     if (!facilitiesResult.ok) {
-      return <ErrorScreen user={user} message={facilitiesResult.reason} />;
+      // 改札・出口・エレベーター情報の生成(Gemini呼び出し含む)の失敗。
+      // 生成失敗はキャッシュされないため、再試行で情報が確認できるようになる可能性がある。
+      return <ErrorScreen user={user} message={facilitiesResult.reason} retryable />;
     }
   }
 
@@ -224,23 +233,46 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
         >
           この案内の情報が違う場合はこちら
         </Link>
+
+        <Link
+          href={buildReturnRouteUrl(resolved.originStationId, resolved.destinationStationId, mode)}
+          className="rounded-[var(--radius-card)] border border-[var(--border)] py-3 text-center text-sm font-bold text-[var(--foreground-muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+        >
+          帰りのルートを見る
+        </Link>
       </main>
     </div>
   );
 }
 
-function ErrorScreen({ user, message }: { user: Awaited<ReturnType<typeof getSessionUser>>; message: string }) {
+interface ErrorScreenProps {
+  user: Awaited<ReturnType<typeof getSessionUser>>;
+  message: string;
+  /**
+   * true の場合のみ「もう一度検索」ボタンを表示する。
+   * 検索条件不足や駅・施設IDが解決できない等の確定的な失敗では、同じURLに
+   * 再アクセスしても結果は変わらないため false(既定値)のままにする。
+   * AI(Gemini)によるルート・号車・改札/出口情報の生成失敗はキャッシュされない
+   * ため、タイムアウトや一時的なAPI障害であれば再試行で成功しうる。
+   */
+  retryable?: boolean;
+}
+
+function ErrorScreen({ user, message, retryable = false }: ErrorScreenProps) {
   return (
     <div className="flex flex-1 flex-col">
       <AppHeader user={user} />
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-4 px-4 py-10 text-center">
         <p className="text-sm font-semibold text-[var(--foreground-muted)]">{message}</p>
-        <Link
-          href="/"
-          className="rounded-[var(--radius-pill)] bg-[var(--accent)] px-4 py-2 text-sm font-bold text-[var(--accent-foreground)]"
-        >
-          検索へ戻る
-        </Link>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          {retryable && <RetrySearchButton />}
+          <Link
+            href="/"
+            className="rounded-[var(--radius-pill)] bg-[var(--accent)] px-4 py-2 text-center text-sm font-bold text-[var(--accent-foreground)]"
+          >
+            検索へ戻る
+          </Link>
+        </div>
       </main>
     </div>
   );

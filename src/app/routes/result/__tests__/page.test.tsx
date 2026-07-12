@@ -92,6 +92,10 @@ vi.mock("@/lib/auth/session", () => ({
   getSessionUser: () => getSessionUserMock(),
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
 vi.mock("@/lib/integrations", () => ({
   stationProvider: {
     async searchStations() {
@@ -208,5 +212,62 @@ describe("RouteResultPage", () => {
 
     expect(addHistoryEntryMock).toHaveBeenCalledTimes(1);
     resolveFacilities(FACILITIES_WITH_ELEVATOR); // pending promiseを片付ける
+  });
+
+  test("正常系では出発駅・到着駅を入れ替えた「帰りのルートを見る」リンクを表示する", async () => {
+    getFacilitiesMock.mockResolvedValue(FACILITIES_WITH_ELEVATOR);
+    const { default: RouteResultPage } = await import("@/app/routes/result/page");
+
+    const element = await RouteResultPage({
+      searchParams: Promise.resolve({ ...SEARCH_PARAMS, mode: "easy" }),
+    });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("帰りのルートを見る");
+    expect(html).toContain(
+      "/routes/result?originType=station&amp;originStationId=destination&amp;destinationType=station&amp;destinationId=origin&amp;mode=easy"
+    );
+  });
+
+  test("再試行可能なエラー(AI生成失敗の可能性がある経路探索失敗)では「もう一度検索」ボタンも表示する", async () => {
+    getFacilitiesMock.mockResolvedValue([]); // エレベーターなし(accessibleでエラーになる)
+    const { default: RouteResultPage } = await import("@/app/routes/result/page");
+
+    const element = await RouteResultPage({
+      searchParams: Promise.resolve({ ...SEARCH_PARAMS, mode: "accessible" }),
+    });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("もう一度検索");
+    expect(html).toContain("検索へ戻る");
+  });
+
+  test("再試行不可能なエラー(検索条件不足)では「もう一度検索」ボタンを表示しない", async () => {
+    const { default: RouteResultPage } = await import("@/app/routes/result/page");
+
+    const element = await RouteResultPage({
+      searchParams: Promise.resolve({ mode: "easy" }), // originStationId/destinationId無し
+    });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("検索条件が不足しています");
+    expect(html).toContain("検索へ戻る");
+    expect(html).not.toContain("もう一度検索");
+  });
+
+  test("再試行不可能なエラー(駅・施設IDが解決できない)では「もう一度検索」ボタンを表示しない", async () => {
+    const { default: RouteResultPage } = await import("@/app/routes/result/page");
+
+    const element = await RouteResultPage({
+      searchParams: Promise.resolve({
+        ...SEARCH_PARAMS,
+        destinationId: "not_found_station",
+        mode: "easy",
+      }),
+    });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("検索へ戻る");
+    expect(html).not.toContain("もう一度検索");
   });
 });
