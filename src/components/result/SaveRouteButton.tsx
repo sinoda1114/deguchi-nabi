@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 import type { RouteMode } from "@/lib/domain/route";
 
@@ -42,13 +43,14 @@ export function SaveRouteButton({
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleSave}
-      disabled={saved || saving}
-      className="rounded-[var(--radius-pill)] bg-black/10 px-3 py-1.5 text-xs font-bold disabled:opacity-70"
+    <Button
+      size="sm"
+      variant="secondary"
+      onPress={handleSave}
+      isDisabled={saved || saving}
+      isPending={saving}
     >
       {saved ? "保存済み" : saving ? "保存中…" : "ルートを保存"}
-    </button>
+    </Button>
   );
 }

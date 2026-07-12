@@ -9,7 +9,7 @@ export function AppHeader({ user }: AppHeaderProps) {
   return (
     <header className="border-b border-[var(--border)] bg-[var(--surface)]">
       <div className="mx-auto flex max-w-md items-center justify-between px-4 py-3">
-        <Link href="/" className="text-lg font-black tracking-tight text-[var(--brand-strong)]">
+        <Link href="/" className="text-lg font-black tracking-tight text-[var(--accent)]">
           でぐちなび
         </Link>
         <nav className="flex items-center gap-3 text-sm font-semibold">
@@ -28,7 +28,7 @@ export function AppHeader({ user }: AppHeaderProps) {
           ) : (
             <Link
               href="/login"
-              className="rounded-[var(--radius-pill)] bg-[var(--brand)] px-3 py-1.5 text-[var(--brand-contrast)]"
+              className="rounded-[var(--radius-pill)] bg-[var(--accent)] px-3 py-1.5 text-[var(--accent-foreground)]"
             >
               ログイン
             </Link>

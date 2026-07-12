@@ -15,7 +15,7 @@ export function KeyInstructionCard({
   canSave,
 }: KeyInstructionCardProps) {
   return (
-    <div className="rounded-[var(--radius-card)] bg-[var(--brand)] p-5 text-[var(--brand-contrast)]">
+    <div className="rounded-[var(--radius-card)] bg-[var(--accent)] p-5 text-[var(--accent-foreground)]">
       <span className="inline-block rounded-[var(--radius-pill)] bg-black/10 px-2.5 py-1 text-xs font-bold">
         {ROUTE_MODE_LABEL[route.mode]}モード
       </span>

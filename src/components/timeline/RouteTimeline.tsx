@@ -23,7 +23,7 @@ export function RouteTimeline({ segments }: RouteTimelineProps) {
           className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4"
         >
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wide text-[var(--brand-strong)]">
+            <span className="text-xs font-bold uppercase tracking-wide text-[var(--accent)]">
               STEP {i + 1} ・ {SEGMENT_TITLE[segment.type]}
             </span>
             <ConfidenceBadge level={segment.confidence.level} size="sm" />

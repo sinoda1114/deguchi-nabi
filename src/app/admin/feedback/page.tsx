@@ -31,7 +31,7 @@ export default async function AdminFeedbackPage() {
                 className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4"
               >
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs font-bold text-[var(--brand-strong)]">
+                  <span className="text-xs font-bold text-[var(--accent)]">
                     {FEEDBACK_CATEGORY_LABEL[f.category]}
                   </span>
                   <FeedbackStatusSelector feedbackId={f.feedbackId} status={f.status} />

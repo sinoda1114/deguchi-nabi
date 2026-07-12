@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Input } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
@@ -41,17 +42,17 @@ export function DestinationField({ value, onChange }: DestinationFieldProps) {
       <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
         目的地
       </label>
-      <input
+      <Input
         type="text"
         value={value ? candidateLabel(value) : query}
         placeholder="駅名・施設名・店舗名・住所"
+        aria-label="目的地"
         onFocus={() => setOpen(true)}
         onChange={(e) => {
           onChange(null);
           setQuery(e.target.value);
           setOpen(true);
         }}
-        className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--foreground)] outline-none focus:border-[var(--brand)]"
       />
       {open && !value && query.trim().length > 0 && candidates.length > 0 ? (
         <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-lg">

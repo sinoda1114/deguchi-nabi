@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@heroui/react";
 import { ROUTE_MODE_LABEL, type RouteMode } from "@/lib/domain/route";
 
 const MODES: RouteMode[] = ["fastest", "easy", "accessible"];
@@ -21,27 +22,19 @@ export function RouteModeSelector({ value, onChange }: RouteModeSelectorProps) {
       {MODES.map((mode) => {
         const selected = value === mode;
         return (
-          <button
+          <Button
             key={mode}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            onClick={() => onChange(mode)}
-            className={`flex flex-col items-start gap-0.5 rounded-[var(--radius-card)] border px-3 py-2.5 text-left transition-colors duration-[var(--duration-fast)] ${
-              selected
-                ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-contrast)]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:border-[var(--brand)]"
-            }`}
+            variant={selected ? "primary" : "secondary"}
+            aria-pressed={selected}
+            onPress={() => onChange(mode)}
+            fullWidth
+            className="h-auto min-w-0 flex-col items-start gap-0.5 py-2.5 text-left whitespace-normal"
           >
             <span className="text-sm font-bold">{ROUTE_MODE_LABEL[mode]}</span>
-            <span
-              className={`text-[11px] leading-tight ${
-                selected ? "text-[var(--brand-contrast)]/80" : "text-[var(--foreground-muted)]"
-              }`}
-            >
+            <span className="text-[11px] leading-tight font-normal opacity-80">
               {MODE_DESCRIPTION[mode]}
             </span>
-          </button>
+          </Button>
         );
       })}
     </div>

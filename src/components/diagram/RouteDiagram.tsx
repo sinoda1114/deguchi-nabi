@@ -22,7 +22,7 @@ export function RouteDiagram({ segments }: RouteDiagramProps) {
           <StationNode name={segment.from}>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--foreground-muted)]">
               {segment.boardingPosition ? (
-                <span className="inline-flex items-center gap-1 font-semibold text-[var(--brand-strong)]">
+                <span className="inline-flex items-center gap-1 font-semibold text-[var(--accent)]">
                   <FacilityIcon type="car" className="h-4 w-4" />
                   {segment.boardingPosition.carNumber}号車・{segment.boardingPosition.doorPosition}
                 </span>

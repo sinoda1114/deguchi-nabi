@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button, Input } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 
 export function AuthForm() {
@@ -33,58 +34,46 @@ export function AuthForm() {
   return (
     <div>
       <div className="mb-5 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => setMode("login")}
-          className={`rounded-[var(--radius-card)] border py-2 text-sm font-bold ${
-            mode === "login"
-              ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-contrast)]"
-              : "border-[var(--border)] bg-[var(--surface)]"
-          }`}
+        <Button
+          fullWidth
+          variant={mode === "login" ? "primary" : "secondary"}
+          onPress={() => setMode("login")}
         >
           ログイン
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("register")}
-          className={`rounded-[var(--radius-card)] border py-2 text-sm font-bold ${
-            mode === "register"
-              ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-contrast)]"
-              : "border-[var(--border)] bg-[var(--surface)]"
-          }`}
+        </Button>
+        <Button
+          fullWidth
+          variant={mode === "register" ? "primary" : "secondary"}
+          onPress={() => setMode("register")}
         >
           新規登録
-        </button>
+        </Button>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <input
+        <Input
           type="email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="メールアドレス"
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
+          aria-label="メールアドレス"
         />
-        <input
+        <Input
           type="password"
           required
           minLength={8}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="パスワード(8文字以上)"
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
+          aria-label="パスワード"
         />
 
-        {error ? <p className="text-sm text-[var(--confidence-low-fg)]">{error}</p> : null}
+        {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-[var(--radius-card)] bg-[var(--brand)] py-3 text-center font-bold text-[var(--brand-contrast)] disabled:opacity-60"
-        >
+        <Button type="submit" isPending={submitting} fullWidth>
           {submitting ? "処理中…" : mode === "login" ? "ログイン" : "登録する"}
-        </button>
+        </Button>
       </form>
     </div>
   );

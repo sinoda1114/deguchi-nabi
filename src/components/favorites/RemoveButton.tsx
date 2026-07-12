@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { Button } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 
 interface RemoveButtonProps {
@@ -16,13 +17,8 @@ export function RemoveButton({ endpoint }: RemoveButtonProps) {
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleRemove}
-      aria-label="削除"
-      className="rounded-full px-2 py-1 text-xs font-bold text-[var(--foreground-muted)] hover:text-[var(--confidence-low-fg)]"
-    >
+    <Button size="sm" variant="ghost" onPress={handleRemove} aria-label="削除">
       削除
-    </button>
+    </Button>
   );
 }

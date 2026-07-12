@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Key } from "@heroui/react";
+import { Button, Input, Label, ListBox, Select } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 import { FEEDBACK_CATEGORY_LABEL, type FeedbackCategory } from "@/lib/domain/feedback";
 
@@ -61,32 +63,36 @@ export function FeedbackForm({ routeGuideId }: FeedbackFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div>
-        <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
-          問題カテゴリ
-        </label>
-        <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value as FeedbackCategory)}
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm"
-        >
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {FEEDBACK_CATEGORY_LABEL[c]}
-            </option>
-          ))}
-        </select>
-      </div>
+      <Select
+        value={category}
+        onChange={(value: Key | null) => value && setCategory(value as FeedbackCategory)}
+      >
+        <Label>問題カテゴリ</Label>
+        <Select.Trigger>
+          <Select.Value />
+          <Select.Indicator />
+        </Select.Trigger>
+        <Select.Popover>
+          <ListBox>
+            {CATEGORIES.map((c) => (
+              <ListBox.Item key={c} id={c} textValue={FEEDBACK_CATEGORY_LABEL[c]}>
+                {FEEDBACK_CATEGORY_LABEL[c]}
+                <ListBox.ItemIndicator />
+              </ListBox.Item>
+            ))}
+          </ListBox>
+        </Select.Popover>
+      </Select>
 
       <div>
         <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
           対象のステップ・箇所
         </label>
-        <input
+        <Input
           value={targetEntity}
           onChange={(e) => setTargetEntity(e.target.value)}
           placeholder="例: 渋谷駅 B5出口"
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
+          aria-label="対象のステップ・箇所"
         />
       </div>
 
@@ -94,10 +100,10 @@ export function FeedbackForm({ routeGuideId }: FeedbackFormProps) {
         <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
           現在表示されている情報(任意)
         </label>
-        <input
+        <Input
           value={reportedValue}
           onChange={(e) => setReportedValue(e.target.value)}
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
+          aria-label="現在表示されている情報"
         />
       </div>
 
@@ -105,10 +111,10 @@ export function FeedbackForm({ routeGuideId }: FeedbackFormProps) {
         <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
           正しいと思う情報(任意)
         </label>
-        <input
+        <Input
           value={suggestedValue}
           onChange={(e) => setSuggestedValue(e.target.value)}
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
+          aria-label="正しいと思う情報"
         />
       </div>
 
@@ -120,19 +126,15 @@ export function FeedbackForm({ routeGuideId }: FeedbackFormProps) {
           value={comment}
           onChange={(e) => setComment(e.target.value)}
           rows={3}
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
+          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
         />
       </div>
 
-      {error ? <p className="text-sm text-[var(--confidence-low-fg)]">{error}</p> : null}
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
-      <button
-        type="submit"
-        disabled={submitting}
-        className="rounded-[var(--radius-card)] bg-[var(--brand)] py-3 text-center font-bold text-[var(--brand-contrast)] disabled:opacity-60"
-      >
+      <Button type="submit" isPending={submitting} fullWidth>
         {submitting ? "送信中…" : "報告を送信"}
-      </button>
+      </Button>
     </form>
   );
 }

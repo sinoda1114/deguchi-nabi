@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@heroui/react";
 import type { Station } from "@/lib/domain/station";
 import type { User } from "@/lib/domain/user";
 import type { RouteMode } from "@/lib/domain/route";
@@ -60,14 +61,11 @@ export function SearchForm({ user, homeStation }: SearchFormProps) {
         <RouteModeSelector value={mode} onChange={setMode} />
       </div>
 
-      {error ? <p className="text-sm text-[var(--confidence-low-fg)]">{error}</p> : null}
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
-      <button
-        type="submit"
-        className="rounded-[var(--radius-card)] bg-[var(--brand)] py-3 text-center font-bold text-[var(--brand-contrast)] transition-transform duration-[var(--duration-fast)] active:scale-[0.98]"
-      >
+      <Button type="submit" fullWidth size="lg">
         ルートを検索
-      </button>
+      </Button>
     </form>
   );
 }

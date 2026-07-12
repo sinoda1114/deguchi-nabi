@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { Button } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 
 export function LogoutButton() {
@@ -13,12 +14,8 @@ export function LogoutButton() {
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleLogout}
-      className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] py-2.5 text-center text-sm font-bold text-[var(--foreground)] hover:border-[var(--confidence-low-fg)]"
-    >
+    <Button variant="secondary" fullWidth onPress={handleLogout}>
       ログアウト
-    </button>
+    </Button>
   );
 }

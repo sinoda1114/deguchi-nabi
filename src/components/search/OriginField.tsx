@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button, Input } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 import type { Station } from "@/lib/domain/station";
 import type { User } from "@/lib/domain/user";
@@ -70,62 +71,58 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
       </label>
       <div className="flex flex-wrap gap-2">
         {user && homeStation ? (
-          <button
-            type="button"
-            onClick={() =>
+          <Button
+            size="sm"
+            variant={value?.type === "home_station" ? "primary" : "secondary"}
+            onPress={() =>
               onChange({ type: "home_station", label: `${homeStation.stationName}(登録駅)` })
             }
-            className={`rounded-[var(--radius-pill)] border px-3 py-1.5 text-sm font-semibold ${
-              value?.type === "home_station"
-                ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-contrast)]"
-                : "border-[var(--border)] bg-[var(--surface)]"
-            }`}
           >
             {homeStation.stationName}(登録駅)
-          </button>
+          </Button>
         ) : null}
-        <button
-          type="button"
-          onClick={handleUseCurrentLocation}
-          disabled={locating}
-          className="rounded-[var(--radius-pill)] border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
+        <Button
+          size="sm"
+          variant="secondary"
+          isPending={locating}
+          onPress={handleUseCurrentLocation}
         >
           {locating ? "取得中…" : "現在地を使用"}
-        </button>
+        </Button>
       </div>
 
       {locationError ? (
-        <p className="mt-1 text-xs text-[var(--confidence-low-fg)]">{locationError}</p>
+        <p className="mt-1 text-xs text-[var(--danger)]">{locationError}</p>
       ) : null}
 
       {nearby.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-2">
           {nearby.map((station) => (
-            <button
+            <Button
               key={station.stationId}
-              type="button"
-              onClick={() =>
+              size="sm"
+              variant={
+                value?.type === "station" && value.stationId === station.stationId
+                  ? "primary"
+                  : "secondary"
+              }
+              onPress={() =>
                 onChange({ type: "station", stationId: station.stationId, label: station.stationName })
               }
-              className={`rounded-[var(--radius-pill)] border px-3 py-1.5 text-sm ${
-                value?.type === "station" && value.stationId === station.stationId
-                  ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-contrast)]"
-                  : "border-[var(--border)] bg-[var(--surface)]"
-              }`}
             >
               {station.stationName}
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}
 
       <div className="relative mt-2">
-        <input
+        <Input
           type="text"
           value={manualQuery}
           placeholder="駅名で指定"
+          aria-label="出発駅を検索"
           onChange={(e) => handleManualSearch(e.target.value)}
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
         />
         {manualCandidates.length > 0 ? (
           <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-lg">

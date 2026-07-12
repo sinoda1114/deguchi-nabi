@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button, Input } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 import type { Station } from "@/lib/domain/station";
 
@@ -55,11 +56,11 @@ export function HomeStationForm({ currentStation, redirectTo }: HomeStationFormP
   return (
     <div className="flex flex-col gap-3">
       <div className="relative">
-        <input
+        <Input
           value={query}
           onChange={(e) => handleSearch(e.target.value)}
           placeholder="駅名を入力"
-          className="w-full rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
+          aria-label="最寄り駅を検索"
         />
         {candidates.length > 0 && !selected ? (
           <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-lg">
@@ -82,16 +83,11 @@ export function HomeStationForm({ currentStation, redirectTo }: HomeStationFormP
         ) : null}
       </div>
 
-      {error ? <p className="text-sm text-[var(--confidence-low-fg)]">{error}</p> : null}
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving}
-        className="rounded-[var(--radius-card)] bg-[var(--brand)] py-3 text-center font-bold text-[var(--brand-contrast)] disabled:opacity-60"
-      >
+      <Button onPress={handleSave} isPending={saving} fullWidth>
         {saving ? "保存中…" : "最寄り駅を保存"}
-      </button>
+      </Button>
     </div>
   );
 }

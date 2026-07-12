@@ -26,7 +26,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
         {routeGuideId ? (
           <Link
             href={`/feedback?routeGuideId=${routeGuideId}`}
-            className="mt-2 text-sm font-bold text-[var(--brand-strong)]"
+            className="mt-2 text-sm font-bold text-[var(--accent)]"
           >
             この案内について報告する
           </Link>

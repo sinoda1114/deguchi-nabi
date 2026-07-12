@@ -1,3 +1,4 @@
+import { Chip } from "@heroui/react";
 import type { ConfidenceLevel } from "@/lib/domain/confidence";
 import { CONFIDENCE_LABEL } from "@/lib/domain/confidence";
 
@@ -13,20 +14,16 @@ const ICON_PATH: Record<ConfidenceLevel, string> = {
   unavailable: "M6 6a2 2 0 1 1 2.8 1.8c-.6.3-.8.8-.8 1.4v.3 M8 11.2h.01",
 };
 
-const STYLE: Record<ConfidenceLevel, string> = {
-  high: "bg-[var(--confidence-high-bg)] text-[var(--confidence-high-fg)]",
-  medium: "bg-[var(--confidence-medium-bg)] text-[var(--confidence-medium-fg)]",
-  low: "bg-[var(--confidence-low-bg)] text-[var(--confidence-low-fg)]",
-  unavailable:
-    "bg-[var(--confidence-unavailable-bg)] text-[var(--confidence-unavailable-fg)]",
+const COLOR: Record<ConfidenceLevel, "success" | "warning" | "danger" | "default"> = {
+  high: "success",
+  medium: "warning",
+  low: "danger",
+  unavailable: "default",
 };
 
 export function ConfidenceBadge({ level, size = "md" }: ConfidenceBadgeProps) {
-  const dims = size === "sm" ? "h-5 gap-1 px-1.5 text-[11px]" : "h-6 gap-1.5 px-2 text-xs";
   return (
-    <span
-      className={`inline-flex items-center rounded-[var(--radius-pill)] font-bold tracking-wide ${dims} ${STYLE[level]}`}
-    >
+    <Chip color={COLOR[level]} variant="soft" size={size === "sm" ? "sm" : "md"}>
       <svg
         viewBox="0 0 16 16"
         fill="none"
@@ -39,7 +36,7 @@ export function ConfidenceBadge({ level, size = "md" }: ConfidenceBadgeProps) {
       >
         <path d={ICON_PATH[level]} />
       </svg>
-      信頼度: {CONFIDENCE_LABEL[level]}
-    </span>
+      <Chip.Label>信頼度: {CONFIDENCE_LABEL[level]}</Chip.Label>
+    </Chip>
   );
 }

@@ -23,7 +23,7 @@ export default async function FeedbackPage({ searchParams }: FeedbackPageProps) 
         {!user ? (
           <div className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
             フィードバックの送信にはログインが必要です。
-            <Link href="/login" className="ml-1 font-bold text-[var(--brand-strong)]">
+            <Link href="/login" className="ml-1 font-bold text-[var(--accent)]">
               ログイン
             </Link>
           </div>

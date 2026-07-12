@@ -33,7 +33,7 @@ export default async function Home() {
                 <li key={f.favoriteId}>
                   <Link
                     href={`/routes/result?originType=station&originStationId=${f.query.originStationId}&destinationType=station&destinationId=${f.query.destinationStationId}&mode=${f.query.mode}`}
-                    className="block rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold hover:border-[var(--brand)]"
+                    className="block rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold hover:border-[var(--accent)]"
                   >
                     {f.label}
                   </Link>
@@ -51,7 +51,7 @@ export default async function Home() {
                 <li key={h.historyId}>
                   <Link
                     href={`/routes/result?originType=station&originStationId=${h.query.originStationId}&destinationType=station&destinationId=${h.query.destinationStationId}&mode=${h.query.mode}`}
-                    className="block rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm hover:border-[var(--brand)]"
+                    className="block rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm hover:border-[var(--accent)]"
                   >
                     {h.originLabel} → {h.destinationLabel}
                   </Link>

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Key } from "@heroui/react";
+import { ListBox, Select } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 import type { FeedbackStatus } from "@/lib/domain/feedback";
 
@@ -38,17 +40,27 @@ export function FeedbackStatusSelector({ feedbackId, status }: FeedbackStatusSel
   }
 
   return (
-    <select
+    <Select
+      className="w-36"
       value={status}
-      disabled={updating}
-      onChange={(e) => handleChange(e.target.value as FeedbackStatus)}
-      className="rounded-[var(--radius-pill)] border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs font-semibold"
+      isDisabled={updating}
+      aria-label="フィードバックのステータス"
+      onChange={(value: Key | null) => value && handleChange(value as FeedbackStatus)}
     >
-      {STATUSES.map((s) => (
-        <option key={s} value={s}>
-          {STATUS_LABEL[s]}
-        </option>
-      ))}
-    </select>
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      <Select.Popover>
+        <ListBox>
+          {STATUSES.map((s) => (
+            <ListBox.Item key={s} id={s} textValue={STATUS_LABEL[s]}>
+              {STATUS_LABEL[s]}
+              <ListBox.ItemIndicator />
+            </ListBox.Item>
+          ))}
+        </ListBox>
+      </Select.Popover>
+    </Select>
   );
 }

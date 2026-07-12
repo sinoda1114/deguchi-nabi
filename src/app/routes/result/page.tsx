@@ -104,14 +104,14 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
 
         <Link
           href={`/chat?routeGuideId=${route.routeId}`}
-          className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] py-3 text-center text-sm font-bold text-[var(--foreground)] hover:border-[var(--brand)]"
+          className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] py-3 text-center text-sm font-bold text-[var(--foreground)] hover:border-[var(--accent)]"
         >
           この案内について質問する
         </Link>
 
         <Link
           href={`/feedback?routeGuideId=${route.routeId}`}
-          className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] py-3 text-center text-sm font-bold text-[var(--foreground)] hover:border-[var(--brand)]"
+          className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] py-3 text-center text-sm font-bold text-[var(--foreground)] hover:border-[var(--accent)]"
         >
           この案内の情報が違う場合はこちら
         </Link>
@@ -128,7 +128,7 @@ function ErrorScreen({ user, message }: { user: Awaited<ReturnType<typeof getSes
         <p className="text-sm font-semibold text-[var(--foreground-muted)]">{message}</p>
         <Link
           href="/"
-          className="rounded-[var(--radius-pill)] bg-[var(--brand)] px-4 py-2 text-sm font-bold text-[var(--brand-contrast)]"
+          className="rounded-[var(--radius-pill)] bg-[var(--accent)] px-4 py-2 text-sm font-bold text-[var(--accent-foreground)]"
         >
           検索へ戻る
         </Link>
