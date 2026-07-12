@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
 import type { Station } from "@/lib/domain/station";
@@ -10,6 +10,7 @@ import { OriginField, type OriginChoice } from "./OriginField";
 import { DestinationField } from "./DestinationField";
 import { RouteModeSelector } from "./RouteModeSelector";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
+import { loadSearchFormDraft, saveSearchFormDraft } from "@/lib/search-form-persistence";
 
 interface SearchFormProps {
   user: User | null;
@@ -19,12 +20,20 @@ interface SearchFormProps {
 export function SearchForm({ user, homeStation }: SearchFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [draft] = useState(() => loadSearchFormDraft());
   const [origin, setOrigin] = useState<OriginChoice | null>(
-    user && homeStation ? { type: "home_station", label: homeStation.stationName } : null
+    draft?.origin ??
+      (user && homeStation ? { type: "home_station", label: homeStation.stationName } : null)
   );
-  const [destination, setDestination] = useState<SearchCandidate | null>(null);
-  const [mode, setMode] = useState<RouteMode>("easy");
+  const [destination, setDestination] = useState<SearchCandidate | null>(
+    draft?.destination ?? null
+  );
+  const [mode, setMode] = useState<RouteMode>(draft?.mode ?? "easy");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    saveSearchFormDraft({ origin, destination, mode });
+  }, [origin, destination, mode]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
