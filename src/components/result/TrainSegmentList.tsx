@@ -8,9 +8,9 @@ interface TrainSegmentListProps {
 /**
  * train区間だけを表示する Server Component。page.tsx で作られた Promise を
  * props 経由で受け取って自分で await する(Promise as Props パターン)。
- * 同じ Promise インスタンスは JS の仕様上1度しか実行されず結果がキャッシュされるため、
- * 他のセクション(RouteDiagramSection 等)と Promise を共有しても
- * buildTrainSegments が重複実行されることはない。
+ * 同じ Promise インスタンスは「生成元の処理を1回だけ表す」という JS の仕様上、
+ * 他のセクション(RouteDiagramSection 等)と Promise インスタンスを共有しても
+ * buildTrainSegments が重複実行されることはない(重複するのは await する箇所だけ)。
  */
 export async function TrainSegmentList({ trainSegmentsPromise }: TrainSegmentListProps) {
   const trainSegments = await trainSegmentsPromise;

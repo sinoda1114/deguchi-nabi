@@ -98,6 +98,32 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
     return <ErrorScreen user={user} message={candidate.reason} />;
   }
 
+  // ここから先(号車・改札・出口情報)は Gemini 呼び出しを含み数秒〜数十秒かかりうるため、
+  // await せず Promise のまま各セクションへ渡す。同じ Promise インスタンスは
+  // 「生成元の処理を1回だけ表す」という JS の仕様上、複数コンポーネントで
+  // 共有しても buildTrainSegments/buildTransferAndExitSegments が重複実行されることはない。
+  const trainSegmentsPromise = buildTrainSegments(candidate.chosen, { stationProvider });
+  const facilitiesPromise = buildTransferAndExitSegments(candidate, searchInput, {
+    stationProvider,
+  });
+
+  // accessible(バリアフリー)モードは、エレベーター情報を確認できない経路を
+  // 「利用可能な経路」に見せてはならない(安全に関わる)。buildTransferAndExitSegments は
+  // accessible かつエレベーター未確認の場合のみ ok:false を返すため、この場合だけ
+  // facilities の解決を待ってから成立可否を判定し、失敗ならページ全体をエラー表示にする
+  // (号車・改札・出口を部分的にストリーミング表示すると、バリアフリー経路として
+  // 使えるかのように誤認させる恐れがあるため)。
+  if (mode === "accessible") {
+    const facilitiesResult = await facilitiesPromise;
+    if (!facilitiesResult.ok) {
+      return <ErrorScreen user={user} message={facilitiesResult.reason} />;
+    }
+  }
+
+  // 履歴保存は「案内として成立した経路」だけを対象にする(/api/routes/search の
+  // resolveAndSearchRoute と同じ不変条件)。easy/fastest モードは
+  // buildTransferAndExitSegments が ok:false を返すことがないため、facilities の
+  // 解決を待たずにここで保存してよい(ストリーミング表示を妨げない)。
   if (user) {
     addHistoryEntry({
       userId: user.userId,
@@ -112,14 +138,6 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
       },
     });
   }
-
-  // ここから先(号車・改札・出口情報)は Gemini 呼び出しを含み数秒〜数十秒かかりうるため、
-  // await せず Promise のまま各セクションへ渡す。同じ Promise インスタンスを
-  // 複数コンポーネントで共有しても JS の Promise キャッシュにより多重実行はされない。
-  const trainSegmentsPromise = buildTrainSegments(candidate.chosen, { stationProvider });
-  const facilitiesPromise = buildTransferAndExitSegments(candidate, searchInput, {
-    stationProvider,
-  });
 
   return (
     <div className="flex flex-1 flex-col">

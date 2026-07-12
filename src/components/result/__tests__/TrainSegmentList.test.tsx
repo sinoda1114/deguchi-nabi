@@ -38,7 +38,7 @@ describe("TrainSegmentList", () => {
     expect(html).toContain("route-step");
   });
 
-  test("同じPromiseインスタンスを渡しても1度しかawaitされない(Promiseキャッシュにより多重実行を避ける)", async () => {
+  test("同じPromiseインスタンスを複数箇所でawaitしても、生成元の処理(executor)は1回しか実行されない", async () => {
     let callCount = 0;
     const trainSegmentsPromise = (async () => {
       callCount += 1;
