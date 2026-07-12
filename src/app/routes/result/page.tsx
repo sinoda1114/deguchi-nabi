@@ -109,14 +109,14 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
 
         <Link
           href={`/chat?routeGuideId=${route.routeId}`}
-          className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] py-3 text-center text-sm font-bold text-[var(--foreground)] hover:border-[var(--accent)]"
+          className="rounded-[var(--radius-card)] bg-[var(--accent)] py-3 text-center text-sm font-bold text-[var(--accent-foreground)] hover:opacity-90"
         >
           この案内について質問する
         </Link>
 
         <Link
           href={`/feedback?routeGuideId=${route.routeId}`}
-          className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] py-3 text-center text-sm font-bold text-[var(--foreground)] hover:border-[var(--accent)]"
+          className="rounded-[var(--radius-card)] border border-[var(--border)] py-3 text-center text-sm font-bold text-[var(--foreground-muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]"
         >
           この案内の情報が違う場合はこちら
         </Link>

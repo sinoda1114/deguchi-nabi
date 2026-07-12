@@ -113,4 +113,12 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  /* 進行状況を示す機能的なスピナーは、装飾モーションと違い完全には止めない
+     (止めると「動いているか分からない」状態になる)。ただし reduced-motion の
+     利用者に配慮し、通常速度(1s)より大幅に遅い周期に落として刺激を抑える。 */
+  .status-spinner {
+    animation-duration: 3s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
