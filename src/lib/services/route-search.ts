@@ -1,5 +1,6 @@
 import type {
   AccessibilityCondition,
+  KeyInstruction,
   RouteConfidenceSummary,
   RouteGuide,
   RouteMode,
@@ -7,7 +8,10 @@ import type {
 } from "@/lib/domain/route";
 import type { StationFacility } from "@/lib/domain/station";
 import { unavailableConfidence } from "@/lib/domain/confidence";
-import type { RouteProviderPort } from "@/lib/integrations/route-provider/RouteProviderPort";
+import type {
+  RailRouteCandidate,
+  RouteProviderPort,
+} from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import { worstConfidenceLevel } from "./confidence-engine";
 
@@ -38,10 +42,36 @@ function pickFacility(
   return facilities.find((f) => f.facilityType === type) ?? null;
 }
 
-export async function searchRouteGuide(
+/**
+ * 経路候補の選定結果。ストリーミング表示では、これが確定した時点で
+ * ヘッダー・出発地/目的地・所要時間等をすぐに描画できる
+ * (号車・改札・出口の解決を待つ必要がない)。
+ */
+export interface RouteCandidateResult {
+  ok: true;
+  routeId: string;
+  mode: RouteMode;
+  originName: string;
+  destinationName: string;
+  arrivalStationName: string;
+  estimatedDurationMinutes: number;
+  transferCount: number;
+  routeWarnings: string[];
+  chosen: RailRouteCandidate;
+}
+
+export type ResolveRouteCandidateResult =
+  | RouteCandidateResult
+  | { ok: false; reason: string };
+
+/**
+ * 経路候補を取得し、モードに応じて最適な候補を選ぶ。
+ * (searchRouteGuide の先頭部分をそのまま抽出したもの)
+ */
+export async function resolveRouteCandidate(
   input: RouteSearchInput,
   deps: RouteSearchDeps
-): Promise<RouteSearchResult> {
+): Promise<ResolveRouteCandidateResult> {
   const candidates = await deps.routeProvider.findRailRoutes(
     input.originStationId,
     input.destinationStationId
@@ -66,6 +96,38 @@ export async function searchRouteGuide(
     };
   }
 
+  const arrivalStation = await deps.stationProvider.getStation(
+    input.destinationStationId
+  );
+
+  const routeWarnings = chosen.isAiGenerated
+    ? [
+        "利用路線・所要時間はAI(Web検索結果)による推測です。運行状況の変更等により実際と異なる場合があります。",
+      ]
+    : [];
+
+  return {
+    ok: true,
+    routeId: `route_${input.originStationId}_${input.destinationStationId}_${input.mode}`,
+    mode: input.mode,
+    originName: input.originLabel,
+    destinationName: input.destinationLabel,
+    arrivalStationName: arrivalStation?.stationName ?? input.destinationStationId,
+    estimatedDurationMinutes: chosen.estimatedDurationMinutes,
+    transferCount: chosen.transferCount,
+    routeWarnings,
+    chosen,
+  };
+}
+
+/**
+ * 選択された経路候補の各鉄道区間について、号車・ドア位置を含む
+ * train セグメントを組み立てる(searchRouteGuide の train ループをそのまま抽出)。
+ */
+export async function buildTrainSegments(
+  chosen: RailRouteCandidate,
+  deps: Pick<RouteSearchDeps, "stationProvider">
+): Promise<RouteSegment[]> {
   const segments: RouteSegment[] = [];
 
   for (const rail of chosen.segments) {
@@ -111,9 +173,36 @@ export async function searchRouteGuide(
     });
   }
 
-  const arrivalStation = await deps.stationProvider.getStation(
-    input.destinationStationId
-  );
+  return segments;
+}
+
+export interface FacilitiesBuildSuccess {
+  transferSegment: RouteSegment;
+  exitSegment: RouteSegment;
+  recommendedExit: string;
+  gate: StationFacility | null;
+  exit: StationFacility | null;
+  elevator: StationFacility | null;
+}
+
+/**
+ * 到着駅の改札・出口・エレベーター情報を取得し、transfer/exit セグメントを組み立てた結果。
+ * TransferExitSegmentList / RouteDiagramSection / ConfidenceSummarySection /
+ * RecommendedExitValue / KeyInstructionText が共有する Promise の型として使う。
+ */
+export type FacilitiesSearchResult =
+  | { ok: true; result: FacilitiesBuildSuccess }
+  | { ok: false; reason: string };
+
+/**
+ * 到着駅の改札・出口・エレベーター情報から transfer/exit セグメントを組み立てる
+ * (searchRouteGuide の到着駅 facilities 解決部分をそのまま抽出)。
+ */
+export async function buildTransferAndExitSegments(
+  candidate: RouteCandidateResult,
+  input: RouteSearchInput,
+  deps: Pick<RouteSearchDeps, "stationProvider">
+): Promise<FacilitiesSearchResult> {
   const arrivalFacilities = await deps.stationProvider.getFacilities(
     input.destinationStationId
   );
@@ -134,10 +223,10 @@ export async function searchRouteGuide(
   const accessFacility =
     input.mode === "accessible" ? elevator : escalator ?? elevator;
 
-  segments.push({
+  const transferSegment: RouteSegment = {
     type: "transfer",
-    from: arrivalStation?.stationName ?? input.destinationStationId,
-    to: arrivalStation?.stationName ?? input.destinationStationId,
+    from: candidate.arrivalStationName,
+    to: candidate.arrivalStationName,
     line: null,
     direction: gate ? `${gate.name}方面` : null,
     platform: null,
@@ -159,12 +248,12 @@ export async function searchRouteGuide(
       : unavailableConfidence("改札情報が不足しています"),
     sourceReferences: [],
     warnings: [],
-  });
+  };
 
-  segments.push({
+  const exitSegment: RouteSegment = {
     type: "exit",
-    from: arrivalStation?.stationName ?? input.destinationStationId,
-    to: arrivalStation?.stationName ?? input.destinationStationId,
+    from: candidate.arrivalStationName,
+    to: candidate.arrivalStationName,
     line: null,
     direction: null,
     platform: null,
@@ -186,58 +275,119 @@ export async function searchRouteGuide(
       : unavailableConfidence("出口情報が不足しています"),
     sourceReferences: [],
     warnings: [],
-  });
-
-  const confidenceSummary: RouteConfidenceSummary = {
-    boardingPosition: worstConfidenceLevel(
-      segments.filter((s) => s.type === "train").map((s) => s.confidence)
-    ),
-    transferGuide: worstConfidenceLevel(
-      segments.filter((s) => s.type === "transfer").map((s) => s.confidence)
-    ),
-    gate: gate?.confidence.level ?? "unavailable",
-    exit: exit?.confidence.level ?? "unavailable",
-    accessibility: input.mode === "accessible" ? elevator?.confidence.level ?? "unavailable" : null,
   };
 
-  const firstBoarding = segments.find(
-    (s) => s.type === "train" && s.boardingPosition
-  );
+  return {
+    ok: true,
+    result: {
+      transferSegment,
+      exitSegment,
+      recommendedExit: exit?.name ?? "確認できません",
+      gate,
+      exit,
+      elevator,
+    },
+  };
+}
+
+/**
+ * 情報単位ごとの confidence をまとめる(searchRouteGuide の集約ロジックをそのまま抽出)。
+ */
+export function computeConfidenceSummary(
+  trainSegments: RouteSegment[],
+  facilities: FacilitiesBuildSuccess,
+  mode: RouteMode
+): RouteConfidenceSummary {
+  return {
+    boardingPosition: worstConfidenceLevel(
+      trainSegments.map((s) => s.confidence)
+    ),
+    transferGuide: worstConfidenceLevel([facilities.transferSegment.confidence]),
+    gate: facilities.gate?.confidence.level ?? "unavailable",
+    exit: facilities.exit?.confidence.level ?? "unavailable",
+    accessibility:
+      mode === "accessible" ? facilities.elevator?.confidence.level ?? "unavailable" : null,
+  };
+}
+
+/**
+ * 見出し用の案内文言を組み立てる(searchRouteGuide の文言組み立てロジックをそのまま抽出)。
+ */
+export function computeKeyInstruction(
+  trainSegments: RouteSegment[],
+  facilities: FacilitiesBuildSuccess
+): KeyInstruction {
+  const firstBoarding = trainSegments.find((s) => s.boardingPosition);
 
   const keyInstructionParts = [
     firstBoarding?.boardingPosition
       ? `${firstBoarding.boardingPosition.carNumber}号車付近に乗車`
       : "乗車位置は確認できません",
-    gate ? `${gate.name}` : "改札は確認できません",
-    exit ? `${exit.name}へ` : "出口は確認できません",
+    facilities.gate ? `${facilities.gate.name}` : "改札は確認できません",
+    facilities.exit ? `${facilities.exit.name}へ` : "出口は確認できません",
   ];
 
-  const now = new Date();
+  return { text: keyInstructionParts.join("、") + "。" };
+}
 
-  const routeWarnings = chosen.isAiGenerated
-    ? [
-        "利用路線・所要時間はAI(Web検索結果)による推測です。運行状況の変更等により実際と異なる場合があります。",
-      ]
-    : [];
+/**
+ * 経路検索全体をまとめて実行するラッパー。POST API(/api/routes/search)から
+ * 引き続き利用される(挙動不変)。ストリーミング表示を行う /routes/result では
+ * 代わりに resolveRouteCandidate / buildTrainSegments / buildTransferAndExitSegments を
+ * 個別に呼び出す。
+ */
+export async function searchRouteGuide(
+  input: RouteSearchInput,
+  deps: RouteSearchDeps
+): Promise<RouteSearchResult> {
+  const candidateResult = await resolveRouteCandidate(input, deps);
+  if (!candidateResult.ok) {
+    return candidateResult;
+  }
+
+  const trainSegments = await buildTrainSegments(candidateResult.chosen, deps);
+  const facilitiesOutcome = await buildTransferAndExitSegments(
+    candidateResult,
+    input,
+    deps
+  );
+  if (!facilitiesOutcome.ok) {
+    return facilitiesOutcome;
+  }
+
+  const segments: RouteSegment[] = [
+    ...trainSegments,
+    facilitiesOutcome.result.transferSegment,
+    facilitiesOutcome.result.exitSegment,
+  ];
+
+  const confidenceSummary = computeConfidenceSummary(
+    trainSegments,
+    facilitiesOutcome.result,
+    input.mode
+  );
+  const keyInstruction = computeKeyInstruction(trainSegments, facilitiesOutcome.result);
+
+  const now = new Date();
 
   return {
     ok: true,
     route: {
-      routeId: `route_${input.originStationId}_${input.destinationStationId}_${input.mode}`,
-      mode: input.mode,
+      routeId: candidateResult.routeId,
+      mode: candidateResult.mode,
       summary: {
-        originName: input.originLabel,
-        destinationName: input.destinationLabel,
-        arrivalStationName: arrivalStation?.stationName ?? input.destinationStationId,
-        recommendedExit: exit?.name ?? "確認できません",
-        estimatedDurationMinutes: chosen.estimatedDurationMinutes,
-        transferCount: chosen.transferCount,
+        originName: candidateResult.originName,
+        destinationName: candidateResult.destinationName,
+        arrivalStationName: candidateResult.arrivalStationName,
+        recommendedExit: facilitiesOutcome.result.recommendedExit,
+        estimatedDurationMinutes: candidateResult.estimatedDurationMinutes,
+        transferCount: candidateResult.transferCount,
         walkingDistanceMeters: null,
       },
-      keyInstruction: { text: keyInstructionParts.join("、") + "。" },
+      keyInstruction,
       segments,
       confidenceSummary,
-      warnings: routeWarnings,
+      warnings: candidateResult.routeWarnings,
       generatedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + ONE_HOUR_MS).toISOString(),
     },

@@ -1,36 +1,49 @@
-import { ROUTE_MODE_LABEL, type RouteGuide } from "@/lib/domain/route";
+import type { ReactNode } from "react";
+import { ROUTE_MODE_LABEL, type RouteMode } from "@/lib/domain/route";
 import { SaveRouteButton } from "./SaveRouteButton";
 
 interface KeyInstructionCardProps {
-  route: RouteGuide;
+  mode: RouteMode;
+  routeId: string;
+  originName: string;
+  destinationName: string;
   originStationId: string;
   destinationStationId: string;
   canSave: boolean;
+  /**
+   * 見出しの案内文言。号車・改札・出口情報の解決を待つ必要があるため、
+   * 呼び出し元(page.tsx)が <Suspense><KeyInstructionText .../></Suspense> を渡す。
+   */
+  keyInstructionNode: ReactNode;
 }
 
 export function KeyInstructionCard({
-  route,
+  mode,
+  routeId,
+  originName,
+  destinationName,
   originStationId,
   destinationStationId,
   canSave,
+  keyInstructionNode,
 }: KeyInstructionCardProps) {
   return (
     <div className="rounded-[var(--radius-card)] bg-[var(--accent)] p-5 text-[var(--accent-foreground)]">
       <span className="inline-block rounded-[var(--radius-pill)] bg-black/10 px-2.5 py-1 text-xs font-bold">
-        {ROUTE_MODE_LABEL[route.mode]}モード
+        {ROUTE_MODE_LABEL[mode]}モード
       </span>
-      <p className="mt-3 text-lg font-black leading-snug">{route.keyInstruction.text}</p>
+      <p className="mt-3 text-lg font-black leading-snug">{keyInstructionNode}</p>
       <div className="mt-4 flex items-center justify-between text-sm font-semibold">
         <span>
-          {route.summary.originName} → {route.summary.destinationName}
+          {originName} → {destinationName}
         </span>
         {canSave ? (
           <SaveRouteButton
-            routeGuideId={route.routeId}
-            label={`${route.summary.originName} → ${route.summary.destinationName}`}
+            routeGuideId={routeId}
+            label={`${originName} → ${destinationName}`}
             originStationId={originStationId}
             destinationStationId={destinationStationId}
-            mode={route.mode}
+            mode={mode}
           />
         ) : null}
       </div>
