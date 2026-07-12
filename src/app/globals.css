@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+:root {
+  --background: oklch(98% 0.004 95);
+  --surface: oklch(100% 0 0);
+  --surface-raised: oklch(97% 0.006 95);
+  --foreground: oklch(20% 0.01 95);
+  --foreground-muted: oklch(45% 0.01 95);
+  --border: oklch(88% 0.008 95);
+
+  --brand: oklch(46% 0.14 155);
+  --brand-strong: oklch(38% 0.15 155);
+  --brand-contrast: oklch(99% 0 0);
+
+  --confidence-high-bg: oklch(93% 0.07 155);
+  --confidence-high-fg: oklch(32% 0.1 155);
+  --confidence-medium-bg: oklch(93% 0.09 95);
+  --confidence-medium-fg: oklch(40% 0.11 85);
+  --confidence-low-bg: oklch(93% 0.08 25);
+  --confidence-low-fg: oklch(40% 0.16 25);
+  --confidence-unavailable-bg: oklch(92% 0.005 95);
+  --confidence-unavailable-fg: oklch(45% 0.01 95);
+
+  --radius-card: 1rem;
+  --radius-pill: 999px;
+
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-border: var(--border);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-contrast: var(--brand-contrast);
+  --font-sans: var(--font-noto-sans-jp), var(--font-geist-sans), sans-serif;
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(18% 0.008 250);
+    --surface: oklch(23% 0.01 250);
+    --surface-raised: oklch(27% 0.012 250);
+    --foreground: oklch(96% 0.005 250);
+    --foreground-muted: oklch(72% 0.01 250);
+    --border: oklch(34% 0.014 250);
+
+    --brand: oklch(78% 0.16 155);
+    --brand-strong: oklch(88% 0.14 155);
+    --brand-contrast: oklch(15% 0.02 155);
+
+    --confidence-high-bg: oklch(30% 0.06 155);
+    --confidence-high-fg: oklch(88% 0.09 155);
+    --confidence-medium-bg: oklch(32% 0.06 85);
+    --confidence-medium-fg: oklch(88% 0.11 90);
+    --confidence-low-bg: oklch(32% 0.07 25);
+    --confidence-low-fg: oklch(88% 0.1 25);
+    --confidence-unavailable-bg: oklch(30% 0.006 250);
+    --confidence-unavailable-fg: oklch(75% 0.01 250);
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: oklch(18% 0.008 250);
+  --surface: oklch(23% 0.01 250);
+  --surface-raised: oklch(27% 0.012 250);
+  --foreground: oklch(96% 0.005 250);
+  --foreground-muted: oklch(72% 0.01 250);
+  --border: oklch(34% 0.014 250);
+  --brand: oklch(78% 0.16 155);
+  --brand-strong: oklch(88% 0.14 155);
+  --brand-contrast: oklch(15% 0.02 155);
+}
+
+:root[data-theme="light"] {
+  --background: oklch(98% 0.004 95);
+  --surface: oklch(100% 0 0);
+  --surface-raised: oklch(97% 0.006 95);
+  --foreground: oklch(20% 0.01 95);
+  --foreground-muted: oklch(45% 0.01 95);
+  --border: oklch(88% 0.008 95);
+  --brand: oklch(46% 0.14 155);
+  --brand-strong: oklch(38% 0.15 155);
+  --brand-contrast: oklch(99% 0 0);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

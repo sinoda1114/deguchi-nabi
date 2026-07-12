@@ -1,6 +1,6 @@
-# {{PROJECT_NAME}} — プロジェクト指示
+# deguchi-nabi — プロジェクト指示
 
-{{PROJECT_NAME}}（`{{DOMAIN}}`）の AI 向けプロジェクト指示。
+deguchi-nabi（`deguchi-nabi.vercel.app`）の AI 向けプロジェクト指示。
 
 ## 運用ルール（HOW）の正本
 
@@ -15,13 +15,13 @@
 
 | 項目 | 値 |
 |---|---|
-| リポ実体 dir（統合＋デプロイ専用・ここで機能開発しない） | `~/dev/{{REPO_SLUG}}` |
-| GitHub | `{{GH_OWNER_REPO}}` |
-| デプロイ基盤 | {{DEPLOY_PLATFORM}}（git 駆動・feature push = Preview / main マージ = Production） |
-| 本番 URL | {{PROD_URL}} |
-| 独自ドメイン | {{DOMAIN}} |
-| 絶対 URL の env | `{{SITE_URL_ENV}}`（=`https://{{DOMAIN}}`・ハードコード禁止） |
-| タスク正本 | GitHub Issue / Project「{{PROJECT_BOARD}}」 |
+| リポ実体 dir（統合＋デプロイ専用・ここで機能開発しない） | `~/dev/deguchi-nabi` |
+| GitHub | `sinoda1114/deguchi-nabi` |
+| デプロイ基盤 | Vercel（git 駆動・feature push = Preview / main マージ = Production） |
+| 本番 URL | https://deguchi-nabi.vercel.app |
+| 独自ドメイン | deguchi-nabi.vercel.app |
+| 絶対 URL の env | `NEXT_PUBLIC_SITE_URL`（=`https://deguchi-nabi.vercel.app`・ハードコード禁止） |
+| タスク正本 | GitHub Issue / Project「deguchi-nabi Tasks」 |
 
 ## 役割境界（このプロジェクト）
 
@@ -39,5 +39,5 @@
 
 - dev サーバ起動中にビルド成果物を消したり本番ビルドを実行しない（壊れる）。dev は 1 つ。
 - AI 検証は `tsc` / `eslint` / `test` で行う（手動確認をユーザーに丸投げしない）。
-- `.env.local` は触らない・中身を出力しない（本番 env は {{DEPLOY_PLATFORM}} ダッシュボードが正本）。
+- `.env.local` は触らない・中身を出力しない（本番 env は Vercel ダッシュボードが正本）。
 - シークレット（API キー・トークン）はログ / 出力に出さない。必要なら redact する。

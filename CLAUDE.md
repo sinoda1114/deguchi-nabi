@@ -1,4 +1,4 @@
-# {{PROJECT_NAME}} — Claude 用プロジェクト指示
+# deguchi-nabi — Claude 用プロジェクト指示
 
 このプロジェクトの**運用ルール正本は [`AGENTS.md`](./AGENTS.md)**。Claude Code も毎回 `AGENTS.md` に従うこと
 （worktree フロー／2 段ゲート／PR は番人がマージ／GitHub が正本／Issue・Project タスク管理／供給網デフォルト）。
