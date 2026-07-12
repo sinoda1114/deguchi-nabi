@@ -1,6 +1,10 @@
 const GENERATE_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
 const REQUEST_TIMEOUT_MS = 15000;
+// Google Search Grounding は実際にWeb検索を行うため、単発の構造化生成より大幅に時間がかかる
+// (西谷駅→国際センター駅(名駅)のような遠距離・同名駅の曖昧性解消が絡む検索で実測35秒超)。
+// 短いタイムアウトのままだと毎回タイムアウトで失敗し、経路情報が確認できません扱いになってしまう。
+const SEARCH_REQUEST_TIMEOUT_MS = 55000;
 
 interface GeminiCandidate {
   content?: { parts?: { text?: string }[] };
@@ -11,7 +15,11 @@ interface GeminiResponse {
   candidates?: GeminiCandidate[];
 }
 
-async function callGemini(apiKey: string, body: object): Promise<GeminiCandidate | null> {
+async function callGemini(
+  apiKey: string,
+  body: object,
+  timeoutMs: number = REQUEST_TIMEOUT_MS
+): Promise<GeminiCandidate | null> {
   try {
     const res = await fetch(GENERATE_URL, {
       method: "POST",
@@ -20,7 +28,7 @@ async function callGemini(apiKey: string, body: object): Promise<GeminiCandidate
         "x-goog-api-key": apiKey,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!res.ok) return null;
@@ -81,10 +89,14 @@ export async function searchAndGenerateStructuredContent<T>(
   extractionInstruction: string,
   responseSchema: object
 ): Promise<T | null> {
-  const searchCandidate = await callGemini(apiKey, {
-    contents: [{ parts: [{ text: searchPrompt }] }],
-    tools: [{ google_search: {} }],
-  });
+  const searchCandidate = await callGemini(
+    apiKey,
+    {
+      contents: [{ parts: [{ text: searchPrompt }] }],
+      tools: [{ google_search: {} }],
+    },
+    SEARCH_REQUEST_TIMEOUT_MS
+  );
 
   const searchText = searchCandidate?.content?.parts?.[0]?.text;
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
