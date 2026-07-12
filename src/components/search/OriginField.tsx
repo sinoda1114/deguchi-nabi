@@ -18,7 +18,7 @@ interface OriginFieldProps {
 }
 
 export function OriginField({ user, homeStation, value, onChange }: OriginFieldProps) {
-  const [manualQuery, setManualQuery] = useState(value?.type === "station" ? value.label : "");
+  const [manualQuery, setManualQuery] = useState("");
   const [manualCandidates, setManualCandidates] = useState<Station[]>([]);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -53,6 +53,7 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
   }
 
   async function handleManualSearch(q: string) {
+    onChange(null);
     setManualQuery(q);
     if (!q.trim()) {
       setManualCandidates([]);
@@ -74,9 +75,7 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
           <Button
             size="sm"
             variant={value?.type === "home_station" ? "primary" : "secondary"}
-            onPress={() =>
-              onChange({ type: "home_station", label: `${homeStation.stationName}(登録駅)` })
-            }
+            onPress={() => onChange({ type: "home_station", label: homeStation.stationName })}
           >
             {homeStation.stationName}(登録駅)
           </Button>
@@ -109,7 +108,6 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
                 }
                 onPress={() => {
                   onChange({ type: "station", stationId: station.stationId, label: station.stationName });
-                  setManualQuery(station.stationName);
                   setManualCandidates([]);
                 }}
               >
@@ -134,12 +132,12 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
       <div className="relative mt-2">
         <Input
           type="text"
-          value={manualQuery}
+          value={value ? value.label : manualQuery}
           placeholder="駅名で指定"
           aria-label="出発駅を検索"
           onChange={(e) => handleManualSearch(e.target.value)}
         />
-        {manualCandidates.length > 0 ? (
+        {!value && manualCandidates.length > 0 ? (
           <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-lg">
             {manualCandidates.map((station) => (
               <li key={station.stationId}>
@@ -151,7 +149,6 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
                       stationId: station.stationId,
                       label: station.stationName,
                     });
-                    setManualQuery(station.stationName);
                     setManualCandidates([]);
                   }}
                   className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--surface-raised)]"

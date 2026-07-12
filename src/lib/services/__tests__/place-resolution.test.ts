@@ -1,10 +1,14 @@
 import { describe, expect, test } from "vitest";
 import {
   candidateLabel,
+  isSameFavoriteTarget,
   resolveArrivalStationId,
+  toFavoriteDestinationInput,
+  toSearchCandidate,
   type SearchCandidate,
 } from "@/lib/services/place-resolution";
 import type { Destination, Station } from "@/lib/domain/station";
+import type { FavoriteDestination } from "@/lib/domain/user";
 
 const STATION: Station = {
   stationId: "st_1",
@@ -53,5 +57,95 @@ describe("candidateLabel", () => {
 
   test("place candidate は施設名を返す", () => {
     expect(candidateLabel({ kind: "place", destination: DESTINATION })).toBe("テスト施設");
+  });
+});
+
+describe("toFavoriteDestinationInput", () => {
+  test("station candidate から kind/station/label を持つ入力を作る", () => {
+    const candidate: SearchCandidate = { kind: "station", station: STATION };
+    expect(toFavoriteDestinationInput(candidate)).toEqual({
+      kind: "station",
+      station: STATION,
+      label: "テスト駅",
+    });
+  });
+
+  test("place candidate から kind/destination/label を持つ入力を作る", () => {
+    const candidate: SearchCandidate = { kind: "place", destination: DESTINATION };
+    expect(toFavoriteDestinationInput(candidate)).toEqual({
+      kind: "place",
+      destination: DESTINATION,
+      label: "テスト施設",
+    });
+  });
+});
+
+describe("toSearchCandidate", () => {
+  test("station の FavoriteDestination は station candidate に変換される", () => {
+    const favorite: FavoriteDestination = {
+      favoriteDestinationId: "fd_1",
+      userId: "user_1",
+      kind: "station",
+      station: STATION,
+      label: "テスト駅",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    expect(toSearchCandidate(favorite)).toEqual({ kind: "station", station: STATION });
+  });
+
+  test("place の FavoriteDestination は place candidate に変換される", () => {
+    const favorite: FavoriteDestination = {
+      favoriteDestinationId: "fd_2",
+      userId: "user_1",
+      kind: "place",
+      destination: DESTINATION,
+      label: "テスト施設",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    expect(toSearchCandidate(favorite)).toEqual({ kind: "place", destination: DESTINATION });
+  });
+});
+
+describe("isSameFavoriteTarget", () => {
+  const stationFavorite: FavoriteDestination = {
+    favoriteDestinationId: "fd_1",
+    userId: "user_1",
+    kind: "station",
+    station: STATION,
+    label: "テスト駅",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+  const placeFavorite: FavoriteDestination = {
+    favoriteDestinationId: "fd_2",
+    userId: "user_1",
+    kind: "place",
+    destination: DESTINATION,
+    label: "テスト施設",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  test("同じ駅IDの station candidate は一致する", () => {
+    expect(isSameFavoriteTarget(stationFavorite, { kind: "station", station: STATION })).toBe(
+      true
+    );
+  });
+
+  test("異なる駅IDの station candidate は一致しない", () => {
+    const other: Station = { ...STATION, stationId: "st_2" };
+    expect(isSameFavoriteTarget(stationFavorite, { kind: "station", station: other })).toBe(
+      false
+    );
+  });
+
+  test("同じ施設IDの place candidate は一致する", () => {
+    expect(
+      isSameFavoriteTarget(placeFavorite, { kind: "place", destination: DESTINATION })
+    ).toBe(true);
+  });
+
+  test("kind が異なると一致しない", () => {
+    expect(isSameFavoriteTarget(stationFavorite, { kind: "place", destination: DESTINATION })).toBe(
+      false
+    );
   });
 });

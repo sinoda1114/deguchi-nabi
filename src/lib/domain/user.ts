@@ -1,3 +1,5 @@
+import type { Destination, Station } from "./station";
+
 export type SubscriptionPlan = "free" | "premium";
 
 export interface User {
@@ -36,3 +38,25 @@ export interface SearchHistoryEntry {
   query: SavedRouteQuery;
   createdAt: string;
 }
+
+/**
+ * 検索前に単体で登録・呼び出しできる「よく使う目的地」。
+ * 検索結果の経路そのものを保存する FavoriteRoute とは異なり、駅または施設単体を保持する。
+ */
+export type FavoriteDestination =
+  | {
+      favoriteDestinationId: string;
+      userId: string;
+      kind: "station";
+      station: Station;
+      label: string;
+      createdAt: string;
+    }
+  | {
+      favoriteDestinationId: string;
+      userId: string;
+      kind: "place";
+      destination: Destination;
+      label: string;
+      createdAt: string;
+    };
