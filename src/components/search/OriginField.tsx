@@ -10,6 +10,22 @@ export type OriginChoice =
   | { type: "home_station"; label: string }
   | { type: "station"; stationId: string; label: string };
 
+/**
+ * 出発地入力欄に表示する文字列を決定する。
+ * home_station選択時は、sessionStorageの下書きに保存された選択時点の
+ * ラベル(古い登録駅名の可能性がある)より、常に最新のhomeStation propsを
+ * 優先する(/settingsで最寄り駅を変更しても表示が追従するように)。
+ */
+export function resolveOriginInputValue(
+  value: OriginChoice | null,
+  homeStation: Station | null,
+  manualQuery: string
+): string {
+  if (!value) return manualQuery;
+  if (value.type === "home_station") return homeStation?.stationName ?? value.label;
+  return value.label;
+}
+
 interface OriginFieldProps {
   user: User | null;
   homeStation: Station | null;
@@ -132,7 +148,7 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
       <div className="relative mt-2">
         <Input
           type="text"
-          value={value ? value.label : manualQuery}
+          value={resolveOriginInputValue(value, homeStation, manualQuery)}
           placeholder="駅名で指定"
           aria-label="出発駅を検索"
           onChange={(e) => handleManualSearch(e.target.value)}
