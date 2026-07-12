@@ -69,10 +69,10 @@ export class GooglePlaceAdapter implements PlaceProviderPort {
   }
 
   private async toDestination(place: GooglePlace): Promise<Destination> {
-    const latitude = place.location?.latitude ?? 0;
-    const longitude = place.location?.longitude ?? 0;
+    const latitude = place.location?.latitude;
+    const longitude = place.location?.longitude;
     const nearestStations =
-      place.location != null
+      latitude != null && longitude != null
         ? await this.stationProvider.nearestStations(latitude, longitude, 1)
         : [];
 
