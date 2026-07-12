@@ -4,6 +4,10 @@ import { addHistoryEntry } from "@/lib/store/history-repository";
 import { resolveAndSearchRoute } from "@/lib/services/route-search-orchestrator";
 import type { RouteMode } from "@/lib/domain/route";
 
+// fixture未収録駅間はGemini Search Groundingで検索(検索55秒+抽出15秒を直列実行)するため、
+// プラットフォームのデフォルト実行時間上限より長くかかりうる。明示的に確保する。
+export const maxDuration = 90;
+
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
 export async function POST(req: NextRequest) {

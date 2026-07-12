@@ -55,13 +55,7 @@ export class CompositeRouteAdapter implements RouteProviderPort {
     ]);
     if (!originStation || !destinationStation) return [];
 
-    const generated = await generateRailRoute(
-      this.geminiApiKey,
-      originStationId,
-      originStation.stationName,
-      destinationStationId,
-      destinationStation.stationName
-    );
+    const generated = await generateRailRoute(this.geminiApiKey, originStation, destinationStation);
     if (!generated) return [];
 
     try {

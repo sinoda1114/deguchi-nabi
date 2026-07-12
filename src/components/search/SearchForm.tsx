@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
 import type { Station } from "@/lib/domain/station";
@@ -18,6 +18,7 @@ interface SearchFormProps {
 
 export function SearchForm({ user, homeStation }: SearchFormProps) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [origin, setOrigin] = useState<OriginChoice | null>(
     user && homeStation ? { type: "home_station", label: homeStation.stationName } : null
   );
@@ -47,7 +48,9 @@ export function SearchForm({ user, homeStation }: SearchFormProps) {
     );
     params.set("mode", mode);
 
-    router.push(`/routes/result?${params.toString()}`);
+    startTransition(() => {
+      router.push(`/routes/result?${params.toString()}`);
+    });
   }
 
   return (
@@ -63,8 +66,8 @@ export function SearchForm({ user, homeStation }: SearchFormProps) {
 
       {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
-      <Button type="submit" fullWidth size="lg">
-        ルートを検索
+      <Button type="submit" fullWidth size="lg" isDisabled={isPending}>
+        {isPending ? "検索しています…" : "ルートを検索"}
       </Button>
     </form>
   );
