@@ -6,6 +6,8 @@ import { ApiError, apiFetch } from "@/lib/api-client";
 import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
 import { candidateLabel, isSameFavoriteTarget, toSearchCandidate } from "@/lib/services/place-resolution";
+import { sortFavoriteDestinationsByRecency } from "@/lib/services/favorite-destination-order";
+import { splitForDisclosure } from "@/lib/services/progressive-disclosure";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
 
 interface DestinationFieldProps {
@@ -14,6 +16,10 @@ interface DestinationFieldProps {
   value: SearchCandidate | null;
   onChange: (candidate: SearchCandidate | null) => void;
 }
+
+// ヒックの法則(選択肢が多いほど意思決定が遅くなる)を踏まえ、登録が新しい順の先頭3件だけを
+// 自動露出し、残りは「もっと見る」で展開する progressive disclosure にする。
+const FAVORITE_PRIMARY_COUNT = 3;
 
 export function DestinationField({
   user,
@@ -28,6 +34,7 @@ export function DestinationField({
   const [favorites, setFavorites] = useState(favoriteDestinations);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showAllFavorites, setShowAllFavorites] = useState(false);
 
   useEffect(() => {
     if (value || debouncedQuery.trim().length === 0) {
@@ -49,6 +56,12 @@ export function DestinationField({
   }, [debouncedQuery, value]);
 
   const isSaved = value ? favorites.some((f) => isSameFavoriteTarget(f, value)) : false;
+  const sortedFavorites = sortFavoriteDestinationsByRecency(favorites);
+  const { primary: primaryFavorites, more: moreFavorites } = splitForDisclosure(
+    sortedFavorites,
+    FAVORITE_PRIMARY_COUNT
+  );
+  const visibleFavorites = showAllFavorites ? sortedFavorites : primaryFavorites;
 
   async function handleSaveFavorite() {
     if (!value || saving || isSaved) return;
@@ -80,7 +93,7 @@ export function DestinationField({
 
       {favorites.length > 0 ? (
         <div className="mb-2 flex flex-wrap gap-2">
-          {favorites.map((favorite) => (
+          {visibleFavorites.map((favorite) => (
             <Button
               key={favorite.favoriteDestinationId}
               size="sm"
@@ -93,6 +106,16 @@ export function DestinationField({
               {favorite.label}
             </Button>
           ))}
+          {!showAllFavorites && moreFavorites.length > 0 ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-expanded={showAllFavorites}
+              onPress={() => setShowAllFavorites(true)}
+            >
+              もっと見る({moreFavorites.length}件)
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -119,7 +142,7 @@ export function DestinationField({
             onPress={handleSaveFavorite}
             className="mt-2"
           >
-            {isSaved ? "登録済み" : "★ 目的地として登録"}
+            {isSaved ? "追加済み" : "★ よく使う行き先に追加"}
           </Button>
           {saveError ? (
             <p className="mt-1 text-xs text-[var(--danger)]">{saveError}</p>

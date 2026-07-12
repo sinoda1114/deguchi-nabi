@@ -4,6 +4,7 @@ import { stationProvider } from "@/lib/integrations";
 import { listHistory } from "@/lib/store/history-repository";
 import { listFavorites } from "@/lib/store/favorite-repository";
 import { listFavoriteDestinations } from "@/lib/store/favorite-destination-repository";
+import { excludeHistoryDuplicatingFavoriteDestinations } from "@/lib/services/recent-history-dedup";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { SearchForm } from "@/components/search/SearchForm";
 
@@ -13,9 +14,15 @@ export default async function Home() {
     ? await stationProvider.getStation(user.homeStationId)
     : null;
 
-  const recentHistory = user ? listHistory(user.userId).slice(0, 3) : [];
   const favorites = user ? listFavorites(user.userId).slice(0, 3) : [];
   const favoriteDestinations = user ? listFavoriteDestinations(user.userId) : [];
+  // よく使う行き先に既に登録済みの目的地は、最近の検索側で二重に見せない
+  const recentHistory = user
+    ? excludeHistoryDuplicatingFavoriteDestinations(
+        listHistory(user.userId),
+        favoriteDestinations
+      ).slice(0, 3)
+    : [];
 
   return (
     <div className="flex flex-1 flex-col">
@@ -29,7 +36,7 @@ export default async function Home() {
 
         {user && favorites.length > 0 ? (
           <section className="mt-8">
-            <h2 className="mb-2 text-xs font-bold text-[var(--foreground-muted)]">お気に入り</h2>
+            <h2 className="mb-2 text-xs font-bold text-[var(--foreground-muted)]">保存したルート</h2>
             <ul className="flex flex-col gap-2">
               {favorites.map((f) => (
                 <li key={f.favoriteId}>

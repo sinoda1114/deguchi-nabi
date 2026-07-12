@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Input } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
+import { splitForDisclosure } from "@/lib/services/progressive-disclosure";
 import type { Station } from "@/lib/domain/station";
 import type { User } from "@/lib/domain/user";
 
@@ -33,16 +34,23 @@ interface OriginFieldProps {
   onChange: (choice: OriginChoice | null) => void;
 }
 
+// 周辺駅候補は距離順(近い順)で返る(CompositeStationAdapter.nearestStations参照)。
+// ヒックの法則(選択肢が多いほど意思決定が遅くなる)を踏まえ、最有力の先頭2件だけを自動露出し、
+// 残りは「もっと見る」で展開する progressive disclosure にする。
+const NEARBY_PRIMARY_COUNT = 2;
+
 export function OriginField({ user, homeStation, value, onChange }: OriginFieldProps) {
   const [manualQuery, setManualQuery] = useState("");
   const [manualCandidates, setManualCandidates] = useState<Station[]>([]);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [nearby, setNearby] = useState<Station[]>([]);
+  const [showAllNearby, setShowAllNearby] = useState(false);
 
   async function handleUseCurrentLocation() {
     setLocationError(null);
     setLocating(true);
+    setShowAllNearby(false);
     if (!("geolocation" in navigator)) {
       setLocationError("この端末では現在地を取得できません");
       setLocating(false);
@@ -81,6 +89,12 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
     setManualCandidates(res.stations);
   }
 
+  const { primary: primaryNearby, more: moreNearby } = splitForDisclosure(
+    nearby,
+    NEARBY_PRIMARY_COUNT
+  );
+  const visibleNearby = showAllNearby ? nearby : primaryNearby;
+
   return (
     <div>
       <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
@@ -113,7 +127,7 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
       {nearby.length > 0 ? (
         <>
           <div className="mt-2 flex flex-wrap gap-2">
-            {nearby.map((station) => (
+            {visibleNearby.map((station) => (
               <Button
                 key={station.stationId}
                 size="sm"
@@ -130,6 +144,16 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
                 {station.stationName}
               </Button>
             ))}
+            {!showAllNearby && moreNearby.length > 0 ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-expanded={showAllNearby}
+                onPress={() => setShowAllNearby(true)}
+              >
+                もっと見る({moreNearby.length}件)
+              </Button>
+            ) : null}
           </div>
           <p className="mt-1 text-[10px] text-[var(--foreground-muted)]">
             周辺駅情報:{" "}

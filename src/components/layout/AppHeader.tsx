@@ -18,7 +18,7 @@ export function AppHeader({ user }: AppHeaderProps) {
           {user ? (
             <>
               <Link href="/favorites" className="text-[var(--foreground-muted)] hover:text-[var(--foreground)]">
-                お気に入り
+                保存したルート
               </Link>
               <Link href="/history" className="text-[var(--foreground-muted)] hover:text-[var(--foreground)]">
                 履歴
