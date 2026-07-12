@@ -93,6 +93,7 @@ export const FIXTURE_BOARDING_POSITIONS: BoardingPosition[] = [
     carNumber: 8,
     doorPosition: "後方",
     targetFacilityId: "fac_shibuya_hikarie_gate",
+    reason: "乗換・出口方向への移動が短くなるため",
     confidence: mediumConfidence(
       "編成両数により号車位置が変動する場合がある"
     ),

@@ -107,6 +107,7 @@ function buildStationProvider(facilities: StationFacility[]): StationProviderPor
           carNumber: 5,
           doorPosition: "中央",
           targetFacilityId: "gate_1",
+          reason: "テスト用の理由",
           confidence: highConfidence,
           verifiedAt: null,
         },

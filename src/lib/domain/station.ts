@@ -24,7 +24,8 @@ export interface BoardingPosition {
   trainFormation: number;
   carNumber: number;
   doorPosition: "前方" | "中央" | "後方";
-  targetFacilityId: string;
+  targetFacilityId: string | null;
+  reason: string;
   confidence: Confidence;
   verifiedAt: string | null;
 }
