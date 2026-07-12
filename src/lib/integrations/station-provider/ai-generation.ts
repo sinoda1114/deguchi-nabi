@@ -74,7 +74,10 @@ export async function generateStationFacilities(
   operator: string,
   lines: string[]
 ): Promise<StationFacility[]> {
-  const prompt = `${stationName}(${operator}、${lines.join("・")})の主要な改札名・出口名・エスカレーター/エレベーターの位置について、一般的に知られている情報のみを教えてください。
+  const stationLabel = operator
+    ? `${stationName}(${operator}、${lines.join("・")})`
+    : `${stationName}(${lines.join("・")})`;
+  const prompt = `${stationLabel}の主要な改札名・出口名・エスカレーター/エレベーターの位置について、一般的に知られている情報のみを教えてください。
 確信が持てないものは含めず、広く知られている代表的なもの数件に絞ってください。存在しない情報を創作しないでください。
 JSON形式で回答してください。`;
 

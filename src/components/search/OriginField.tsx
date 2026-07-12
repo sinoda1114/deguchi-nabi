@@ -96,26 +96,39 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
       ) : null}
 
       {nearby.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {nearby.map((station) => (
-            <Button
-              key={station.stationId}
-              size="sm"
-              variant={
-                value?.type === "station" && value.stationId === station.stationId
-                  ? "primary"
-                  : "secondary"
-              }
-              onPress={() => {
-                onChange({ type: "station", stationId: station.stationId, label: station.stationName });
-                setManualQuery(station.stationName);
-                setManualCandidates([]);
-              }}
+        <>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {nearby.map((station) => (
+              <Button
+                key={station.stationId}
+                size="sm"
+                variant={
+                  value?.type === "station" && value.stationId === station.stationId
+                    ? "primary"
+                    : "secondary"
+                }
+                onPress={() => {
+                  onChange({ type: "station", stationId: station.stationId, label: station.stationName });
+                  setManualQuery(station.stationName);
+                  setManualCandidates([]);
+                }}
+              >
+                {station.stationName}
+              </Button>
+            ))}
+          </div>
+          <p className="mt-1 text-[10px] text-[var(--foreground-muted)]">
+            周辺駅情報:{" "}
+            <a
+              href="https://express.heartrails.com/api.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
             >
-              {station.stationName}
-            </Button>
-          ))}
-        </div>
+              HeartRails Express
+            </a>
+          </p>
+        </>
       ) : null}
 
       <div className="relative mt-2">

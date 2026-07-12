@@ -1,12 +1,14 @@
 import type { StationProviderPort } from "./StationProviderPort";
 import { FixtureStationAdapter } from "./FixtureStationAdapter";
 import { generateBoardingPosition, generateStationFacilities } from "./ai-generation";
+import { decodeHeartRailsStationId, fetchNearestStationsFromHeartRails } from "./heartrails";
 import { readCollection, writeCollection } from "@/lib/store/json-file-store";
 import { FIXTURE_PLATFORMS } from "@/lib/fixtures/stations";
-import type { BoardingPosition, Platform, StationFacility } from "@/lib/domain/station";
+import type { BoardingPosition, Platform, Station, StationFacility } from "@/lib/domain/station";
 
 const FACILITIES_CACHE = "ai-station-facilities";
 const BOARDING_CACHE = "ai-boarding-positions";
+const NEARBY_STATION_CACHE = "nearby-stations";
 
 interface FacilitiesCacheEntry {
   stationId: string;
@@ -16,6 +18,10 @@ interface FacilitiesCacheEntry {
 interface BoardingCacheEntry {
   platformId: string;
   boardingPositions: BoardingPosition[];
+}
+
+interface NearbyStationCacheEntry {
+  station: Station;
 }
 
 /**
@@ -37,16 +43,52 @@ export class CompositeStationAdapter implements StationProviderPort {
     return this.fixture.searchStations(query);
   }
 
-  getStation(stationId: string) {
-    return this.fixture.getStation(stationId);
+  async getStation(stationId: string): Promise<Station | null> {
+    const fixtureStation = await this.fixture.getStation(stationId);
+    if (fixtureStation) return fixtureStation;
+
+    const cache = readCollection<NearbyStationCacheEntry>(NEARBY_STATION_CACHE);
+    const cached = cache.find((c) => c.station.stationId === stationId)?.station;
+    if (cached) return cached;
+
+    // キャッシュ書き込みが失敗していても(読み取り専用ファイルシステム等)、
+    // HeartRails由来のstationIdには駅名・座標が自己完結的に埋め込まれているため
+    // ここで復元できる(路線名等は失われるが、駅の存在自体は解決できる)。
+    return decodeHeartRailsStationId(stationId);
   }
 
   getPlatforms(stationId: string) {
+    // Step B(駅マスタの全国対応)までは Platform 自体も fixture 収録分のみのため、
+    // HeartRails由来の駅は号車情報「確認できません」として扱われる(route-search.ts側)。
     return this.fixture.getPlatforms(stationId);
   }
 
-  nearestStations(latitude: number, longitude: number, limit: number) {
-    return this.fixture.nearestStations(latitude, longitude, limit);
+  async nearestStations(
+    latitude: number,
+    longitude: number,
+    limit: number
+  ): Promise<Station[]> {
+    const fromApi = await fetchNearestStationsFromHeartRails(latitude, longitude);
+    if (!fromApi || fromApi.length === 0) {
+      return this.fixture.nearestStations(latitude, longitude, limit);
+    }
+
+    const limited = fromApi.slice(0, limit);
+
+    try {
+      const cache = readCollection<NearbyStationCacheEntry>(NEARBY_STATION_CACHE);
+      const existingIds = new Set(cache.map((c) => c.station.stationId));
+      const toAdd = limited
+        .filter((s) => !existingIds.has(s.stationId))
+        .map((station) => ({ station }));
+      if (toAdd.length > 0) {
+        writeCollection(NEARBY_STATION_CACHE, [...cache, ...toAdd]);
+      }
+    } catch {
+      // キャッシュ保存は最適化にすぎないため、失敗しても検索結果自体は返す。
+    }
+
+    return limited;
   }
 
   async getFacilities(stationId: string): Promise<StationFacility[]> {
@@ -57,7 +99,7 @@ export class CompositeStationAdapter implements StationProviderPort {
     const cached = cache.find((c) => c.stationId === stationId);
     if (cached) return cached.facilities;
 
-    const station = await this.fixture.getStation(stationId);
+    const station = await this.getStation(stationId);
     if (!station) return [];
 
     const generated = await generateStationFacilities(
