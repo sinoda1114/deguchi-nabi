@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth/session";
 import { stationProvider } from "@/lib/integrations";
 import { listHistory } from "@/lib/store/history-repository";
 import { listFavorites } from "@/lib/store/favorite-repository";
+import { listFavoriteDestinations } from "@/lib/store/favorite-destination-repository";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { SearchForm } from "@/components/search/SearchForm";
 
@@ -14,6 +15,7 @@ export default async function Home() {
 
   const recentHistory = user ? listHistory(user.userId).slice(0, 3) : [];
   const favorites = user ? listFavorites(user.userId).slice(0, 3) : [];
+  const favoriteDestinations = user ? listFavoriteDestinations(user.userId) : [];
 
   return (
     <div className="flex flex-1 flex-col">
@@ -23,7 +25,7 @@ export default async function Home() {
           号車、乗換導線、改札、出口までを一続きで案内します。
         </p>
 
-        <SearchForm user={user} homeStation={homeStation} />
+        <SearchForm user={user} homeStation={homeStation} favoriteDestinations={favoriteDestinations} />
 
         {user && favorites.length > 0 ? (
           <section className="mt-8">

@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
 import type { Station } from "@/lib/domain/station";
-import type { User } from "@/lib/domain/user";
+import type { FavoriteDestination, User } from "@/lib/domain/user";
 import type { RouteMode } from "@/lib/domain/route";
 import { OriginField, type OriginChoice } from "./OriginField";
 import { DestinationField } from "./DestinationField";
@@ -15,9 +15,10 @@ import { loadSearchFormDraft, saveSearchFormDraft } from "@/lib/search-form-pers
 interface SearchFormProps {
   user: User | null;
   homeStation: Station | null;
+  favoriteDestinations?: FavoriteDestination[];
 }
 
-export function SearchForm({ user, homeStation }: SearchFormProps) {
+export function SearchForm({ user, homeStation, favoriteDestinations = [] }: SearchFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [draft] = useState(() => loadSearchFormDraft());
@@ -65,7 +66,12 @@ export function SearchForm({ user, homeStation }: SearchFormProps) {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <OriginField user={user} homeStation={homeStation} value={origin} onChange={setOrigin} />
-      <DestinationField value={destination} onChange={setDestination} />
+      <DestinationField
+        user={user}
+        favoriteDestinations={favoriteDestinations}
+        value={destination}
+        onChange={setDestination}
+      />
       <div>
         <span className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
           ルートモード
