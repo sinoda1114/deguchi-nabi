@@ -9,6 +9,7 @@ import { RouteSummaryCard } from "@/components/result/RouteSummaryCard";
 import { RouteDiagram } from "@/components/diagram/RouteDiagram";
 import { RouteTimeline } from "@/components/timeline/RouteTimeline";
 import { ConfidenceSummary } from "@/components/result/ConfidenceSummary";
+import { WarningBadge } from "@/components/diagram/WarningBadge";
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
@@ -84,6 +85,10 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
           destinationStationId={result.destinationStationId}
           canSave={Boolean(user)}
         />
+        {route.warnings.map((w, i) => (
+          <WarningBadge key={i} text={w} />
+        ))}
+
         <RouteSummaryCard route={route} />
 
         <section>

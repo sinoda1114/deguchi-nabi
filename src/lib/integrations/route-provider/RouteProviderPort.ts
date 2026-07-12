@@ -13,6 +13,8 @@ export interface RailRouteCandidate {
   segments: RailSegmentCandidate[];
   transferCount: number;
   estimatedDurationMinutes: number;
+  /** AIのWeb検索結果を根拠に生成した経路か(true時はUI側で確認不能相当の扱いにする) */
+  isAiGenerated?: boolean;
 }
 
 export interface RouteProviderPort {

@@ -58,6 +58,14 @@ export async function searchRouteGuide(
   const sorted = sortCandidatesByMode(candidates, input.mode);
   const chosen = sorted[0];
 
+  if (input.mode === "accessible" && chosen.isAiGenerated) {
+    return {
+      ok: false,
+      reason:
+        "バリアフリー経路を確認できません。この区間の経路はAIによる推測のみで、段差やエレベーターの有無が未確認のため、安全な案内ができません。駅係員への確認をおすすめします。",
+    };
+  }
+
   const segments: RouteSegment[] = [];
 
   for (const rail of chosen.segments) {
@@ -201,6 +209,12 @@ export async function searchRouteGuide(
 
   const now = new Date();
 
+  const routeWarnings = chosen.isAiGenerated
+    ? [
+        "利用路線・所要時間はAI(Web検索結果)による推測です。運行状況の変更等により実際と異なる場合があります。",
+      ]
+    : [];
+
   return {
     ok: true,
     route: {
@@ -218,7 +232,7 @@ export async function searchRouteGuide(
       keyInstruction: { text: keyInstructionParts.join("、") + "。" },
       segments,
       confidenceSummary,
-      warnings: [],
+      warnings: routeWarnings,
       generatedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + ONE_HOUR_MS).toISOString(),
     },
