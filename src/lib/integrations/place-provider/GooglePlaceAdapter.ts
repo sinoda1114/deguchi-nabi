@@ -81,8 +81,8 @@ export class GooglePlaceAdapter implements PlaceProviderPort {
       name: place.displayName?.text ?? "",
       category: "facility",
       address: place.formattedAddress ?? "",
-      latitude,
-      longitude,
+      latitude: latitude ?? 0,
+      longitude: longitude ?? 0,
       nearestStationCandidates: nearestStations.map((s) => s.stationId),
     };
   }
