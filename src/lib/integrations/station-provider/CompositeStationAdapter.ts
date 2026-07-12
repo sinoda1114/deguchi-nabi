@@ -1,7 +1,11 @@
 import type { StationProviderPort } from "./StationProviderPort";
 import { FixtureStationAdapter } from "./FixtureStationAdapter";
 import { generateBoardingPosition, generateStationFacilities } from "./ai-generation";
-import { decodeHeartRailsStationId, fetchNearestStationsFromHeartRails } from "./heartrails";
+import {
+  decodeHeartRailsStationId,
+  fetchNearestStationsFromHeartRails,
+  searchStationsFromHeartRails,
+} from "./heartrails";
 import { readCollection, writeCollection } from "@/lib/store/json-file-store";
 import { FIXTURE_PLATFORMS } from "@/lib/fixtures/stations";
 import type { BoardingPosition, Platform, Station, StationFacility } from "@/lib/domain/station";
@@ -9,6 +13,10 @@ import type { BoardingPosition, Platform, Station, StationFacility } from "@/lib
 const FACILITIES_CACHE = "ai-station-facilities";
 const BOARDING_CACHE = "ai-boarding-positions";
 const NEARBY_STATION_CACHE = "nearby-stations";
+// 短い部分一致クエリ(例: "中央")で全国から大量ヒットしうるため、
+// レスポンス・キャッシュ肥大化を防ぐ上限。1文字駅名も存在するため
+// 文字数制限ではなく件数制限で絞る。
+const MAX_SEARCH_RESULTS = 20;
 
 interface FacilitiesCacheEntry {
   stationId: string;
@@ -47,8 +55,25 @@ export class CompositeStationAdapter implements StationProviderPort {
 
   constructor(private readonly geminiApiKey: string) {}
 
-  searchStations(query: string) {
-    return this.fixture.searchStations(query);
+  async searchStations(query: string): Promise<Station[]> {
+    // fixture(即時)とHeartRails(外部API、最大5秒)を並列に問い合わせる。
+    // 直列にすると fixture がヒットする検索(西谷・渋谷・新宿)まで毎回
+    // 外部APIの応答を待つ羽目になり、HeartRails側の遅延・障害が
+    // 既存機能のレイテンシに波及してしまうため。
+    const [fixtureMatches, fromApi] = await Promise.all([
+      this.fixture.searchStations(query),
+      searchStationsFromHeartRails(query),
+    ]);
+    if (!fromApi || fromApi.length === 0) return fixtureMatches;
+
+    const fixtureIds = new Set(fixtureMatches.map((s) => s.stationId));
+    const additional = fromApi
+      .filter((s) => !fixtureIds.has(s.stationId))
+      .slice(0, MAX_SEARCH_RESULTS);
+
+    this.cacheNearbyStations(additional);
+
+    return [...fixtureMatches, ...additional];
   }
 
   async getStation(stationId: string): Promise<Station | null> {
@@ -82,11 +107,25 @@ export class CompositeStationAdapter implements StationProviderPort {
     }
 
     const limited = fromApi.slice(0, limit);
+    this.cacheNearbyStations(limited);
 
+    return limited;
+  }
+
+  /**
+   * HeartRails由来の駅を後から getStation() で解決できるようローカルJSONに
+   * キャッシュする(nearestStations・searchStations共通)。
+   * readCollection/writeCollection は同期I/Oのため呼び出し中は検索結果の
+   * 返却をブロックする(既存のnearestStationsと同じ設計を踏襲)。
+   * 書き込みが失敗しても(読み取り専用ファイルシステム等)例外は握りつぶし、
+   * 検索結果自体は返す — キャッシュは最適化であり必須要件ではないため。
+   */
+  private cacheNearbyStations(stations: Station[]): void {
+    if (stations.length === 0) return;
     try {
       const cache = readCollection<NearbyStationCacheEntry>(NEARBY_STATION_CACHE);
       const existingIds = new Set(cache.map((c) => c.station.stationId));
-      const toAdd = limited
+      const toAdd = stations
         .filter((s) => !existingIds.has(s.stationId))
         .map((station) => ({ station }));
       if (toAdd.length > 0) {
@@ -95,8 +134,6 @@ export class CompositeStationAdapter implements StationProviderPort {
     } catch {
       // キャッシュ保存は最適化にすぎないため、失敗しても検索結果自体は返す。
     }
-
-    return limited;
   }
 
   async getFacilities(stationId: string): Promise<StationFacility[]> {
