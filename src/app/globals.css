@@ -105,6 +105,24 @@ body {
   color: var(--foreground);
 }
 
+/* 経路の区間リストの STEP 番号。TrainSegmentList と TransferExitSegmentList を
+   別々の Suspense 境界(別コンポーネント・別 <ol>)に分割しても連番を保つため、
+   採番は JS の index ではなく CSS counter で行う。
+   counter-reset は両方の <ol> を包む祖先(.route-steps-container)で1回だけ設定し、
+   各 <li>(.route-step)側は自分がどの <ol> にいるかを意識せず counter-increment
+   するだけで済む。 */
+.route-steps-container {
+  counter-reset: step;
+}
+
+.route-step {
+  counter-increment: step;
+}
+
+.route-step-label::before {
+  content: "STEP " counter(step) " ・ ";
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
