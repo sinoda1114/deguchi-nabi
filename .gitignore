@@ -23,3 +23,6 @@ next-env.d.ts
 # OS / エディタ
 .DS_Store
 *.log
+
+# Claude Code のセッション内部管理ファイル
+/.claude/
