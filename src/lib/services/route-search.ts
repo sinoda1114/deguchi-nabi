@@ -75,10 +75,15 @@ export async function searchRouteGuide(
       deps.stationProvider.getPlatforms(rail.fromStationId),
     ]);
     const platform = platforms.find((p) => p.platformId === rail.platformId);
-    const boardingPositions = platform
-      ? await deps.stationProvider.getBoardingPositions(platform.platformId)
-      : [];
-    const boarding = boardingPositions[0] ?? null;
+    const boarding = fromStation
+      ? await deps.stationProvider.getBoardingPosition(
+          rail.fromStationId,
+          fromStation.stationName,
+          rail.platformId,
+          rail.line,
+          rail.direction
+        )
+      : null;
 
     segments.push({
       type: "train",
