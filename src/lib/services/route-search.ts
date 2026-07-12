@@ -83,7 +83,7 @@ export async function searchRouteGuide(
         ? {
             carNumber: boarding.carNumber,
             doorPosition: boarding.doorPosition,
-            reason: "乗換・出口方向への移動が短くなるため",
+            reason: boarding.reason,
           }
         : null,
       facilities: [],
