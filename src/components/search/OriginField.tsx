@@ -18,7 +18,7 @@ interface OriginFieldProps {
 }
 
 export function OriginField({ user, homeStation, value, onChange }: OriginFieldProps) {
-  const [manualQuery, setManualQuery] = useState("");
+  const [manualQuery, setManualQuery] = useState(value?.type === "station" ? value.label : "");
   const [manualCandidates, setManualCandidates] = useState<Station[]>([]);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
