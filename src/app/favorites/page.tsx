@@ -15,7 +15,7 @@ export default async function FavoritesPage() {
     <div className="flex flex-1 flex-col">
       <AppHeader user={user} />
       <main className="mx-auto w-full max-w-md flex-1 px-4 py-6">
-        <h1 className="mb-4 text-lg font-black">お気に入り</h1>
+        <h1 className="mb-4 text-lg font-black">保存したルート</h1>
 
         {favorites.length === 0 ? (
           <p className="text-sm text-[var(--foreground-muted)]">
