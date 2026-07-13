@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button, Input } from "@heroui/react";
 import { apiFetch } from "@/lib/api-client";
 import { splitForDisclosure } from "@/lib/services/progressive-disclosure";
+import { SearchPictogram } from "./SearchPictogram";
 import type { Station } from "@/lib/domain/station";
 import type { User } from "@/lib/domain/user";
 
@@ -97,7 +98,8 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
 
   return (
     <div>
-      <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
+      <label className="mb-1 flex items-center gap-1 text-xs font-bold text-[var(--foreground-muted)]">
+        <SearchPictogram type="origin" className="h-3.5 w-3.5" />
         出発地
       </label>
       <div className="flex flex-wrap gap-2">
@@ -116,6 +118,7 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
           isPending={locating}
           onPress={handleUseCurrentLocation}
         >
+          <SearchPictogram type="current-location" className="h-3.5 w-3.5" />
           {locating ? "取得中…" : "現在地を使用"}
         </Button>
       </div>
