@@ -69,14 +69,20 @@ export class GooglePlaceAdapter implements PlaceProviderPort {
   async getPlace(placeId: string): Promise<Destination | null> {
     if (!placeId.trim()) return null;
 
-    const res = await fetch(`${DETAILS_URL}/${encodeURIComponent(placeId)}`, {
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": this.apiKey,
-        "X-Goog-FieldMask": DETAILS_FIELD_MASK,
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    // languageCode はヘッダーではなくクエリパラメータで指定する必要がある
+    // (Place Details, New の仕様)。省略するとGoogle既定言語(英語名等)が
+    // 返り、日本語検索で選んだ場所なのに目的地名が英語表記になってしまう。
+    const res = await fetch(
+      `${DETAILS_URL}/${encodeURIComponent(placeId)}?languageCode=ja&regionCode=JP`,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": this.apiKey,
+          "X-Goog-FieldMask": DETAILS_FIELD_MASK,
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      }
+    );
 
     if (!res.ok) return null;
     const place = (await res.json()) as GooglePlace;

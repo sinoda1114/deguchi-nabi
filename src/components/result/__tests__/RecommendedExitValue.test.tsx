@@ -48,6 +48,8 @@ const OK_RESULT: FacilitiesSearchResult = {
     gate: null,
     exit: null,
     elevator: null,
+    hasApproximateGuidance: false,
+    approximateDirectionLabel: null,
   },
 };
 
