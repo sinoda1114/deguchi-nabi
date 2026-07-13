@@ -97,6 +97,9 @@ JSON形式で回答してください。`;
     level: f.level,
     accessible: f.facilityType === "elevator",
     coordinates: null,
+    // AI生成は座標・出口→改札の連結を持たないため、目的地座標に応じた
+    // 出口選定の対象にはならない(常に従来通りの先頭一致で扱われる)。
+    connectedGateId: null,
     confidence: aiConfidence(),
     verifiedAt: null,
   }));

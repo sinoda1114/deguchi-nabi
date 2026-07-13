@@ -63,7 +63,7 @@ const FACILITIES_WITH_ELEVATOR: StationFacility[] = [
     name: "中央改札",
     level: "1F",
     accessible: true,
-    coordinates: null,
+    coordinates: null, connectedGateId: null,
     confidence: highConfidence,
     verifiedAt: null,
   },
@@ -74,7 +74,7 @@ const FACILITIES_WITH_ELEVATOR: StationFacility[] = [
     name: "A1出口",
     level: "1F",
     accessible: true,
-    coordinates: null,
+    coordinates: null, connectedGateId: null,
     confidence: highConfidence,
     verifiedAt: null,
   },
@@ -85,7 +85,7 @@ const FACILITIES_WITH_ELEVATOR: StationFacility[] = [
     name: "中央エレベーター",
     level: "1F",
     accessible: true,
-    coordinates: null,
+    coordinates: null, connectedGateId: null,
     confidence: highConfidence,
     verifiedAt: null,
   },
@@ -100,7 +100,7 @@ const FACILITIES_WITH_ESCALATOR_AND_ELEVATOR: StationFacility[] = [
     name: "中央エスカレーター",
     level: "1F",
     accessible: true,
-    coordinates: null,
+    coordinates: null, connectedGateId: null,
     confidence: highConfidence,
     verifiedAt: null,
   },
@@ -170,6 +170,7 @@ const BASE_INPUT = {
   originLabel: "出発駅",
   destinationStationId: "destination",
   destinationLabel: "到着駅",
+  destinationCoordinates: null,
   accessibility: { avoidStairs: false, preferElevator: false, preferEscalator: false },
 };
 
@@ -495,6 +496,206 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.result.transferSegment.facilities[0]?.facilityType).toBe("escalator");
+  });
+
+  describe("目的地座標による出口選定", () => {
+    const FAR_EXIT: StationFacility = {
+      facilityId: "exit_far",
+      stationId: "destination",
+      facilityType: "exit",
+      name: "遠い出口",
+      level: "1F",
+      accessible: true,
+      coordinates: { lat: 0, lng: 0 },
+      connectedGateId: "gate_far",
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const NEAR_EXIT: StationFacility = {
+      facilityId: "exit_near",
+      stationId: "destination",
+      facilityType: "exit",
+      name: "近い出口",
+      level: "1F",
+      accessible: true,
+      coordinates: { lat: 0.0001, lng: 0.0001 },
+      connectedGateId: "gate_near",
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const GATE_FAR: StationFacility = {
+      facilityId: "gate_far",
+      stationId: "destination",
+      facilityType: "gate",
+      name: "遠い出口側改札",
+      level: "1F",
+      accessible: true,
+      coordinates: null,
+      connectedGateId: null,
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const GATE_NEAR: StationFacility = {
+      facilityId: "gate_near",
+      stationId: "destination",
+      facilityType: "gate",
+      name: "近い出口側改札",
+      level: "1F",
+      accessible: true,
+      coordinates: null,
+      connectedGateId: null,
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const MULTI_EXIT_FACILITIES = [FAR_EXIT, NEAR_EXIT, GATE_FAR, GATE_NEAR];
+
+    test("目的地座標に最も近い出口を選ぶ(先頭一致ではなく)", async () => {
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider(MULTI_EXIT_FACILITIES),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.0001, lng: 0.0001 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.result.exit?.name).toBe("近い出口");
+    });
+
+    test("選ばれた出口の connectedGateId から対応する改札を選ぶ", async () => {
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider(MULTI_EXIT_FACILITIES),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.0001, lng: 0.0001 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.result.gate?.name).toBe("近い出口側改札");
+    });
+
+    test("destinationCoordinates が無ければ従来通り先頭の出口を選ぶ(回帰確認)", async () => {
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider(MULTI_EXIT_FACILITIES),
+      };
+      const input = { ...BASE_INPUT, mode: "easy" as const, destinationCoordinates: null };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.result.exit?.name).toBe("遠い出口");
+    });
+
+    test("出口の座標が無いデータが混在していても、座標を持つ出口の中から選ぶ", async () => {
+      const noCoordExit: StationFacility = {
+        ...FAR_EXIT,
+        facilityId: "exit_no_coord",
+        name: "座標無し出口",
+        coordinates: null,
+        connectedGateId: null,
+      };
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([noCoordExit, NEAR_EXIT, GATE_NEAR]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.0001, lng: 0.0001 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.result.exit?.name).toBe("近い出口");
+    });
+
+    test("connectedGateId がgate以外のfacilityを指していても、それを改札として返さない(先頭改札にフォールバック)", async () => {
+      const exitLinkedToEscalator: StationFacility = {
+        ...NEAR_EXIT,
+        connectedGateId: "escalator_wrong",
+      };
+      const wrongTypeFacility: StationFacility = {
+        facilityId: "escalator_wrong",
+        stationId: "destination",
+        facilityType: "escalator",
+        name: "誤ってリンクされたエスカレーター",
+        level: "1F",
+        accessible: true,
+        coordinates: null,
+        connectedGateId: null,
+        confidence: highConfidence,
+        verifiedAt: null,
+      };
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([
+          exitLinkedToEscalator,
+          wrongTypeFacility,
+          GATE_NEAR,
+        ]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.0001, lng: 0.0001 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.result.gate?.facilityType).toBe("gate");
+      expect(outcome.result.gate?.name).not.toBe("誤ってリンクされたエスカレーター");
+    });
+
+    test("connectedGateId が存在しないfacilityIdを指していても、先頭改札にフォールバックする", async () => {
+      const exitLinkedToNothing: StationFacility = {
+        ...NEAR_EXIT,
+        connectedGateId: "gate_does_not_exist",
+      };
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([exitLinkedToNothing, GATE_NEAR]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.0001, lng: 0.0001 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.result.gate?.name).toBe("近い出口側改札");
+    });
   });
 });
 

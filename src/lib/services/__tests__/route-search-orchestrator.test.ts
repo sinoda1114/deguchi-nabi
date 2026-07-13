@@ -213,4 +213,40 @@ describe("resolveOriginDestination", () => {
     expect(result.destinationStationId).toBe("destination");
     expect(result.destinationLabel).toBe("テスト目的地");
   });
+
+  test("destination が place の場合は place の座標を destinationCoordinates として返す(目的地座標での出口選定に使う)", async () => {
+    const deps: OriginDestinationDeps = {
+      stationProvider: buildStationProvider(),
+      placeProvider: buildPlaceProvider({ ...PLACE, latitude: 35.6606, longitude: 139.7018 }),
+    };
+    const result = await resolveOriginDestination(
+      {
+        origin: { type: "station", stationId: "origin" },
+        destination: { type: "place", placeId: "place_1" },
+      },
+      null,
+      deps
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.destinationCoordinates).toEqual({ lat: 35.6606, lng: 139.7018 });
+  });
+
+  test("destination が station の場合は destinationCoordinates を null にする(駅自体が目的地のため座標最適化は不要)", async () => {
+    const deps: OriginDestinationDeps = {
+      stationProvider: buildStationProvider(),
+      placeProvider: buildPlaceProvider(PLACE),
+    };
+    const result = await resolveOriginDestination(
+      {
+        origin: { type: "station", stationId: "origin" },
+        destination: { type: "station", stationId: "destination" },
+      },
+      null,
+      deps
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.destinationCoordinates).toBeNull();
+  });
 });

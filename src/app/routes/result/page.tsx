@@ -91,6 +91,7 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
     originLabel: resolved.originLabel,
     destinationStationId: resolved.destinationStationId,
     destinationLabel: resolved.destinationLabel,
+    destinationCoordinates: resolved.destinationCoordinates,
     mode,
     accessibility: DEFAULT_ACCESSIBILITY,
   };
