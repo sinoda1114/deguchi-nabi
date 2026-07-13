@@ -26,7 +26,7 @@ export async function RouteTimelineDiagramSection({
 
   if (!facilitiesResult.ok) {
     return (
-      <p className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--foreground-muted)]">
+      <p className="stream-reveal rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--foreground-muted)]">
         {facilitiesResult.reason}
       </p>
     );
@@ -34,5 +34,9 @@ export async function RouteTimelineDiagramSection({
 
   const nodes = buildRouteTimelineNodes(trainSegments, facilitiesResult.result, destinationName);
 
-  return <RouteTimelineDiagram nodes={nodes} />;
+  return (
+    <div className="stream-reveal">
+      <RouteTimelineDiagram nodes={nodes} />
+    </div>
+  );
 }

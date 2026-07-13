@@ -156,6 +156,25 @@ body {
   -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
 }
 
+/* Suspense境界が解決してスケルトンから実コンテンツへ切り替わる瞬間の演出。
+   即座に切り替わると「固まって急に変わった」ように見えるため、上から
+   ふわっと降りてくる動きを付けて「ストリーミングで生成が進んでいる」体感を出す
+   (ユーザーフィードバックに基づく)。 */
+@keyframes stream-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stream-reveal {
+  animation: stream-reveal var(--duration-normal) var(--ease-out-expo) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

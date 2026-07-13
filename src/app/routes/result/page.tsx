@@ -25,6 +25,14 @@ import { ConfidenceSummarySection } from "@/components/result/ConfidenceSummaryS
 import { ConfidenceSummarySectionSkeleton } from "@/components/result/ConfidenceSummarySectionSkeleton";
 import { WarningBadge } from "@/components/diagram/WarningBadge";
 
+// buildTrainSegments/buildTransferAndExitSegments は /api/routes/search と同じ
+// Gemini Search Grounding パターン(検索55秒+抽出15秒、最大70秒)を使いうる。
+// Suspense配下でストリーミングしていても、Functionはレンダリング完了まで
+// 生き続けるため、プラットフォームのデフォルト実行時間上限では打ち切られ、
+// ページが「途中で固まる」ように見える。/api/routes/search/route.ts と
+// 同じ上限を明示的に確保する。
+export const maxDuration = 90;
+
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
 const DEFAULT_ACCESSIBILITY: AccessibilityCondition = {
