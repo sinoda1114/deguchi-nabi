@@ -12,6 +12,8 @@ export type SearchPictogramType =
 interface SearchPictogramProps {
   type: SearchPictogramType;
   className?: string;
+  /** "favorite"タイプの塗りつぶし有無(登録済み/未登録の状態表示に使う)。デフォルトtrue。 */
+  filled?: boolean;
 }
 
 const ICONS: Record<SearchPictogramType, LucideIcon> = {
@@ -29,13 +31,13 @@ const ICONS: Record<SearchPictogramType, LucideIcon> = {
  * 常に隣接するテキストラベルの装飾として使うため、スクリーンリーダーには公開しない
  * (aria-labelを付けるとラベルと二重読み上げになる)。
  */
-export function SearchPictogram({ type, className = "h-4 w-4" }: SearchPictogramProps) {
+export function SearchPictogram({ type, className = "h-4 w-4", filled = true }: SearchPictogramProps) {
   const Icon = ICONS[type];
   return (
     <Icon
       className={className}
       strokeWidth={1.8}
-      fill={type === "favorite" ? "currentColor" : "none"}
+      fill={type === "favorite" && filled ? "currentColor" : "none"}
       aria-hidden="true"
       focusable="false"
     />
