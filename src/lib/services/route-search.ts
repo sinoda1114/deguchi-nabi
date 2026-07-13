@@ -378,8 +378,8 @@ export interface FacilitiesBuildSuccess {
 
 /**
  * 到着駅の改札・出口・エレベーター情報を取得し、transfer/exit セグメントを組み立てた結果。
- * RouteDiagramSection / ConfidenceSummarySection / RecommendedExitValue /
- * KeyInstructionText / FacilitiesWarningBadges が共有する Promise の型として使う。
+ * RouteDiagramSection / ConfidenceSummarySection / RouteOverviewContent /
+ * RouteTimelineDiagramSection / FacilitiesWarningBadges が共有する Promise の型として使う。
  */
 export type FacilitiesSearchResult =
   | { ok: true; result: FacilitiesBuildSuccess }
