@@ -1,5 +1,10 @@
 import type { Confidence } from "./confidence";
 
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
 export interface Station {
   stationId: string;
   stationName: string;

@@ -2,13 +2,18 @@ import { describe, expect, test } from "vitest";
 import {
   candidateLabel,
   isSameFavoriteTarget,
+  parseCoordinatesParam,
   resolveArrivalStationId,
+  searchDestinationCandidates,
   toFavoriteDestinationInput,
   toSearchCandidate,
+  type PlaceResolutionDeps,
   type SearchCandidate,
 } from "@/lib/services/place-resolution";
 import type { Destination, Station } from "@/lib/domain/station";
 import type { FavoriteDestination } from "@/lib/domain/user";
+import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
+import type { PlaceProviderPort } from "@/lib/integrations/place-provider/PlaceProviderPort";
 
 const STATION: Station = {
   stationId: "st_1",
@@ -147,5 +152,95 @@ describe("isSameFavoriteTarget", () => {
     expect(isSameFavoriteTarget(stationFavorite, { kind: "place", destination: DESTINATION })).toBe(
       false
     );
+  });
+});
+
+describe("searchDestinationCandidates", () => {
+  function buildDeps(searchPlaces: PlaceProviderPort["searchPlaces"]): PlaceResolutionDeps {
+    const stationProvider: StationProviderPort = {
+      async searchStations() {
+        return [];
+      },
+      async getStation() {
+        return null;
+      },
+      async getPlatforms() {
+        return [];
+      },
+      async getFacilities() {
+        return [];
+      },
+      async getBoardingPosition() {
+        return null;
+      },
+      async nearestStations() {
+        return [];
+      },
+    };
+    const placeProvider: PlaceProviderPort = {
+      searchPlaces,
+      async getPlace() {
+        return null;
+      },
+    };
+    return { stationProvider, placeProvider };
+  }
+
+  test("near を渡すと placeProvider.searchPlaces にそのまま座標を渡す(目的地検索の位置バイアス)", async () => {
+    const receivedArgs: unknown[][] = [];
+    const deps = buildDeps(async (query, near) => {
+      receivedArgs.push([query, near]);
+      return [];
+    });
+
+    await searchDestinationCandidates("スターバックス", deps, { lat: 35.4436, lng: 139.585 });
+
+    expect(receivedArgs[0]).toEqual(["スターバックス", { lat: 35.4436, lng: 139.585 }]);
+  });
+
+  test("near を渡さない場合は placeProvider.searchPlaces に undefined を渡す(従来通り全国検索)", async () => {
+    const receivedArgs: unknown[][] = [];
+    const deps = buildDeps(async (query, near) => {
+      receivedArgs.push([query, near]);
+      return [];
+    });
+
+    await searchDestinationCandidates("スターバックス", deps);
+
+    expect(receivedArgs[0]).toEqual(["スターバックス", undefined]);
+  });
+});
+
+describe("parseCoordinatesParam", () => {
+  test("有効な緯度経度を座標に変換する", () => {
+    expect(parseCoordinatesParam("35.4436", "139.585")).toEqual({ lat: 35.4436, lng: 139.585 });
+  });
+
+  test("lat が null(未指定)の場合は null を返す(Number(null)が0になる罠を回避)", () => {
+    expect(parseCoordinatesParam(null, "139.585")).toBeNull();
+  });
+
+  test("lng が null(未指定)の場合は null を返す", () => {
+    expect(parseCoordinatesParam("35.4436", null)).toBeNull();
+  });
+
+  test("両方 null の場合も null を返す(0,0 にならない)", () => {
+    expect(parseCoordinatesParam(null, null)).toBeNull();
+  });
+
+  test("空文字の場合は null を返す", () => {
+    expect(parseCoordinatesParam("", "")).toBeNull();
+  });
+
+  test("数値に変換できない文字列は null を返す", () => {
+    expect(parseCoordinatesParam("abc", "139.585")).toBeNull();
+  });
+
+  test("緯度が範囲外(-90〜90)の場合は null を返す", () => {
+    expect(parseCoordinatesParam("999", "139.585")).toBeNull();
+  });
+
+  test("経度が範囲外(-180〜180)の場合は null を返す", () => {
+    expect(parseCoordinatesParam("35.4436", "999")).toBeNull();
   });
 });
