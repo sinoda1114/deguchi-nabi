@@ -1,5 +1,6 @@
 import type {
   AccessibilityCondition,
+  ArrivalGuide,
   KeyInstruction,
   RouteConfidenceSummary,
   RouteGuide,
@@ -7,7 +8,7 @@ import type {
   RouteSegment,
 } from "@/lib/domain/route";
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
-import { lowConfidence, unavailableConfidence } from "@/lib/domain/confidence";
+import { unavailableConfidence } from "@/lib/domain/confidence";
 import type {
   RailRouteCandidate,
   RouteProviderPort,
@@ -371,10 +372,16 @@ export interface FacilitiesBuildSuccess {
   hasApproximateGuidance: boolean;
   /**
    * hasApproximateGuidanceがtrueの場合のみ、目的地の方角(8方位ラベル)。
-   * computeKeyInstruction が「改札は確認できません、出口は確認できません」
-   * ではなく「◯◯側の改札へ、◯◯側の出口へ」と断定的に案内するために使う。
+   * 改札名・出口名の代わりには使わない、あくまで「推奨方向」として独立に
+   * 提示するための値(computeKeyInstruction・UI双方で同じ扱いを徹底する)。
    */
   approximateDirectionLabel: string | null;
+  /**
+   * gate/exitの解決結果+AI生成の改札後導線から組み立てた詳細ステップ列。
+   * buildTransferAndExitSegments内で1度だけ生成し(AI呼び出しの重複防止)、
+   * searchRouteGuideはこれを再生成せずそのまま使う。
+   */
+  arrivalGuide: ArrivalGuide;
 }
 
 /**
@@ -447,22 +454,17 @@ export async function buildTransferAndExitSegments(
           },
         ]
       : [],
-    // approximateタイアでは「改札を出る」こと自体は断定してよい(どの駅にも
-    // 改札は必ずある)が、目的地の方角に改札が実在するとまでは断定しない
-    // (Codexレビュー指摘: 存在未確認の施設を断定的に案内すると誤誘導になる)。
-    // 「現地でご確認ください」等の弱気な表現を繰り返すと機能不全に見え
-    // 信頼を損ねるとのフィードバックを受け、不確実性はconfidenceバッジと
-    // ページ上部の1回だけの注記(hasApproximateGuidance)で伝える。
-    instruction: gate
-      ? `${gate.name}へ向かってください。`
-      : recommendation.tier === "approximate"
-        ? "改札を出てください。"
-        : "改札情報を確認できません。",
-    confidence: gate
-      ? gate.confidence
-      : recommendation.tier === "approximate"
-        ? lowConfidence("出口が未確定のため、改札も確定できません。")
-        : unavailableConfidence("改札情報が不足しています"),
+    // 具体的な改札名を確認できていない場合、「改札を出てください」のような
+    // 実行可能に見える定型文は表示しない(改札の実在自体は確実でも、目的地の
+    // 方角に実在するとまでは確認できていないため)。確認できない旨を明示し、
+    // 方角(あれば)は hasApproximateGuidance/approximateDirectionLabel 経由で
+    // 「推奨方向」として別途・一度だけ提示する(ユーザーフィードバックに基づき、
+    // 未確認の情報を定型文でごまかさない設計に変更)。
+    instruction: gate ? `${gate.name}へ向かってください。` : "改札は確認できません。",
+    // 改札自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
+    // 常にunavailable(確認不能)として扱う。lowは「実在は確認済みだが検証度が
+    // 低い」ケース専用であり、未確認をlowとして扱うと過大な確信度になる。
+    confidence: gate ? gate.confidence : unavailableConfidence("改札情報が不足しています"),
     sourceReferences: [],
     warnings: [],
   };
@@ -484,43 +486,50 @@ export async function buildTransferAndExitSegments(
           },
         ]
       : [],
-    // 出口の実在する方角までは断定しない(その方角に出口があるかは未確認)。
-    // 客観的事実として確定している「目的地の方角」のみを案内する。
-    instruction: exit
-      ? `${exit.name}から出てください。`
-      : recommendation.tier === "approximate"
-        ? `目的地は${recommendation.destinationDirectionLabel}側です。案内表示に従って出口へ向かってください。`
-        : "出口情報を確認できません。",
-    confidence: exit
-      ? exit.confidence
-      : recommendation.tier === "approximate"
-        ? lowConfidence(
-            `目的地(${recommendation.destinationDirectionLabel}側)に近い出口データが無いため、方角のみの案内です。`
-          )
-        : unavailableConfidence("出口情報が不足しています"),
+    // 具体的な出口名を確認できていない場合、方角(◯◯側)を出口名の代用として
+    // 表示しない。方角は hasApproximateGuidance/approximateDirectionLabel
+    // 経由で「推奨方向」として別途提示する(ユーザーフィードバックに基づき、
+    // 「南側」等を出口名の代わりに表示する設計をやめた)。
+    instruction: exit ? `${exit.name}から出てください。` : "出口は確認できません。",
+    // 出口自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
+    // 常にunavailable(確認不能)として扱う。
+    confidence: exit ? exit.confidence : unavailableConfidence("出口情報が不足しています"),
     sourceReferences: [],
     warnings: [],
   };
 
-  const recommendedExit =
-    exit?.name ??
-    (recommendation.tier === "approximate"
-      ? `${recommendation.destinationDirectionLabel}側`
-      : "確認できません");
+  // 方角(◯◯側)を出口名の代用にしない。実際の出口名を確認できなければ
+  // 「確認できません」と明示する。
+  const recommendedExit = exit?.name ?? "確認できません";
+
+  const resultWithoutArrivalGuide: Omit<FacilitiesBuildSuccess, "arrivalGuide"> = {
+    transferSegment,
+    exitSegment,
+    recommendedExit,
+    gate,
+    exit,
+    elevator,
+    hasApproximateGuidance: recommendation.tier === "approximate",
+    approximateDirectionLabel:
+      recommendation.tier === "approximate" ? recommendation.destinationDirectionLabel : null,
+  };
+
+  // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
+  // 呼ばれても、この関数を通る限り必ずarrivalGuideが載る。searchRouteGuideは
+  // これを再生成せず結果をそのまま使うことで、AI呼び出しの重複を防ぐ)。
+  const arrivalGuide = await buildArrivalGuide(
+    resultWithoutArrivalGuide,
+    input.destinationStationId,
+    candidate.arrivalStationName,
+    candidate.arrivalStationCoordinates,
+    input.mode,
+    Boolean(candidate.chosen.isAiGenerated),
+    deps.stationProvider
+  );
 
   return {
     ok: true,
-    result: {
-      transferSegment,
-      exitSegment,
-      recommendedExit,
-      gate,
-      exit,
-      elevator,
-      hasApproximateGuidance: recommendation.tier === "approximate",
-      approximateDirectionLabel:
-        recommendation.tier === "approximate" ? recommendation.destinationDirectionLabel : null,
-    },
+    result: { ...resultWithoutArrivalGuide, arrivalGuide },
   };
 }
 
@@ -555,21 +564,19 @@ export function computeKeyInstruction(
 
   const directionLabel = facilities.approximateDirectionLabel;
 
+  // 改札・出口は具体的な名称が確認できた場合のみ名指しする。方角
+  // (directionLabel)は改札名・出口名の代わりには使わず、出口が未確認の
+  // 場合にのみ「推奨方向」として付記する(ユーザーフィードバックに基づき、
+  // 「南側」等を出口名の代用にしない設計へ変更)。
   const keyInstructionParts = [
     firstBoarding?.boardingPosition
       ? `${firstBoarding.boardingPosition.carNumber}号車付近に乗車`
       : "乗車位置は確認できません",
-    // 改札は必ず存在するので断定できるが、出口が目的地の方角に実在するかは
-    // 未確認のため断定しない(確定しているのは「目的地の方角」のみ)。
-    facilities.gate
-      ? `${facilities.gate.name}`
-      : directionLabel
-        ? "改札を出て"
-        : "改札は確認できません",
+    facilities.gate ? `${facilities.gate.name}` : "改札は確認できません",
     facilities.exit
       ? `${facilities.exit.name}へ`
       : directionLabel
-        ? `${directionLabel}側へ`
+        ? `出口は確認できません(推奨方向: ${directionLabel}側)`
         : "出口は確認できません",
   ];
 
@@ -632,17 +639,9 @@ export async function searchRouteGuide(
       },
       keyInstruction,
       segments,
-      // fixtureの改札・出口データ+AI生成の改札後導線からGuideStep[]を組み立てる
-      // (docs/04 §Phase 2.5)。
-      arrivalGuide: await buildArrivalGuide(
-        facilitiesOutcome.result,
-        input.destinationStationId,
-        candidateResult.arrivalStationName,
-        candidateResult.arrivalStationCoordinates,
-        input.mode,
-        Boolean(candidateResult.chosen.isAiGenerated),
-        deps.stationProvider
-      ),
+      // buildTransferAndExitSegments内で既に1度だけ生成済み(AI呼び出しの
+      // 重複防止のため、ここでは再生成せずそのまま使う)。
+      arrivalGuide: facilitiesOutcome.result.arrivalGuide,
       confidenceSummary,
       warnings: candidateResult.routeWarnings,
       generatedAt: now.toISOString(),

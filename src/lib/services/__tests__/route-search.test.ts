@@ -211,6 +211,66 @@ describe("searchRouteGuide", () => {
     ]);
   });
 
+  /**
+   * 回帰テスト: 「西谷駅→バーガーキング相鉄横浜駅店」で実際に発生した不具合
+   * (改札名が一度も表示されず、方角(南側等)が出口名の代わりに表示される)を
+   * 再現する。改札外の目的地座標を出口の直近に設定し、gate/exitが両方
+   * 確定するケース(実際の相鉄横浜駅のような大規模駅を模したテストデータ)で、
+   * 改札ステップが理由なく省略されないこと・方角が名称の代用にならないことを
+   * 固定する。実在の横浜駅fixtureそのものは追加せず、既存のテスト用抽象駅
+   * データ("destination")にこのシナリオ専用のgate/exitを与える形で表現する
+   * (このファイルの他のテストと同じ抽象化レベルに揃え、実データ整備という
+   * 別軸の作業を本バグ修正のスコープに含めないため)。
+   */
+  test("回帰: 改札外の大規模駅目的地(西谷→バーガーキング相鉄横浜駅店で発生した事象)で改札・出口ステップを理由なく省略せず、方角を名称の代わりに使わない", async () => {
+    const gate: StationFacility = {
+      facilityId: "gate_yokohama_like",
+      stationId: "destination",
+      facilityType: "gate",
+      name: "西口改札",
+      level: "1F",
+      accessible: true,
+      coordinates: { lat: 0, lng: 0 },
+      connectedGateId: null,
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const exit: StationFacility = {
+      facilityId: "exit_yokohama_like",
+      stationId: "destination",
+      facilityType: "exit",
+      name: "西口",
+      level: "1F",
+      accessible: true,
+      coordinates: { lat: 0, lng: 0 },
+      connectedGateId: "gate_yokohama_like",
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider: buildStationProvider([gate, exit]),
+    };
+    const result = await searchRouteGuide(
+      { ...BASE_INPUT, mode: "easy", destinationCoordinates: { lat: 0, lng: 0 } },
+      deps
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.route.arrivalGuide?.steps.map((s) => s.type)).toEqual([
+      "ticket_gate",
+      "street_exit",
+    ]);
+    expect(result.route.arrivalGuide?.steps[0].title).toBe("西口改札");
+    expect(result.route.arrivalGuide?.steps[1].title).toBe("西口");
+    expect(result.route.summary.recommendedExit).toBe("西口");
+    // 方角(◯◯側)が出口名の代わりに使われていないことを固定する
+    expect(result.route.summary.recommendedExit).not.toMatch(/側$/);
+    expect(result.route.keyInstruction.text).not.toContain("改札を出て");
+    expect(result.route.keyInstruction.text).toContain("西口改札");
+  });
+
   test("accessible モードでエレベーター情報がなければ確認不能として拒否する", async () => {
     const noElevator = FACILITIES_WITH_ELEVATOR.filter((f) => f.facilityType !== "elevator");
     const deps: RouteSearchDeps = {
@@ -783,10 +843,17 @@ describe("buildTransferAndExitSegments", () => {
 
       expect(outcome.result.exit).toBeNull();
       expect(outcome.result.gate).toBeNull();
-      expect(outcome.result.recommendedExit).toContain("北");
-      expect(outcome.result.exitSegment.instruction).toContain("北");
+      // 具体的な出口が確認できない場合、方角(北)を出口名の代わりに使わず
+      // 「確認できません」と明示する(ユーザーフィードバックに基づく変更)。
+      // 方角自体は hasApproximateGuidance/approximateDirectionLabel として
+      // 引き続き独立に保持する(下のアサーション参照)。
+      expect(outcome.result.recommendedExit).toBe("確認できません");
+      expect(outcome.result.exitSegment.instruction).toBe("出口は確認できません。");
       expect(outcome.result.exitSegment.instruction).not.toContain("南口");
-      expect(outcome.result.exitSegment.confidence.level).toBe("low");
+      // 出口自体が未確認(実在するかどうか未確認)なので unavailable として扱う
+      // (「確認不能」をlowとして扱わない設計変更。低いのは検証度ではなく
+      // 実在確認そのものができていないため)。
+      expect(outcome.result.exitSegment.confidence.level).toBe("unavailable");
       expect(outcome.result.transferSegment.instruction).not.toContain("南改札");
       // 「現地でご確認ください」等の弱気な文言をsegment単位で繰り返さない
       // (信頼を損ねるとのフィードバックを受け、断定的な文言+ページ全体で
@@ -794,8 +861,8 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.result.exitSegment.instruction).not.toContain("現地");
       expect(outcome.result.transferSegment.instruction).not.toContain("現地");
       expect(outcome.result.exitSegment.warnings).toEqual([]);
-      expect(outcome.result.recommendedExit).not.toContain("現地");
       expect(outcome.result.hasApproximateGuidance).toBe(true);
+      expect(outcome.result.approximateDirectionLabel).toBe("北");
     });
 
     test("目的地と候補出口の方角がほぼ一致する場合は、引き続き具体的な出口を案内する(閾値内は従来通り)", async () => {
@@ -848,7 +915,7 @@ describe("buildTransferAndExitSegments", () => {
 
       expect(outcome.result.exit).toBeNull();
       expect(outcome.result.exitSegment.instruction).not.toContain("座標無し出口");
-      expect(outcome.result.exitSegment.confidence.level).toBe("low");
+      expect(outcome.result.exitSegment.confidence.level).toBe("unavailable");
     });
 
     test("目的地座標はあるが到着駅自体の座標が取得できない場合、方角を判定できないため先頭一致で断定せず出口を確認不能とする(クラッシュしない)", async () => {
@@ -878,7 +945,7 @@ describe("buildTransferAndExitSegments", () => {
 
       expect(outcome.result.exit).toBeNull();
       expect(outcome.result.gate).toBeNull();
-      expect(outcome.result.exitSegment.instruction).toBe("出口情報を確認できません。");
+      expect(outcome.result.exitSegment.instruction).toBe("出口は確認できません。");
     });
 
     test("目的地が駅からごく近い場合は方角判定が数学的に不安定になるためスキップし、座標ベースの最近傍選定を使う", async () => {
@@ -988,7 +1055,7 @@ describe("computeKeyInstruction", () => {
     expect(keyInstruction.text).toBe("乗車位置は確認できません、改札は確認できません、出口は確認できません。");
   });
 
-  test("出口・改札が方角のみの案内(approximate)の場合、断定的な方角表現を使う(「確認できません」は使わない)", async () => {
+  test("出口が方角のみ判明している場合、「確認できません」を明示しつつ推奨方向を別途付記する(方角を出口名の代わりにしない)", async () => {
     const SOUTH_EXIT: StationFacility = {
       facilityId: "exit_south",
       stationId: "destination",
@@ -1019,7 +1086,6 @@ describe("computeKeyInstruction", () => {
     if (!outcome.ok) return;
 
     const keyInstruction = computeKeyInstruction(trainSegments, outcome.result);
-    expect(keyInstruction.text).toContain("北側");
-    expect(keyInstruction.text).not.toContain("確認できません");
+    expect(keyInstruction.text).toContain("出口は確認できません(推奨方向: 北側)");
   });
 });
