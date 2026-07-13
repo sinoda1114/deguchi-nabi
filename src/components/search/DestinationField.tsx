@@ -142,25 +142,9 @@ export function DestinationField({
         目的地
       </label>
 
-      {favorites.length > 0 ? (
-        <div className="mb-2 flex flex-nowrap gap-2 overflow-hidden">
-          {sortedFavorites.map((favorite) => (
-            <Button
-              key={favorite.favoriteDestinationId}
-              size="sm"
-              variant={value && isSameFavoriteTarget(favorite, value) ? "primary" : "secondary"}
-              onPress={() => {
-                onChange(toSearchCandidate(favorite));
-                setOpen(false);
-              }}
-              className="shrink-0"
-            >
-              {favorite.label}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-
+      {/* 出発地の入力欄と視覚的に近くなるよう、入力欄をチップ列より上に置く
+          (チップ列を後ろに回しても候補ドロップダウンの absolute 位置には影響しない。
+          static position はこの要素より前の兄弟要素の高さで決まるため)。 */}
       <Input
         type="text"
         value={value ? candidateLabel(value) : query}
@@ -192,6 +176,26 @@ export function DestinationField({
             </>
           )}
         </Button>
+      ) : null}
+
+      {favorites.length > 0 ? (
+        <div className="scrollbar-hide fade-mask-r mt-2 flex flex-nowrap gap-2 overflow-x-auto">
+          {sortedFavorites.map((favorite) => (
+            <Button
+              key={favorite.favoriteDestinationId}
+              size="sm"
+              variant={value && isSameFavoriteTarget(favorite, value) ? "primary" : "secondary"}
+              onPress={() => {
+                onChange(toSearchCandidate(favorite));
+                setOpen(false);
+              }}
+              className="shrink-0"
+            >
+              {favorite.label}
+            </Button>
+          ))}
+          <span aria-hidden="true" className="w-2 shrink-0" />
+        </div>
       ) : null}
 
       {/* 選択確定前の候補一覧からの星クリックでも失敗しうるため、value有無に関わらず表示する */}
