@@ -697,6 +697,190 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.result.gate?.name).toBe("近い出口側改札");
     });
   });
+
+  describe("出口データの方角が目的地と大きく異なる場合(方角のみの案内へ格下げ)", () => {
+    // 駅中心は STATIONS.destination (lat:0, lng:0)。
+    const SOUTH_EXIT: StationFacility = {
+      facilityId: "exit_south",
+      stationId: "destination",
+      facilityType: "exit",
+      name: "南口",
+      level: "1F",
+      accessible: true,
+      coordinates: { lat: -0.01, lng: 0 }, // 駅中心から見て真南
+      connectedGateId: "gate_south",
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const GATE_SOUTH: StationFacility = {
+      facilityId: "gate_south",
+      stationId: "destination",
+      facilityType: "gate",
+      name: "南改札",
+      level: "1F",
+      accessible: true,
+      coordinates: null,
+      connectedGateId: null,
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const EAST_EXIT: StationFacility = {
+      facilityId: "exit_east",
+      stationId: "destination",
+      facilityType: "exit",
+      name: "東口",
+      level: "1F",
+      accessible: true,
+      coordinates: { lat: 0, lng: 0.01 }, // 駅中心から見て真東
+      connectedGateId: "gate_east",
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+    const GATE_EAST: StationFacility = {
+      facilityId: "gate_east",
+      stationId: "destination",
+      facilityType: "gate",
+      name: "東改札",
+      level: "1F",
+      accessible: true,
+      coordinates: null,
+      connectedGateId: null,
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+
+    test("目的地(真北)と唯一の候補出口(真南)の方角が大きくずれる場合、出口を名指しせず方角のみ案内する", async () => {
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([SOUTH_EXIT, GATE_SOUTH]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.01, lng: 0 }, // 駅中心から見て真北
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      expect(outcome.result.exit).toBeNull();
+      expect(outcome.result.gate).toBeNull();
+      expect(outcome.result.recommendedExit).toContain("北");
+      expect(outcome.result.exitSegment.instruction).toContain("北");
+      expect(outcome.result.exitSegment.instruction).not.toContain("南口");
+      expect(outcome.result.exitSegment.confidence.level).toBe("low");
+      expect(outcome.result.transferSegment.instruction).not.toContain("南改札");
+    });
+
+    test("目的地と候補出口の方角がほぼ一致する場合は、引き続き具体的な出口を案内する(閾値内は従来通り)", async () => {
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([EAST_EXIT, GATE_EAST]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0, lng: 0.01 }, // 出口と同じく真東
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      expect(outcome.result.exit?.name).toBe("東口");
+      expect(outcome.result.gate?.name).toBe("東改札");
+    });
+
+    test("候補出口が全て座標を持たない場合も、目的地座標があれば先頭一致で断定せず方角のみ案内する", async () => {
+      const noCoordExit: StationFacility = {
+        ...SOUTH_EXIT,
+        facilityId: "exit_no_coord",
+        name: "座標無し出口",
+        coordinates: null,
+        connectedGateId: null,
+      };
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([noCoordExit]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.01, lng: 0 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      expect(outcome.result.exit).toBeNull();
+      expect(outcome.result.exitSegment.instruction).not.toContain("座標無し出口");
+      expect(outcome.result.exitSegment.confidence.level).toBe("low");
+    });
+
+    test("目的地座標はあるが到着駅自体の座標が取得できない場合、方角を判定できないため先頭一致で断定せず出口を確認不能とする(クラッシュしない)", async () => {
+      const baseProvider = buildStationProvider([SOUTH_EXIT, GATE_SOUTH]);
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: {
+          ...baseProvider,
+          async getStation(stationId: string) {
+            if (stationId === "destination") return null;
+            return STATIONS[stationId] ?? null;
+          },
+        },
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: { lat: 0.01, lng: 0 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      expect(outcome.result.exit).toBeNull();
+      expect(outcome.result.gate).toBeNull();
+      expect(outcome.result.exitSegment.instruction).toBe("出口情報を確認できません。");
+    });
+
+    test("目的地が駅からごく近い場合は方角判定が数学的に不安定になるためスキップし、座標ベースの最近傍選定を使う", async () => {
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([SOUTH_EXIT, GATE_SOUTH, EAST_EXIT, GATE_EAST]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        // 駅中心(0,0)から見て極めて近い(方角が数学的に不安定になる距離)
+        destinationCoordinates: { lat: 0.00001, lng: 0.00001 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      // 方角チェックをスキップした結果、単純に座標が最も近い出口(東口)が選ばれる
+      expect(outcome.result.exit?.name).toBe("東口");
+    });
+  });
 });
 
 describe("computeConfidenceSummary", () => {

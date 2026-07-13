@@ -112,6 +112,7 @@ const CANDIDATE: RouteCandidateResult = {
   originName: "出発駅",
   destinationName: "到着駅",
   arrivalStationName: "到着駅",
+  arrivalStationCoordinates: null,
   estimatedDurationMinutes: 10,
   transferCount: 0,
   routeWarnings: [],
