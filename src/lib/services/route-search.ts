@@ -631,6 +631,9 @@ export async function searchRouteGuide(
       },
       keyInstruction,
       segments,
+      // 改札後の詳細導線(GuideStep[])は未実装のため null。既存レスポンス契約を
+      // 壊さない加算的フィールドとして先に型のみ追加している(設計: docs/04 §Phase 2.5)。
+      arrivalGuide: null,
       confidenceSummary,
       warnings: candidateResult.routeWarnings,
       generatedAt: now.toISOString(),

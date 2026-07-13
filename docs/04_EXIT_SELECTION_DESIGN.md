@@ -147,7 +147,74 @@ OpenStreetMap(`railway=subway_entrance` 等)を優先候補として検討する
 
 改札ごとに複数の号車データを揃えるコストは高く、公式資料でも確実に取れないことが多い。改札別の号車データが揃わない場合は、号車を言い切らず「進行方向後方・7〜8号車付近」のように範囲表現+confidence:low で提示する。Phase 1では出口・改札の修正のみを対象とし、号車の目的地連動はデータが揃った駅から段階的に対応する。
 
-### 6.5 Phase 3(将来・本格実装)
+### 6.5 Phase 2.5(改札後導線の閉世界仮定対処) — 設計確定・実装中
+
+**背景**: Phase 1〜1.5は「出口・改札」の2点情報にとどまっており、大規模駅(渋谷・新宿・東京等)では
+改札を出た後の進行方向・自由通路・地下街を経て地上出口に至る**一続きの導線**が必要というフィードバックを受けた。
+一方で「全駅を対象にAIにも詳細を生成させる」という要求は、Phase 1.5で対策した閉世界仮定の誤り
+(存在しない/誤った出口・改札名をAIがもっともらしく生成する)を、より実害の大きい粒度で再燃させる
+リスクがある(改札を出た後の左右方向を誤ると、逆方向へ数百メートル誘導しうる)。
+
+この論点はClaude(architectエージェント)とCodex(別LLM)の両方に個別に相談し、以下の方針で合意した。
+
+**データモデル**:
+
+- 新しい `GuideStepType`(`boarding` / `alighting` / `platform_facility` / `ticket_gate` /
+  `post_gate_direction` / `public_passage` / `underground_mall` / `street_exit` /
+  `destination_direction`)と `GuideStep` 型を追加(`src/lib/domain/route.ts`)。
+- `ConfidenceLevel`(high/medium/low/unavailable の4段)は変更しない。代わりに **`provenance`
+  (出所: `surveyed`(現地調査済み) / `map_estimate`(地図で確認) / `ai_inferred`(AI推定))を
+  confidenceとは直交する別軸として `GuideStep` に持たせる**(`src/lib/domain/confidence.ts`)。
+  信頼度に「AI専用」の段階を追加すると、既存の `worstConfidenceLevel` 等の集約ロジック・
+  `ConfidenceBadge` 等のUIに広く波及するため、既存4段のまま出所を分離する設計を採った。
+- `RouteGuide` に `arrivalGuide: ArrivalGuide | null` を**加算的**に追加(既存の `segments` /
+  `summary.recommendedExit` は維持し、API後方互換を保つ)。`destinationDirection`(方角案内)は
+  `streetExit` 等の具体的ステップが確認不能でも独立して持てるようにし、**方角を出口名の代わりに
+  使わない**(Phase 1.5の近似ラベル機構とは別フィールドとして扱う)。
+
+**表示ゲート(信頼度×リスク種別)**:
+
+- `unavailable` はどの種別でも非表示(根拠のない詳細を捏造しない)。
+- `high` はどの種別でも表示。
+- **高リスク種別**(`post_gate_direction` / `public_passage` / `underground_mall` /
+  `street_exit`。誤ると逆方向へ数百メートル誘導しうる)は `medium` 以上でのみ表示。
+  検索グラウンディングありのAI推定は `medium` まで許容するが、`low` は非表示にする。
+- **低リスク種別**(`boarding` / `alighting` / `platform_facility` / `ticket_gate` /
+  `destination_direction`。誤っても実害が小さい、または方角のみの安全な案内)は
+  `low` でも表示する。
+- 実装: `src/lib/services/guide-step-visibility.ts` の `isGuideStepVisible()`。
+
+**AI生成側の制約(今後の実装フェーズで適用)**:
+
+- 改札後方向・自由通路・地下街等の生成は、既存の経路生成AI(`GeminiClient.searchAndGenerateStructuredContent`)
+  と同様に**検索グラウンディング必須**とし、根拠が取れなければステップ自体を生成しない
+  (facility生成の既存経路である検索なし `generateStructuredContent` は使わない)。
+- 実在しない改札名・地下街名・出口記号を創作しない。方向(右/左)は視点の基準を明示できる場合のみ
+  生成し、基準が確定できない場合は生成しない。
+- モデル自身が申告する confidence は参考値に留め、GuideStepを構築する箇所は必ず
+  `capConfidenceForProvenance()`(`src/lib/domain/confidence.ts`)を経由して最終 confidence を
+  決定する。`ai_inferred` は検索裏付けがあっても `medium` が上限(AIレビューで、provenanceを
+  分離しただけでは表示ゲートの安全性を担保できないと指摘されたための対策)。
+
+**「全駅対象」の再定義**: 「全駅で詳細を必ず埋める」ではなく、**「全駅で `GuideStep` モデルと
+安全なフォールバックを提供できる」**と定義する。データ生成(AI呼び出し)は全駅で行ってよいが、
+表示は上記ゲートを通った範囲に限定する。根拠のない具体性は機能ではなく欠陥、という
+Phase 1.5からの不変条件をここでも維持する。
+
+**設計上の既知の未解決点(§7にも追記)**:
+
+- ステップ種別ごとのリスク階層(`STEP_RISK_TIER`)は `Record<GuideStepType, RiskTier>` として
+  全種別を網羅させ、新種別追加時に分類漏れがあればコンパイルエラーになるようにしている
+  (fail-open防止)。
+- `boarding` / `alighting` / `ticket_gate` は現状「低リスク種別」に分類しているが、実際に
+  格納する文章に固有の路線名・方面・左右方向を含める場合は、内容次第で高リスク種別と
+  同程度の実害があり得る(AIレビュー指摘)。生成ロジック実装時に、文章の具体性に応じた
+  再分類が必要かどうかを再検討する。
+- `ArrivalGuide.destinationDirection` と `destination_direction` 型の `GuideStep` は同じ
+  情報を異なる形で表現しうる。生成側は両方を同じ入力から導出し、矛盾しないようにする
+  (`route.ts` のインターフェースコメントに不変条件として明記済み)。
+
+### 6.6 Phase 3(将来・本格実装)
 
 駅構内図の画像解析・グラフ構造化・A*探索・複数ソースの整合性チェックなど、本格的な「入口逆算」システム。Phase 1の明示リンク(`connectedGateId`)は、将来ノード+重み付きエッジのグラフに拡張しても無駄にならない設計としている。プロダクトの利用状況を見てから着手する。
 
