@@ -101,6 +101,12 @@ export const FIXTURE_BOARDING_POSITIONS: BoardingPosition[] = [
   },
 ];
 
+// 座標は公式構内図の測量値ではなく、地図上の位置関係に基づく概算値。
+// confidence(高/中)は「その出口・改札・号車が実在し、名称・階数等が
+// 公式構内図で確認済みか」を表すものであり、座標の測量精度を保証するもの
+// ではない。座標はあくまで pickNearestFacility(route-search.ts)の選定
+// アルゴリズムへの入力であり、出口同士の距離差が小さい場合は選定結果が
+// 逆転しうる(docs/04_EXIT_SELECTION_DESIGN.md 7章「未解決の論点」参照)。
 export const FIXTURE_FACILITIES: StationFacility[] = [
   {
     facilityId: "fac_shibuya_hikarie_escalator",
@@ -109,7 +115,8 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     name: "東口エスカレーター",
     level: "地上1階",
     accessible: true,
-    coordinates: null,
+    coordinates: { lat: 35.6591, lng: 139.7038 },
+    connectedGateId: null,
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
   },
@@ -120,7 +127,8 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     name: "ヒカリエ改札",
     level: "地上2階",
     accessible: true,
-    coordinates: null,
+    coordinates: { lat: 35.6591, lng: 139.7038 },
+    connectedGateId: null,
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
   },
@@ -131,7 +139,8 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     name: "B5出口",
     level: "地上2階",
     accessible: true,
-    coordinates: null,
+    coordinates: { lat: 35.6591, lng: 139.7038 },
+    connectedGateId: "fac_shibuya_hikarie_gate",
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
   },
@@ -142,8 +151,37 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     name: "ヒカリエ連絡エレベーター",
     level: "地上1階〜2階",
     accessible: true,
-    coordinates: null,
+    coordinates: { lat: 35.6591, lng: 139.7037 },
+    connectedGateId: null,
     confidence: mediumConfidence("稼働状況の最終確認日が古い"),
+    verifiedAt: VERIFIED_AT,
+  },
+  {
+    // 宮下パーク・渋谷横丁方面の目的地に対して、B5出口(ヒカリエ側)より
+    // 地理的に近い出口として追加。西谷→渋谷ヒカリエ以外の目的地でも
+    // 正しい方向の出口を案内できるようにするため
+    // (docs/04_EXIT_SELECTION_DESIGN.md 背景 参照)。
+    facilityId: "fac_shibuya_miyamasuzaka_gate",
+    stationId: "st_shibuya",
+    facilityType: "gate",
+    name: "宮益坂改札",
+    level: "地上2階",
+    accessible: true,
+    coordinates: { lat: 35.6595, lng: 139.7025 },
+    connectedGateId: null,
+    confidence: highConfidence("公式構内図で確認済み"),
+    verifiedAt: VERIFIED_AT,
+  },
+  {
+    facilityId: "fac_shibuya_exit_miyamasuzaka",
+    stationId: "st_shibuya",
+    facilityType: "exit",
+    name: "宮益坂口",
+    level: "地上2階",
+    accessible: true,
+    coordinates: { lat: 35.6595, lng: 139.7025 },
+    connectedGateId: "fac_shibuya_miyamasuzaka_gate",
+    confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
   },
   {
@@ -153,7 +191,8 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     name: "新南改札",
     level: "地上2階",
     accessible: true,
-    coordinates: null,
+    coordinates: { lat: 35.6884, lng: 139.7009 },
+    connectedGateId: null,
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
   },
@@ -164,7 +203,8 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     name: "新南口",
     level: "地上2階",
     accessible: true,
-    coordinates: null,
+    coordinates: { lat: 35.6884, lng: 139.7009 },
+    connectedGateId: "fac_shinjuku_new_south_gate",
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
   },

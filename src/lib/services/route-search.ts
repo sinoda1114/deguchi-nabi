@@ -13,15 +13,26 @@ import type {
   RouteProviderPort,
 } from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
+import { haversineMeters } from "@/lib/geo/haversine";
 import { worstConfidenceLevel } from "./confidence-engine";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
 
 export interface RouteSearchInput {
   originStationId: string;
   originLabel: string;
   destinationStationId: string;
   destinationLabel: string;
+  /**
+   * 目的地(place由来)の座標。目的地に応じた出口選定(docs/04_EXIT_SELECTION_DESIGN.md)
+   * に使う。目的地が駅そのもの(station由来)の場合は座標を持たないため null。
+   */
+  destinationCoordinates: Coordinates | null;
   mode: RouteMode;
   accessibility: AccessibilityCondition;
 }
@@ -40,6 +51,63 @@ function pickFacility(
   type: StationFacility["facilityType"]
 ): StationFacility | null {
   return facilities.find((f) => f.facilityType === type) ?? null;
+}
+
+/**
+ * 目的地座標に最も近い facility を選ぶ。座標が無い(destinationCoordinates が
+ * null)、または該当種別のどの facility も coordinates を持たない場合は、
+ * 既存の「最初の1件」選定にフォールバックする(fixture外駅のAI生成facility等、
+ * 座標が未整備なデータでも従来通り動作させるため)。
+ */
+function pickNearestFacility(
+  facilities: StationFacility[],
+  type: StationFacility["facilityType"],
+  target: Coordinates | null
+): StationFacility | null {
+  const candidates = facilities.filter((f) => f.facilityType === type);
+  if (candidates.length === 0) return null;
+  if (!target) return candidates[0];
+
+  const withCoordinates = candidates.filter((f) => f.coordinates !== null);
+  if (withCoordinates.length === 0) return candidates[0];
+
+  return withCoordinates.reduce((nearest, current) => {
+    const nearestDistance = haversineMeters(
+      target.lat,
+      target.lng,
+      nearest.coordinates!.lat,
+      nearest.coordinates!.lng
+    );
+    const currentDistance = haversineMeters(
+      target.lat,
+      target.lng,
+      current.coordinates!.lat,
+      current.coordinates!.lng
+    );
+    return currentDistance < nearestDistance ? current : nearest;
+  });
+}
+
+/**
+ * 選定済みの出口(exit)から、その connectedGateId が指す改札を逆引きする。
+ * リンクが無い、または対応する改札が見つからない場合は、駅の改札一覧の
+ * 最初の1件にフォールバックする(座標が近くても実際には連絡していない
+ * 改札を誤って連結と見なさないよう、推測ではなく明示リンクのみを使う。
+ * docs/04_EXIT_SELECTION_DESIGN.md 4章 参照)。
+ */
+function pickGateForExit(
+  facilities: StationFacility[],
+  exit: StationFacility | null
+): StationFacility | null {
+  if (exit?.connectedGateId) {
+    // facilityType !== "gate" のデータへ誤ってリンクされていた場合、
+    // それを改札として案内してしまわないよう型も確認する。
+    const linkedGate = facilities.find(
+      (f) => f.facilityId === exit.connectedGateId && f.facilityType === "gate"
+    );
+    if (linkedGate) return linkedGate;
+  }
+  return pickFacility(facilities, "gate");
 }
 
 /**
@@ -207,8 +275,12 @@ export async function buildTransferAndExitSegments(
     input.destinationStationId
   );
 
-  const gate = pickFacility(arrivalFacilities, "gate");
-  const exit = pickFacility(arrivalFacilities, "exit");
+  // 出口→改札の順で選ぶ(逆算)。目的地座標に最も近い出口を選び、その出口の
+  // connectedGateId から対応する改札を逆引きする(docs/04_EXIT_SELECTION_DESIGN.md)。
+  // エレベーター・エスカレーターは「存在するかどうか」が重要で方向の影響は
+  // 小さいため、引き続き先頭一致で選ぶ(Phase 1のスコープ外)。
+  const exit = pickNearestFacility(arrivalFacilities, "exit", input.destinationCoordinates);
+  const gate = pickGateForExit(arrivalFacilities, exit);
   const elevator = pickFacility(arrivalFacilities, "elevator");
   const escalator = pickFacility(arrivalFacilities, "escalator");
 

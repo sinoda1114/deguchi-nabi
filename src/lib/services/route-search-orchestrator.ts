@@ -3,7 +3,7 @@ import type { User } from "@/lib/domain/user";
 import type { PlaceProviderPort } from "@/lib/integrations/place-provider/PlaceProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import { routeProvider, stationProvider, placeProvider } from "@/lib/integrations";
-import { searchRouteGuide } from "./route-search";
+import { searchRouteGuide, type Coordinates } from "./route-search";
 
 export type OriginRequest =
   | { type: "home_station" }
@@ -30,6 +30,12 @@ export type ResolvedOriginDestination =
       originLabel: string;
       destinationStationId: string;
       destinationLabel: string;
+      /**
+       * 目的地座標(place由来のみ)。station由来(駅自体が目的地)は
+       * 座標最適化が不要なため null。目的地に応じた出口選定
+       * (docs/04_EXIT_SELECTION_DESIGN.md)に使う。
+       */
+      destinationCoordinates: Coordinates | null;
     }
   | { ok: false; status: number; error: string };
 
@@ -60,6 +66,7 @@ export async function resolveOriginDestination(
 
   let destinationStationId: string | null = null;
   let destinationLabel = "";
+  let destinationCoordinates: Coordinates | null = null;
 
   if (input.destination.type === "station") {
     const stationId = input.destination.stationId;
@@ -76,6 +83,7 @@ export async function resolveOriginDestination(
     }
     destinationStationId = place.nearestStationCandidates[0] ?? null;
     destinationLabel = place.name;
+    destinationCoordinates = { lat: place.latitude, lng: place.longitude };
   }
 
   if (!destinationStationId) {
@@ -88,6 +96,7 @@ export async function resolveOriginDestination(
     originLabel,
     destinationStationId,
     destinationLabel,
+    destinationCoordinates,
   };
 }
 
@@ -138,6 +147,7 @@ export async function resolveAndSearchRoute(
       originLabel: resolved.originLabel,
       destinationStationId: resolved.destinationStationId,
       destinationLabel: resolved.destinationLabel,
+      destinationCoordinates: resolved.destinationCoordinates,
       mode: input.mode,
       accessibility,
     },
