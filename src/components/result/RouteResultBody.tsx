@@ -112,18 +112,22 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
   // buildTransferAndExitSegments が ok:false を返すことがないため、facilities の
   // 解決を待たずにここで保存してよい(ストリーミング表示を妨げない)。
   if (user) {
-    addHistoryEntry({
-      userId: user.userId,
-      routeGuideId: candidate.routeId,
-      originLabel: resolved.originLabel,
-      destinationLabel: resolved.destinationLabel,
-      mode,
-      query: {
-        originStationId: resolved.originStationId,
-        destinationStationId: resolved.destinationStationId,
+    try {
+      addHistoryEntry({
+        userId: user.userId,
+        routeGuideId: candidate.routeId,
+        originLabel: resolved.originLabel,
+        destinationLabel: resolved.destinationLabel,
         mode,
-      },
-    });
+        query: {
+          originStationId: resolved.originStationId,
+          destinationStationId: resolved.destinationStationId,
+          mode,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to save history entry:", error);
+    }
   }
 
   return (
