@@ -1,4 +1,4 @@
-import type { Destination } from "@/lib/domain/station";
+import type { Coordinates, Destination } from "@/lib/domain/station";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import type { PlaceProviderPort } from "./PlaceProviderPort";
 
@@ -7,6 +7,11 @@ const DETAILS_URL = "https://places.googleapis.com/v1/places";
 const SEARCH_FIELD_MASK = "places.id,places.displayName,places.formattedAddress,places.location";
 const DETAILS_FIELD_MASK = "id,displayName,formattedAddress,location";
 const REQUEST_TIMEOUT_MS = 5000;
+/**
+ * 位置バイアスの半径(メートル)。駅から離れた目的地でも検索できるよう、
+ * 徒歩圏を大きく超える範囲を許容しつつ、他都市の同名店舗は除外できる程度に設定する。
+ */
+const LOCATION_BIAS_RADIUS_METERS = 30000;
 
 interface GooglePlace {
   id: string;
@@ -25,7 +30,7 @@ export class GooglePlaceAdapter implements PlaceProviderPort {
     private readonly stationProvider: StationProviderPort
   ) {}
 
-  async searchPlaces(query: string): Promise<Destination[]> {
+  async searchPlaces(query: string, near?: Coordinates | null): Promise<Destination[]> {
     const normalized = query.trim();
     if (!normalized) return [];
 
@@ -40,6 +45,16 @@ export class GooglePlaceAdapter implements PlaceProviderPort {
         textQuery: normalized,
         languageCode: "ja",
         regionCode: "JP",
+        ...(near
+          ? {
+              locationBias: {
+                circle: {
+                  center: { latitude: near.lat, longitude: near.lng },
+                  radius: LOCATION_BIAS_RADIUS_METERS,
+                },
+              },
+            }
+          : {}),
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });

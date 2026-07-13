@@ -9,6 +9,7 @@ import { candidateLabel, isSameFavoriteTarget, toSearchCandidate } from "@/lib/s
 import { sortFavoriteDestinationsByRecency } from "@/lib/services/favorite-destination-order";
 import { splitForDisclosure } from "@/lib/services/progressive-disclosure";
 import { SearchPictogram } from "./SearchPictogram";
+import type { Coordinates } from "@/lib/domain/station";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
 
 interface DestinationFieldProps {
@@ -16,6 +17,8 @@ interface DestinationFieldProps {
   favoriteDestinations: FavoriteDestination[];
   value: SearchCandidate | null;
   onChange: (candidate: SearchCandidate | null) => void;
+  /** 出発地の座標。渡すと検索結果がその付近を優先するようになる(位置バイアス)。 */
+  originCoordinates?: Coordinates | null;
 }
 
 // ヒックの法則(選択肢が多いほど意思決定が遅くなる)を踏まえ、登録が新しい順の先頭3件だけを
@@ -27,6 +30,7 @@ export function DestinationField({
   favoriteDestinations,
   value,
   onChange,
+  originCoordinates = null,
 }: DestinationFieldProps) {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 250);
@@ -42,9 +46,12 @@ export function DestinationField({
       return;
     }
     let cancelled = false;
-    apiFetch<{ candidates: SearchCandidate[] }>(
-      `/api/places/search?q=${encodeURIComponent(debouncedQuery)}`
-    )
+    const params = new URLSearchParams({ q: debouncedQuery });
+    if (originCoordinates) {
+      params.set("lat", String(originCoordinates.lat));
+      params.set("lng", String(originCoordinates.lng));
+    }
+    apiFetch<{ candidates: SearchCandidate[] }>(`/api/places/search?${params.toString()}`)
       .then((res) => {
         if (!cancelled) setCandidates(res.candidates);
       })
@@ -54,7 +61,10 @@ export function DestinationField({
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, value]);
+    // originCoordinates はSearchForm側で毎レンダー新規オブジェクトとして渡されるため、
+    // オブジェクト参照ではなく値(lat/lng)で依存を見て不要な再検索を防ぐ。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery, value, originCoordinates?.lat, originCoordinates?.lng]);
 
   const isSaved = value ? favorites.some((f) => isSameFavoriteTarget(f, value)) : false;
   const sortedFavorites = sortFavoriteDestinationsByRecency(favorites);

@@ -136,11 +136,19 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
         isPending={swapping}
         onPress={handleSwap}
       />
+      {/*
+        目的地検索の位置バイアスは常に homeStation の座標を使う。origin が現在地/他駅選択でも
+        追従はしない近似(現在地座標は都度取得しておらずここでは扱えない)が、多くの場合
+        出発地は登録駅であり、無バイアス(全国検索)よりは大幅に精度が上がるため許容する。
+      */}
       <DestinationField
         user={user}
         favoriteDestinations={favoriteDestinations}
         value={destination}
         onChange={setDestination}
+        originCoordinates={
+          homeStation ? { lat: homeStation.latitude, lng: homeStation.longitude } : null
+        }
       />
       {swapError ? <p className="text-sm text-[var(--danger)]">{swapError}</p> : null}
       <div>

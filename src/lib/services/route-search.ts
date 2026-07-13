@@ -6,7 +6,7 @@ import type {
   RouteMode,
   RouteSegment,
 } from "@/lib/domain/route";
-import type { StationFacility } from "@/lib/domain/station";
+import type { Coordinates, StationFacility } from "@/lib/domain/station";
 import { unavailableConfidence } from "@/lib/domain/confidence";
 import type {
   RailRouteCandidate,
@@ -18,10 +18,7 @@ import { worstConfidenceLevel } from "./confidence-engine";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
-export interface Coordinates {
-  lat: number;
-  lng: number;
-}
+export type { Coordinates };
 
 export interface RouteSearchInput {
   originStationId: string;

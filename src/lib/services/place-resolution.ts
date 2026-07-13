@@ -1,4 +1,4 @@
-import type { Destination, Station } from "@/lib/domain/station";
+import type { Coordinates, Destination, Station } from "@/lib/domain/station";
 import type { FavoriteDestination } from "@/lib/domain/user";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import type { PlaceProviderPort } from "@/lib/integrations/place-provider/PlaceProviderPort";
@@ -12,13 +12,41 @@ export interface PlaceResolutionDeps {
   placeProvider: PlaceProviderPort;
 }
 
+const MIN_LATITUDE = -90;
+const MAX_LATITUDE = 90;
+const MIN_LONGITUDE = -180;
+const MAX_LONGITUDE = 180;
+
+/**
+ * クエリパラメータ由来の lat/lng 文字列(未指定は null)を座標に変換する。
+ * `Number(null)` が `0` になる罠を避けるため、欠落・空文字は変換前に弾く。
+ * 範囲外の値(緯度経度として無効)も位置バイアス無しとして扱う。
+ */
+export function parseCoordinatesParam(
+  lat: string | null,
+  lng: string | null
+): Coordinates | null {
+  if (!lat || !lng) return null;
+  const parsedLat = Number(lat);
+  const parsedLng = Number(lng);
+  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
+  if (parsedLat < MIN_LATITUDE || parsedLat > MAX_LATITUDE) return null;
+  if (parsedLng < MIN_LONGITUDE || parsedLng > MAX_LONGITUDE) return null;
+  return { lat: parsedLat, lng: parsedLng };
+}
+
+/**
+ * near(出発地の座標)を渡すと、その付近を優先した目的地検索になる
+ * (同名施設の遠方店舗を誤って候補上位に出さないため)。
+ */
 export async function searchDestinationCandidates(
   query: string,
-  deps: PlaceResolutionDeps
+  deps: PlaceResolutionDeps,
+  near?: Coordinates | null
 ): Promise<SearchCandidate[]> {
   const [stations, places] = await Promise.all([
     deps.stationProvider.searchStations(query),
-    deps.placeProvider.searchPlaces(query),
+    deps.placeProvider.searchPlaces(query, near),
   ]);
 
   return [
