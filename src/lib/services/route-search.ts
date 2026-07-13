@@ -363,12 +363,23 @@ export interface FacilitiesBuildSuccess {
   gate: StationFacility | null;
   exit: StationFacility | null;
   elevator: StationFacility | null;
+  /**
+   * 出口・改札が方角のみの案内(tier: "approximate")に格下げされたか。
+   * ページ上部で1回だけ注記を出すために使う(segment単位では繰り返さない)。
+   */
+  hasApproximateGuidance: boolean;
+  /**
+   * hasApproximateGuidanceがtrueの場合のみ、目的地の方角(8方位ラベル)。
+   * computeKeyInstruction が「改札は確認できません、出口は確認できません」
+   * ではなく「◯◯側の改札へ、◯◯側の出口へ」と断定的に案内するために使う。
+   */
+  approximateDirectionLabel: string | null;
 }
 
 /**
  * 到着駅の改札・出口・エレベーター情報を取得し、transfer/exit セグメントを組み立てた結果。
- * TransferExitSegmentList / RouteDiagramSection / ConfidenceSummarySection /
- * RecommendedExitValue / KeyInstructionText が共有する Promise の型として使う。
+ * RouteDiagramSection / ConfidenceSummarySection / RecommendedExitValue /
+ * KeyInstructionText / FacilitiesWarningBadges が共有する Promise の型として使う。
  */
 export type FacilitiesSearchResult =
   | { ok: true; result: FacilitiesBuildSuccess }
@@ -435,10 +446,16 @@ export async function buildTransferAndExitSegments(
           },
         ]
       : [],
+    // approximateタイアでは「改札を出る」こと自体は断定してよい(どの駅にも
+    // 改札は必ずある)が、目的地の方角に改札が実在するとまでは断定しない
+    // (Codexレビュー指摘: 存在未確認の施設を断定的に案内すると誤誘導になる)。
+    // 「現地でご確認ください」等の弱気な表現を繰り返すと機能不全に見え
+    // 信頼を損ねるとのフィードバックを受け、不確実性はconfidenceバッジと
+    // ページ上部の1回だけの注記(hasApproximateGuidance)で伝える。
     instruction: gate
       ? `${gate.name}へ向かってください。`
       : recommendation.tier === "approximate"
-        ? "改札は現地の案内表示でご確認ください。"
+        ? "改札を出てください。"
         : "改札情報を確認できません。",
     confidence: gate
       ? gate.confidence
@@ -466,10 +483,12 @@ export async function buildTransferAndExitSegments(
           },
         ]
       : [],
+    // 出口の実在する方角までは断定しない(その方角に出口があるかは未確認)。
+    // 客観的事実として確定している「目的地の方角」のみを案内する。
     instruction: exit
       ? `${exit.name}から出てください。`
       : recommendation.tier === "approximate"
-        ? `目的地は${recommendation.destinationDirectionLabel}側です。この方角の出口データが不足しているため、具体的な出口はご案内できません。現地の案内表示をご確認ください。`
+        ? `目的地は${recommendation.destinationDirectionLabel}側です。案内表示に従って出口へ向かってください。`
         : "出口情報を確認できません。",
     confidence: exit
       ? exit.confidence
@@ -479,17 +498,13 @@ export async function buildTransferAndExitSegments(
           )
         : unavailableConfidence("出口情報が不足しています"),
     sourceReferences: [],
-    warnings: exit
-      ? []
-      : recommendation.tier === "approximate"
-        ? ["具体的な出口を特定できませんでした。現地の案内表示をご確認ください。"]
-        : [],
+    warnings: [],
   };
 
   const recommendedExit =
     exit?.name ??
     (recommendation.tier === "approximate"
-      ? `${recommendation.destinationDirectionLabel}側(現地で出口をご確認ください)`
+      ? `${recommendation.destinationDirectionLabel}側`
       : "確認できません");
 
   return {
@@ -501,6 +516,9 @@ export async function buildTransferAndExitSegments(
       gate,
       exit,
       elevator,
+      hasApproximateGuidance: recommendation.tier === "approximate",
+      approximateDirectionLabel:
+        recommendation.tier === "approximate" ? recommendation.destinationDirectionLabel : null,
     },
   };
 }
@@ -534,12 +552,24 @@ export function computeKeyInstruction(
 ): KeyInstruction {
   const firstBoarding = trainSegments.find((s) => s.boardingPosition);
 
+  const directionLabel = facilities.approximateDirectionLabel;
+
   const keyInstructionParts = [
     firstBoarding?.boardingPosition
       ? `${firstBoarding.boardingPosition.carNumber}号車付近に乗車`
       : "乗車位置は確認できません",
-    facilities.gate ? `${facilities.gate.name}` : "改札は確認できません",
-    facilities.exit ? `${facilities.exit.name}へ` : "出口は確認できません",
+    // 改札は必ず存在するので断定できるが、出口が目的地の方角に実在するかは
+    // 未確認のため断定しない(確定しているのは「目的地の方角」のみ)。
+    facilities.gate
+      ? `${facilities.gate.name}`
+      : directionLabel
+        ? "改札を出て"
+        : "改札は確認できません",
+    facilities.exit
+      ? `${facilities.exit.name}へ`
+      : directionLabel
+        ? `${directionLabel}側へ`
+        : "出口は確認できません",
   ];
 
   return { text: keyInstructionParts.join("、") + "。" };

@@ -19,12 +19,9 @@ import { KeyInstructionTextSkeleton } from "@/components/result/KeyInstructionTe
 import { RouteSummaryCard } from "@/components/result/RouteSummaryCard";
 import { RecommendedExitValue } from "@/components/result/RecommendedExitValue";
 import { RecommendedExitValueSkeleton } from "@/components/result/RecommendedExitValueSkeleton";
-import { TrainSegmentList } from "@/components/result/TrainSegmentList";
-import { TrainSegmentListSkeleton } from "@/components/result/TrainSegmentListSkeleton";
-import { TransferExitSegmentList } from "@/components/result/TransferExitSegmentList";
-import { TransferExitSegmentListSkeleton } from "@/components/result/TransferExitSegmentListSkeleton";
 import { RouteDiagramSection } from "@/components/result/RouteDiagramSection";
 import { RouteDiagramSectionSkeleton } from "@/components/result/RouteDiagramSectionSkeleton";
+import { FacilitiesWarningBadges } from "@/components/result/FacilitiesWarningBadges";
 import { ConfidenceSummarySection } from "@/components/result/ConfidenceSummarySection";
 import { ConfidenceSummarySectionSkeleton } from "@/components/result/ConfidenceSummarySectionSkeleton";
 import { WarningBadge } from "@/components/diagram/WarningBadge";
@@ -173,6 +170,9 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
         {candidate.routeWarnings.map((w, i) => (
           <WarningBadge key={i} text={w} />
         ))}
+        <Suspense fallback={null}>
+          <FacilitiesWarningBadges facilitiesPromise={facilitiesPromise} />
+        </Suspense>
 
         <RouteSummaryCard
           originName={candidate.originName}
@@ -187,23 +187,9 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
           transferCount={candidate.transferCount}
         />
 
-        <section className="route-steps-container">
-          <h2 className="mb-2 text-xs font-bold text-[var(--foreground-muted)]">
-            区間の詳細
-          </h2>
-          <div className="flex flex-col gap-3">
-            <Suspense fallback={<TrainSegmentListSkeleton />}>
-              <TrainSegmentList trainSegmentsPromise={trainSegmentsPromise} />
-            </Suspense>
-            <Suspense fallback={<TransferExitSegmentListSkeleton />}>
-              <TransferExitSegmentList facilitiesPromise={facilitiesPromise} />
-            </Suspense>
-          </div>
-        </section>
-
         <section>
           <h2 className="mb-2 text-xs font-bold text-[var(--foreground-muted)]">
-            簡易ルート図
+            ルート
           </h2>
           <Suspense fallback={<RouteDiagramSectionSkeleton />}>
             <RouteDiagramSection

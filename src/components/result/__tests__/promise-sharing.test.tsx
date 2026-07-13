@@ -9,9 +9,8 @@ import type { BoardingPosition, Platform, Station, StationFacility } from "@/lib
 import type { RailRouteCandidate } from "@/lib/integrations/route-provider/RouteProviderPort";
 import { type Confidence } from "@/lib/domain/confidence";
 import { KeyInstructionText } from "@/components/result/KeyInstructionText";
-import { TrainSegmentList } from "@/components/result/TrainSegmentList";
 import { RecommendedExitValue } from "@/components/result/RecommendedExitValue";
-import { TransferExitSegmentList } from "@/components/result/TransferExitSegmentList";
+import { FacilitiesWarningBadges } from "@/components/result/FacilitiesWarningBadges";
 import { RouteDiagramSection } from "@/components/result/RouteDiagramSection";
 import { ConfidenceSummarySection } from "@/components/result/ConfidenceSummarySection";
 
@@ -175,7 +174,7 @@ function buildSpiedStationProvider(): StationProviderPort & {
 }
 
 describe("page.tsx の Promise as Props 配線(複数の実コンポーネントへの共有)", () => {
-  test("trainSegmentsPromiseを4つの異なるコンポーネントへ渡しても、駅・号車情報の取得は1回分しか行われない", async () => {
+  test("trainSegmentsPromiseを3つの異なるコンポーネントへ渡しても、駅・号車情報の取得は1回分しか行われない", async () => {
     const stationProvider = buildSpiedStationProvider();
 
     // page.tsx と同じく、builder は1回だけ呼び出し、戻り値のPromiseを共有する。
@@ -186,13 +185,12 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
 
     await Promise.all([
       KeyInstructionText({ trainSegmentsPromise, facilitiesPromise }),
-      TrainSegmentList({ trainSegmentsPromise }),
       RouteDiagramSection({ trainSegmentsPromise, facilitiesPromise }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);
 
     // segments は1区間 → getStation は from/to の2回、getPlatforms/getBoardingPositionは1回。
-    // 4つのコンポーネントが同じ Promise を共有しても、この回数から増えないこと。
+    // 複数のコンポーネントが同じ Promise を共有しても、この回数から増えないこと。
     expect(stationProvider.getStationSpy).toHaveBeenCalledTimes(2);
     expect(stationProvider.getPlatformsSpy).toHaveBeenCalledTimes(1);
     expect(stationProvider.getBoardingPositionSpy).toHaveBeenCalledTimes(1);
@@ -209,7 +207,7 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
     await Promise.all([
       KeyInstructionText({ trainSegmentsPromise, facilitiesPromise }),
       RecommendedExitValue({ facilitiesPromise }),
-      TransferExitSegmentList({ facilitiesPromise }),
+      FacilitiesWarningBadges({ facilitiesPromise }),
       RouteDiagramSection({ trainSegmentsPromise, facilitiesPromise }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);

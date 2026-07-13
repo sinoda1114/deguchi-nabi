@@ -64,6 +64,8 @@ const OK_RESULT: FacilitiesSearchResult = {
     gate: { facilityId: "g1", stationId: "d", facilityType: "gate", name: "中央改札", level: "1F", accessible: true, coordinates: null, connectedGateId: null, confidence: highConfidence, verifiedAt: null },
     exit: { facilityId: "e1", stationId: "d", facilityType: "exit", name: "A1出口", level: "1F", accessible: true, coordinates: null, connectedGateId: null, confidence: highConfidence, verifiedAt: null },
     elevator: null,
+    hasApproximateGuidance: false,
+    approximateDirectionLabel: null,
   },
 };
 

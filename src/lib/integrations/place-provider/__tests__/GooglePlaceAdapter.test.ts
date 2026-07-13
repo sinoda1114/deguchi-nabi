@@ -82,3 +82,34 @@ describe("GooglePlaceAdapter.searchPlaces", () => {
     expect(body.locationBias).toBeUndefined();
   });
 });
+
+describe("GooglePlaceAdapter.getPlace", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  test("languageCode=ja をクエリパラメータで指定する(未指定だとGoogle既定言語=英語名が返るため)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        id: "place_1",
+        displayName: { text: "とんかつ とんき 目黒本店", languageCode: "ja" },
+        formattedAddress: "東京都目黒区下目黒1-1-2",
+        location: { latitude: 35.6336, longitude: 139.7143 },
+      })
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const adapter = new GooglePlaceAdapter("test-key", buildStationProvider());
+
+    const result = await adapter.getPlace("place_1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0];
+    const parsedUrl = new URL(url as string);
+    expect(parsedUrl.searchParams.get("languageCode")).toBe("ja");
+    expect(parsedUrl.searchParams.get("regionCode")).toBe("JP");
+    expect(result?.name).toBe("とんかつ とんき 目黒本店");
+  });
+});
