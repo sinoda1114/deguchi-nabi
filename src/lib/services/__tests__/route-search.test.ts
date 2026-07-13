@@ -6,17 +6,21 @@ import {
   buildTransferAndExitSegments,
   computeConfidenceSummary,
   computeKeyInstruction,
+  sortCandidatesByMode,
+  NO_DEPARTURE_TIME_DISCLAIMER,
 } from "@/lib/services/route-search";
 import type { RouteSearchDeps } from "@/lib/services/route-search";
 import type { RouteProviderPort } from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import type {
   BoardingPosition,
+  Coordinates,
   Platform,
   Station,
   StationFacility,
 } from "@/lib/domain/station";
 import { unavailableConfidence, type Confidence } from "@/lib/domain/confidence";
+import { haversineMeters } from "@/lib/geo/haversine";
 
 const highConfidence: Confidence = {
   level: "high",
@@ -373,6 +377,48 @@ describe("searchRouteGuide", () => {
     expect(trainSegment?.confidence.level).toBe("low");
     expect(receivedArgs[0]).toEqual(["origin", "出発駅", "", "テストAI線", "到着駅方面"]);
   });
+
+  test("warnings に出発時刻未指定の免責文言を常に含む", async () => {
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider: buildStationProvider(FACILITIES_WITH_ELEVATOR),
+    };
+    const result = await searchRouteGuide({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.route.warnings).toContain(NO_DEPARTURE_TIME_DISCLAIMER);
+  });
+
+  test("walkingDistanceMeters に到着駅座標と目的地座標から算出した近似値が入る", async () => {
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider: buildStationProvider(FACILITIES_WITH_ELEVATOR),
+    };
+    const destinationCoordinates: Coordinates = { lat: 0.001, lng: 0.001 };
+    const result = await searchRouteGuide(
+      { ...BASE_INPUT, mode: "easy", destinationCoordinates },
+      deps
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 到着駅(STATIONS.destination)は lat:0, lng:0
+    const expected = haversineMeters(0, 0, destinationCoordinates.lat, destinationCoordinates.lng);
+    expect(result.route.summary.walkingDistanceMeters).toBeCloseTo(expected, 5);
+  });
+
+  test("destinationCoordinates が無い場合は walkingDistanceMeters が null のまま", async () => {
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider: buildStationProvider(FACILITIES_WITH_ELEVATOR),
+    };
+    const result = await searchRouteGuide(
+      { ...BASE_INPUT, mode: "easy", destinationCoordinates: null },
+      deps
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.route.summary.walkingDistanceMeters).toBeNull();
+  });
 });
 
 describe("resolveRouteCandidate", () => {
@@ -400,7 +446,8 @@ describe("resolveRouteCandidate", () => {
     expect(result.arrivalStationName).toBe("到着駅");
     expect(result.estimatedDurationMinutes).toBe(10);
     expect(result.transferCount).toBe(0);
-    expect(result.routeWarnings).toEqual([]);
+    // AI生成でない通常の経路でも、出発時刻未指定の免責文言は常に含まれる。
+    expect(result.routeWarnings).toEqual([NO_DEPARTURE_TIME_DISCLAIMER]);
     expect(result.chosen.segments).toHaveLength(1);
   });
 
@@ -471,6 +518,8 @@ describe("resolveRouteCandidate", () => {
     if (!result.ok) return;
     expect(result.routeWarnings.length).toBeGreaterThan(0);
     expect(result.routeWarnings[0]).toContain("AI");
+    // 出発時刻未指定の免責文言は、AI生成警告と併存して常に含まれる。
+    expect(result.routeWarnings).toContain(NO_DEPARTURE_TIME_DISCLAIMER);
   });
 });
 
@@ -1087,5 +1136,197 @@ describe("computeKeyInstruction", () => {
 
     const keyInstruction = computeKeyInstruction(trainSegments, outcome.result);
     expect(keyInstruction.text).toContain("出口は確認できません(推奨方向: 北側)");
+  });
+});
+
+describe("sortCandidatesByMode", () => {
+  const DESTINATION: Coordinates = { lat: 0, lng: 0 };
+
+  interface Candidate {
+    id: string;
+    transferCount: number;
+    estimatedDurationMinutes: number;
+    arrivalStationCoordinates?: Coordinates | null;
+  }
+
+  function candidate(id: string, overrides: Partial<Candidate> = {}): Candidate {
+    return {
+      id,
+      transferCount: 0,
+      estimatedDurationMinutes: 10,
+      arrivalStationCoordinates: null,
+      ...overrides,
+    };
+  }
+
+  test("easy: 乗換回数が少ない候補を優先する", () => {
+    const fewTransfers = candidate("few", { transferCount: 0, estimatedDurationMinutes: 30 });
+    const manyTransfers = candidate("many", { transferCount: 2, estimatedDurationMinutes: 5 });
+    const sorted = sortCandidatesByMode([manyTransfers, fewTransfers], "easy", null);
+    expect(sorted[0].id).toBe("few");
+  });
+
+  test("easy: 乗換回数が同じ場合、所要時間の差が閾値を超えれば所要時間の短い候補を優先する", () => {
+    const slow = candidate("slow", { transferCount: 0, estimatedDurationMinutes: 30 });
+    const fast = candidate("fast", { transferCount: 0, estimatedDurationMinutes: 10 });
+    const sorted = sortCandidatesByMode([slow, fast], "easy", null);
+    expect(sorted[0].id).toBe("fast");
+  });
+
+  test("easy: 乗換回数・所要時間(閾値内)が同程度の場合、徒歩距離(近似)が短い候補を優先する", () => {
+    const near = candidate("near", {
+      transferCount: 0,
+      estimatedDurationMinutes: 10,
+      arrivalStationCoordinates: { lat: 0.0001, lng: 0.0001 },
+    });
+    const far = candidate("far", {
+      transferCount: 0,
+      estimatedDurationMinutes: 11, // 差1分(閾値5分以内なので「同程度」)
+      arrivalStationCoordinates: { lat: 0.01, lng: 0.01 },
+    });
+    const sorted = sortCandidatesByMode([far, near], "easy", DESTINATION);
+    expect(sorted[0].id).toBe("near");
+  });
+
+  test("easy: 所要時間の差が閾値を超える場合は、徒歩距離が近くても所要時間の短さを優先する", () => {
+    const shortDurationFarWalk = candidate("short_duration_far_walk", {
+      transferCount: 0,
+      estimatedDurationMinutes: 5,
+      arrivalStationCoordinates: { lat: 0.01, lng: 0.01 },
+    });
+    const longDurationNearWalk = candidate("long_duration_near_walk", {
+      transferCount: 0,
+      estimatedDurationMinutes: 20, // 差15分(閾値超え)
+      arrivalStationCoordinates: { lat: 0.0001, lng: 0.0001 },
+    });
+    const sorted = sortCandidatesByMode(
+      [longDurationNearWalk, shortDurationFarWalk],
+      "easy",
+      DESTINATION
+    );
+    expect(sorted[0].id).toBe("short_duration_far_walk");
+  });
+
+  test("fastest: 所要時間を最優先する(乗換回数が多くても所要時間が短ければ優先)", () => {
+    const fastButManyTransfers = candidate("fast_many_transfers", {
+      transferCount: 2,
+      estimatedDurationMinutes: 10,
+    });
+    const slowButFewTransfers = candidate("slow_few_transfers", {
+      transferCount: 0,
+      estimatedDurationMinutes: 25,
+    });
+    const sorted = sortCandidatesByMode(
+      [slowButFewTransfers, fastButManyTransfers],
+      "fastest",
+      null
+    );
+    expect(sorted[0].id).toBe("fast_many_transfers");
+  });
+
+  test("fastest: 所要時間が同程度の場合、乗換回数の少ない候補を優先する", () => {
+    const oneTransfer = candidate("one_transfer", {
+      transferCount: 1,
+      estimatedDurationMinutes: 10,
+    });
+    const noTransfer = candidate("no_transfer", {
+      transferCount: 0,
+      estimatedDurationMinutes: 11, // 差1分(同程度)
+    });
+    const sorted = sortCandidatesByMode([oneTransfer, noTransfer], "fastest", null);
+    expect(sorted[0].id).toBe("no_transfer");
+  });
+
+  test("fastest: 所要時間・乗換回数が同程度の場合、徒歩距離(近似)が短い候補を優先する", () => {
+    const near = candidate("near", {
+      transferCount: 0,
+      estimatedDurationMinutes: 10,
+      arrivalStationCoordinates: { lat: 0.0001, lng: 0.0001 },
+    });
+    const far = candidate("far", {
+      transferCount: 0,
+      estimatedDurationMinutes: 11,
+      arrivalStationCoordinates: { lat: 0.01, lng: 0.01 },
+    });
+    const sorted = sortCandidatesByMode([far, near], "fastest", DESTINATION);
+    expect(sorted[0].id).toBe("near");
+  });
+
+  test("destinationCoordinates が null の場合は徒歩距離比較をスキップし、元の順序を維持する(安定ソート)", () => {
+    const a = candidate("a", {
+      transferCount: 0,
+      estimatedDurationMinutes: 10,
+      arrivalStationCoordinates: { lat: 0.0001, lng: 0.0001 },
+    });
+    const b = candidate("b", {
+      transferCount: 0,
+      estimatedDurationMinutes: 11,
+      arrivalStationCoordinates: { lat: 0.01, lng: 0.01 },
+    });
+    const sorted = sortCandidatesByMode([a, b], "easy", null);
+    expect(sorted.map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  test("到着駅座標を持たない候補が混在する場合も徒歩距離比較をスキップする(クラッシュしない)", () => {
+    const withCoordinates = candidate("with_coordinates", {
+      transferCount: 0,
+      estimatedDurationMinutes: 10,
+      arrivalStationCoordinates: { lat: 0.0001, lng: 0.0001 },
+    });
+    const withoutCoordinates = candidate("without_coordinates", {
+      transferCount: 0,
+      estimatedDurationMinutes: 11,
+      arrivalStationCoordinates: null,
+    });
+    const sorted = sortCandidatesByMode(
+      [withCoordinates, withoutCoordinates],
+      "easy",
+      DESTINATION
+    );
+    expect(sorted.map((c) => c.id)).toEqual(["with_coordinates", "without_coordinates"]);
+  });
+
+  test("回帰: 所要時間の同程度判定はペアごとの比較ではなく区間の基準値で行い、入力順序が変わっても結果が一定になる(推移律)", () => {
+    // A(10分/300m)・B(14分/200m)・C(18分/100m)は同じ乗換回数。
+    // ペアごとに「差が5分以内なら同着」と判定すると、A~B(差4)、B~C(差4)は
+    // 同着だがA・C(差8)は同着にならず、A<C<B<A のような循環が生じ、
+    // Array.prototype.sort に渡す比較関数が推移的でなくなる(入力順序に
+    // よって結果が変わる不具合)。sortCandidatesByModeは区間の基準値
+    // (昇順に並べた区間の先頭の値)からの差で同着を判定するため、
+    // 入力の並び順によらず常に同じ結果になることを固定する。
+    const a = candidate("a", {
+      transferCount: 0,
+      estimatedDurationMinutes: 10,
+      arrivalStationCoordinates: { lat: 0.003, lng: 0 }, // 徒歩距離: 遠い
+    });
+    const b = candidate("b", {
+      transferCount: 0,
+      estimatedDurationMinutes: 14,
+      arrivalStationCoordinates: { lat: 0.002, lng: 0 }, // 徒歩距離: 中間
+    });
+    const c = candidate("c", {
+      transferCount: 0,
+      estimatedDurationMinutes: 18,
+      arrivalStationCoordinates: { lat: 0.001, lng: 0 }, // 徒歩距離: 近い
+    });
+
+    const permutations = [
+      [a, b, c],
+      [a, c, b],
+      [b, a, c],
+      [b, c, a],
+      [c, a, b],
+      [c, b, a],
+    ];
+
+    const results = permutations.map((perm) =>
+      sortCandidatesByMode(perm, "easy", DESTINATION).map((x) => x.id)
+    );
+
+    // 全ての入力順序で結果が一致すること(=特定の入力順序でのみ発生する
+    // 循環的な並び替えが起きていないこと)を固定する。
+    for (const result of results) {
+      expect(result).toEqual(results[0]);
+    }
   });
 });

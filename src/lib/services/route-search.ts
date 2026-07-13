@@ -32,6 +32,20 @@ const EXIT_BEARING_MISMATCH_THRESHOLD_DEGREES = 90;
  * 方位角は2点がごく近いと微小な座標誤差で大きく変動し数学的に不安定なため。
  */
 const MIN_BEARING_CHECK_DISTANCE_METERS = 50;
+/**
+ * 経路候補の所要時間の差がこの分数以下なら「同程度」とみなし、所要時間では
+ * 決着させず徒歩距離(近似)による比較に委ねる。乗換検索の所要時間見積もりの
+ * 誤差範囲を踏まえた目安値(docs/04_EXIT_SELECTION_DESIGN.md の閾値定数と
+ * 同じ考え方: 数値の厳密な最適化ではなく、体感として「大差ない」範囲を定数化する)。
+ */
+const DURATION_TIE_THRESHOLD_MINUTES = 5;
+/**
+ * 出発時刻を指定できないこのアプリの検索全般に常時付与する免責文言。
+ * このアプリには departureTime に相当する概念が無く、常に「出発時刻未指定」の
+ * 通常時経路案内であるため、モードやAI生成有無に関わらず必ず warnings に含める。
+ */
+export const NO_DEPARTURE_TIME_DISCLAIMER =
+  "この案内は通常時の経路情報です。実際の到着番線・最適な乗車位置は、利用日時や運行状況によって異なる場合があります。";
 
 export type { Coordinates };
 
@@ -264,7 +278,11 @@ export async function resolveRouteCandidate(
     };
   }
 
-  const sorted = sortCandidatesByMode(candidates, input.mode);
+  const sorted = sortCandidatesByMode(
+    candidates,
+    input.mode,
+    input.destinationCoordinates
+  );
   const chosen = sorted[0];
 
   if (input.mode === "accessible" && chosen.isAiGenerated) {
@@ -279,11 +297,19 @@ export async function resolveRouteCandidate(
     input.destinationStationId
   );
 
-  const routeWarnings = chosen.isAiGenerated
-    ? [
-        "利用路線・所要時間はAI(Web検索結果)による推測です。運行状況の変更等により実際と異なる場合があります。",
-      ]
-    : [];
+  // このアプリには出発時刻を指定する概念自体が存在しない(常に「出発時刻未指定」の
+  // 検索)ため、NO_DEPARTURE_TIME_DISCLAIMERはモード・AI生成有無に関わらず常に含める。
+  // AI生成警告は「この経路情報自体の確からしさ」に関する既存の警告のため、
+  // より一般的な免責文言より先に出す(既存テストが routeWarnings[0] に
+  // AI警告を期待しているため、順序を変えない)。
+  const routeWarnings = [
+    ...(chosen.isAiGenerated
+      ? [
+          "利用路線・所要時間はAI(Web検索結果)による推測です。運行状況の変更等により実際と異なる場合があります。",
+        ]
+      : []),
+    NO_DEPARTURE_TIME_DISCLAIMER,
+  ];
 
   return {
     ok: true,
@@ -635,7 +661,13 @@ export async function searchRouteGuide(
         recommendedExit: facilitiesOutcome.result.recommendedExit,
         estimatedDurationMinutes: candidateResult.estimatedDurationMinutes,
         transferCount: candidateResult.transferCount,
-        walkingDistanceMeters: null,
+        // 到着駅座標と目的地座標からの直線距離(近似値)。目的地がstation由来で
+        // destinationCoordinatesが無い場合はnullのまま(既存の「座標が無ければ
+        // 比較・案内をスキップする」パターンに倣う)。
+        walkingDistanceMeters: approximateWalkingDistanceMeters(
+          candidateResult.arrivalStationCoordinates,
+          input.destinationCoordinates
+        ),
       },
       keyInstruction,
       segments,
@@ -650,18 +682,141 @@ export async function searchRouteGuide(
   };
 }
 
-function sortCandidatesByMode<
-  T extends { transferCount: number; estimatedDurationMinutes: number }
->(candidates: T[], mode: RouteMode): T[] {
-  const copy = [...candidates];
+/**
+ * 到着駅座標と目的地座標からの直線距離(近似値)。実際の徒歩経路(道なり)より
+ * 短く見積もられうるため、あくまで候補間の比較用の近似値として扱う
+ * (過信させないよう、呼び出し側でも変数名・コメントで明示すること)。
+ * どちらかの座標が無い場合は比較不能としてnullを返す
+ * (目的地がstation由来でdestinationCoordinatesが無い場合等の既存パターンに倣う)。
+ */
+function approximateWalkingDistanceMeters(
+  arrivalStationCoordinates: Coordinates | null | undefined,
+  destinationCoordinates: Coordinates | null
+): number | null {
+  if (!arrivalStationCoordinates || !destinationCoordinates) return null;
+  return haversineMeters(
+    arrivalStationCoordinates.lat,
+    arrivalStationCoordinates.lng,
+    destinationCoordinates.lat,
+    destinationCoordinates.lng
+  );
+}
+
+type RouteCandidateLike = {
+  transferCount: number;
+  estimatedDurationMinutes: number;
+  /**
+   * 候補ごとの到着駅座標(任意)。現行のRouteProviderPort実装はいずれも
+   * 単一の到着駅のみを候補として返すため通常はundefined。徒歩距離(近似)
+   * タイブレークに使い、無ければそのタイブレークをスキップする。
+   */
+  arrivalStationCoordinates?: Coordinates | null;
+};
+
+/**
+ * sortByStages の1段分の定義。keyが数値を返す候補群を昇順に並べ、差が
+ * tieThreshold以下の連続する候補を「同着グループ」としてまとめ、次の段の
+ * 比較に委ねる(tieThreshold=0なら完全一致のみを同着とする)。
+ *
+ * 注意: 「差がtieThreshold以下なら同着」という関係は推移律を満たさない
+ * (A・Bの差が閾値内、B・Cの差も閾値内でも、A・Cの差は閾値を超えうる)。
+ * ペアごとの比較関数でこれを直接表現すると Array.prototype.sort の前提
+ * (比較関数は推移的であること)を満たさず、入力順序によって結果が変わる
+ * 不具合になる(コードレビューで指摘された問題)。sortByStagesは同着判定を
+ * 「昇順に並べた後、連続する区間の先頭(その区間内の最小値)を基準にした
+ * 差」で行うことでこれを避けている。基準を区間内で固定するため、以降の
+ * 判定はその基準からの片方向の差のみになり、常に推移的な結果になる
+ * (基準の選び方に依存するグルーピングの粗さは残るが、決定的で安定した
+ * 順序が得られることを優先する)。
+ */
+interface SortStage<T> {
+  key: (item: T) => number | null;
+  tieThreshold: number;
+}
+
+/**
+ * 複数の SortStage を優先順位順に適用して並び替える。各段でkeyがnullを
+ * 返す候補が1つでもあれば、その段の判定は比較不能としてスキップし
+ * (既存の「座標が無ければ比較をスキップする」パターンに倣う)、元の
+ * 相対順序を保ったまま次の段に進む。全ての段で同着のまま決着しなかった
+ * 候補は、Array.prototype.sortがES2019以降安定ソートであることを利用し、
+ * 元の配列順序を維持する。
+ */
+function sortByStages<T>(items: T[], stages: SortStage<T>[]): T[] {
+  if (stages.length === 0 || items.length <= 1) return items;
+
+  const [stage, ...restStages] = stages;
+  const keys = items.map(stage.key);
+  if (keys.some((k) => k === null)) {
+    return sortByStages(items, restStages);
+  }
+  const numericKeys = keys as number[];
+
+  const indices = items.map((_, i) => i);
+  indices.sort((i, j) => numericKeys[i] - numericKeys[j]);
+
+  const result: T[] = [];
+  let i = 0;
+  while (i < indices.length) {
+    // 区間の基準値はその区間で最初に現れる(=最小の)値に固定する。以降は
+    // この基準との差だけをtieThresholdと比較するため、区間の分け方が
+    // ペアごとの比較に依存せず常に一意に決まる(推移律を満たす)。
+    const anchor = numericKeys[indices[i]];
+    let j = i + 1;
+    while (j < indices.length && numericKeys[indices[j]] - anchor <= stage.tieThreshold) {
+      j++;
+    }
+    const group = indices.slice(i, j).map((idx) => items[idx]);
+    result.push(...sortByStages(group, restStages));
+    i = j;
+  }
+  return result;
+}
+
+/**
+ * 徒歩距離(近似)の比較キーを作る。destinationCoordinatesが無い、または
+ * 候補が到着駅座標を持たない場合はnull(比較不能、この段をスキップ)を返す。
+ */
+function makeWalkingDistanceKey<T extends RouteCandidateLike>(
+  destinationCoordinates: Coordinates | null
+): (item: T) => number | null {
+  return (item) =>
+    approximateWalkingDistanceMeters(item.arrivalStationCoordinates, destinationCoordinates);
+}
+
+/**
+ * 経路候補をモードに応じた多段タイブレークで並び替える。
+ * - fastest: 所要時間 → 乗換回数 → 徒歩距離(近似)
+ * - easy/accessible: 乗換回数 → 所要時間 → 徒歩距離(近似)
+ * 所要時間の段は DURATION_TIE_THRESHOLD_MINUTES 以内の差を「同程度」として
+ * 決着させないため、所要時間が同程度なグループ内は実質的に次のタイブレーク
+ * (徒歩距離、または乗換回数)で決まる。徒歩距離はarrivalStationCoordinates/
+ * destinationCoordinatesのいずれかが無い候補では比較をスキップする。
+ */
+export function sortCandidatesByMode<T extends RouteCandidateLike>(
+  candidates: T[],
+  mode: RouteMode,
+  destinationCoordinates: Coordinates | null
+): T[] {
+  const walkingDistanceStage: SortStage<T> = {
+    key: makeWalkingDistanceKey<T>(destinationCoordinates),
+    tieThreshold: 0,
+  };
+  const transferCountStage: SortStage<T> = {
+    key: (c) => c.transferCount,
+    tieThreshold: 0,
+  };
+  const durationStage: SortStage<T> = {
+    key: (c) => c.estimatedDurationMinutes,
+    tieThreshold: DURATION_TIE_THRESHOLD_MINUTES,
+  };
+
   if (mode === "fastest") {
-    return copy.sort(
-      (a, b) => a.estimatedDurationMinutes - b.estimatedDurationMinutes
-    );
+    return sortByStages(candidates, [durationStage, transferCountStage, walkingDistanceStage]);
   }
-  if (mode === "easy") {
-    return copy.sort((a, b) => a.transferCount - b.transferCount);
-  }
-  // accessible: 乗換回数の少なさを優先(段差回避の判断は上位の facility チェックで行う)
-  return copy.sort((a, b) => a.transferCount - b.transferCount);
+
+  // easy/accessible: 乗換回数の少なさを優先(段差回避の判断は上位の facility
+  // チェックで行う)。乗換回数が同じ場合は所要時間、それも同程度なら
+  // 徒歩距離(近似)で決着させる。
+  return sortByStages(candidates, [transferCountStage, durationStage, walkingDistanceStage]);
 }

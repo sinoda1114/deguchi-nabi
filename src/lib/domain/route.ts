@@ -43,6 +43,12 @@ export interface RouteSummary {
   recommendedExit: string;
   estimatedDurationMinutes: number | null;
   transferCount: number;
+  /**
+   * 到着駅座標と目的地座標からの直線距離(近似値、メートル)。実際の徒歩経路
+   * (道なり)とは異なり、道路・線路・建物等を考慮しないため、実際の徒歩距離を
+   * 過小評価しうる。あくまで候補間比較・目安としての近似値であり、案内文言等で
+   * 断定的な実測値として表示しないこと。座標が確認できない場合はnull。
+   */
   walkingDistanceMeters: number | null;
 }
 
