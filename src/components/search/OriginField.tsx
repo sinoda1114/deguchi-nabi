@@ -34,6 +34,33 @@ export function buildHomeStationOriginChoice(
 }
 
 /**
+ * ページロード時(sessionStorageの下書き復元後)に、未ログイン中は決して
+ * 送信できない type: "home_station" が origin に残っていないか検査し、
+ * 残っていれば安全な形へ補正する。
+ *
+ * 修正前のバージョンでは未ログイン時も type: "home_station" を下書きに
+ * 保存していたため、過去にその状態で保存された下書きは、
+ * buildHomeStationOriginChoice を導入した後もページ再訪問のたびに
+ * そのまま復元され、「最寄り駅が登録されていません」エラーが再発していた。
+ * これはページロードのたびに毎回チェックすることで、既存の壊れた下書きも
+ * 自己修復する。
+ */
+export function repairStaleOriginChoice(
+  origin: OriginChoice | null,
+  user: User | null,
+  defaultStation: Station | null
+): OriginChoice | null {
+  if (user) return origin;
+  if (origin?.type === "home_station") {
+    return defaultStation ? buildHomeStationOriginChoice(user, defaultStation) : null;
+  }
+  if (!origin && defaultStation) {
+    return buildHomeStationOriginChoice(user, defaultStation);
+  }
+  return origin;
+}
+
+/**
  * 出発地入力欄に表示する文字列を決定する。
  * home_station選択時は、sessionStorageの下書きに保存された選択時点の
  * ラベル(古い登録駅名の可能性がある)より、常に最新のeffectiveHomeStation
