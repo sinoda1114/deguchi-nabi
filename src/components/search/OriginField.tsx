@@ -15,16 +15,17 @@ export type OriginChoice =
 /**
  * 出発地入力欄に表示する文字列を決定する。
  * home_station選択時は、sessionStorageの下書きに保存された選択時点の
- * ラベル(古い登録駅名の可能性がある)より、常に最新のhomeStation propsを
- * 優先する(/settingsで最寄り駅を変更しても表示が追従するように)。
+ * ラベル(古い登録駅名の可能性がある)より、常に最新のeffectiveHomeStation
+ * (ログイン時はhomeStation props、未ログイン時はlocalStorageのデフォルト駅)
+ * を優先する(/settingsで最寄り駅を変更しても表示が追従するように)。
  */
 export function resolveOriginInputValue(
   value: OriginChoice | null,
-  homeStation: Station | null,
+  effectiveHomeStation: Station | null,
   manualQuery: string
 ): string {
   if (!value) return manualQuery;
-  if (value.type === "home_station") return homeStation?.stationName ?? value.label;
+  if (value.type === "home_station") return effectiveHomeStation?.stationName ?? value.label;
   return value.label;
 }
 
@@ -33,6 +34,13 @@ interface OriginFieldProps {
   homeStation: Station | null;
   value: OriginChoice | null;
   onChange: (choice: OriginChoice | null) => void;
+  /**
+   * 未ログイン時のデフォルト出発駅(この端末にlocalStorage保存)。ログイン時のhomeStationと
+   * 実質的に同じ役割を果たす。SearchForm側で一元管理し、propsとして受け取ることで、
+   * このコンポーネント内で設定した変更を目的地検索の位置バイアス計算にも即座に反映させる。
+   */
+  localDefaultStation: Station | null;
+  onSetLocalDefaultStation: (station: Station) => void;
 }
 
 // 周辺駅候補は距離順(近い順)で返る(CompositeStationAdapter.nearestStations参照)。
@@ -40,13 +48,24 @@ interface OriginFieldProps {
 // 残りは「もっと見る」で展開する progressive disclosure にする。
 const NEARBY_PRIMARY_COUNT = 2;
 
-export function OriginField({ user, homeStation, value, onChange }: OriginFieldProps) {
+export function OriginField({
+  user,
+  homeStation,
+  value,
+  onChange,
+  localDefaultStation,
+  onSetLocalDefaultStation,
+}: OriginFieldProps) {
   const [manualQuery, setManualQuery] = useState("");
   const [manualCandidates, setManualCandidates] = useState<Station[]>([]);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [nearby, setNearby] = useState<Station[]>([]);
   const [showAllNearby, setShowAllNearby] = useState(false);
+
+  // ログイン中はサーバーに登録された最寄り駅、未ログイン中はこの端末に保存した
+  // デフォルト駅を、実質的に同じ役割(出発地のワンタップ選択肢)として扱う。
+  const effectiveHomeStation = user ? homeStation : localDefaultStation;
 
   async function handleUseCurrentLocation() {
     setLocationError(null);
@@ -103,13 +122,15 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
         出発地
       </label>
       <div className="flex flex-wrap gap-2">
-        {user && homeStation ? (
+        {effectiveHomeStation ? (
           <Button
             size="sm"
             variant={value?.type === "home_station" ? "primary" : "secondary"}
-            onPress={() => onChange({ type: "home_station", label: homeStation.stationName })}
+            onPress={() =>
+              onChange({ type: "home_station", label: effectiveHomeStation.stationName })
+            }
           >
-            {homeStation.stationName}(登録駅)
+            {effectiveHomeStation.stationName}({user ? "登録駅" : "出発地"})
           </Button>
         ) : null}
         <Button
@@ -131,21 +152,42 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
         <>
           <div className="mt-2 flex flex-wrap gap-2">
             {visibleNearby.map((station) => (
-              <Button
-                key={station.stationId}
-                size="sm"
-                variant={
-                  value?.type === "station" && value.stationId === station.stationId
-                    ? "primary"
-                    : "secondary"
-                }
-                onPress={() => {
-                  onChange({ type: "station", stationId: station.stationId, label: station.stationName });
-                  setManualCandidates([]);
-                }}
-              >
-                {station.stationName}
-              </Button>
+              <div key={station.stationId} className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant={
+                    value?.type === "station" && value.stationId === station.stationId
+                      ? "primary"
+                      : "secondary"
+                  }
+                  onPress={() => {
+                    onChange({ type: "station", stationId: station.stationId, label: station.stationName });
+                    setManualCandidates([]);
+                  }}
+                >
+                  {station.stationName}
+                </Button>
+                {!user ? (
+                  <button
+                    type="button"
+                    onClick={() => onSetLocalDefaultStation(station)}
+                    disabled={localDefaultStation?.stationId === station.stationId}
+                    aria-label={
+                      localDefaultStation?.stationId === station.stationId
+                        ? "出発地に設定済み"
+                        : "この駅を出発地にする"
+                    }
+                    aria-pressed={localDefaultStation?.stationId === station.stationId}
+                    className="shrink-0 p-1 disabled:cursor-default"
+                  >
+                    <SearchPictogram
+                      type="favorite"
+                      filled={localDefaultStation?.stationId === station.stationId}
+                      className={`h-4 w-4 ${localDefaultStation?.stationId === station.stationId ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"}`}
+                    />
+                  </button>
+                ) : null}
+              </div>
             ))}
             {!showAllNearby && moreNearby.length > 0 ? (
               <Button
@@ -175,7 +217,7 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
       <div className="relative mt-2">
         <Input
           type="text"
-          value={resolveOriginInputValue(value, homeStation, manualQuery)}
+          value={resolveOriginInputValue(value, effectiveHomeStation, manualQuery)}
           placeholder="駅名で指定"
           aria-label="出発駅を検索"
           onChange={(e) => handleManualSearch(e.target.value)}
@@ -183,7 +225,7 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
         {!value && manualCandidates.length > 0 ? (
           <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-lg">
             {manualCandidates.map((station) => (
-              <li key={station.stationId}>
+              <li key={station.stationId} className="flex items-center gap-1 hover:bg-[var(--surface-raised)]">
                 <button
                   type="button"
                   onClick={() => {
@@ -194,10 +236,33 @@ export function OriginField({ user, homeStation, value, onChange }: OriginFieldP
                     });
                     setManualCandidates([]);
                   }}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--surface-raised)]"
+                  className="flex-1 px-3 py-2 text-left text-sm"
                 >
                   {station.stationName}
                 </button>
+                {!user ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSetLocalDefaultStation(station);
+                    }}
+                    disabled={localDefaultStation?.stationId === station.stationId}
+                    aria-label={
+                      localDefaultStation?.stationId === station.stationId
+                        ? "出発地に設定済み"
+                        : "この駅を出発地にする"
+                    }
+                    aria-pressed={localDefaultStation?.stationId === station.stationId}
+                    className="mr-2 shrink-0 p-1 disabled:cursor-default"
+                  >
+                    <SearchPictogram
+                      type="favorite"
+                      filled={localDefaultStation?.stationId === station.stationId}
+                      className={`h-4 w-4 ${localDefaultStation?.stationId === station.stationId ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"}`}
+                    />
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>
