@@ -15,6 +15,12 @@ export function AppHeader({ user }: AppHeaderProps) {
         </Link>
         <nav className="flex items-center gap-3 text-sm font-semibold">
           <ThemeToggle />
+          <Link
+            href="/favorites/destinations"
+            className="text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+          >
+            登録した行き先
+          </Link>
           {user ? (
             <>
               <Link href="/favorites" className="text-[var(--foreground-muted)] hover:text-[var(--foreground)]">

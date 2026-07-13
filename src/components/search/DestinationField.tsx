@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Button, Input } from "@heroui/react";
 import { ApiError, apiFetch } from "@/lib/api-client";
 import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
@@ -144,29 +143,21 @@ export function DestinationField({
       </label>
 
       {favorites.length > 0 ? (
-        <div className="mb-2 flex items-center gap-2">
-          <div className="flex flex-1 flex-nowrap gap-2 overflow-x-auto">
-            {sortedFavorites.map((favorite) => (
-              <Button
-                key={favorite.favoriteDestinationId}
-                size="sm"
-                variant={value && isSameFavoriteTarget(favorite, value) ? "primary" : "secondary"}
-                onPress={() => {
-                  onChange(toSearchCandidate(favorite));
-                  setOpen(false);
-                }}
-                className="shrink-0"
-              >
-                {favorite.label}
-              </Button>
-            ))}
-          </div>
-          <Link
-            href="/favorites/destinations"
-            className="shrink-0 text-xs font-bold whitespace-nowrap text-[var(--accent)] underline"
-          >
-            管理({favorites.length}件)
-          </Link>
+        <div className="mb-2 flex flex-nowrap gap-2 overflow-hidden">
+          {sortedFavorites.map((favorite) => (
+            <Button
+              key={favorite.favoriteDestinationId}
+              size="sm"
+              variant={value && isSameFavoriteTarget(favorite, value) ? "primary" : "secondary"}
+              onPress={() => {
+                onChange(toSearchCandidate(favorite));
+                setOpen(false);
+              }}
+              className="shrink-0"
+            >
+              {favorite.label}
+            </Button>
+          ))}
         </div>
       ) : null}
 
