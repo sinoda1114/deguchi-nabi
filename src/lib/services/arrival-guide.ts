@@ -34,12 +34,22 @@ function facilityStep(type: GuideStepType, facility: StationFacility, instructio
  *   (AIレビュー指摘に基づく安全対応)。
  * - gate/exit自体がAI推定の場合は生成しない: 実在するかも未確認の施設名の
  *   「間」をさらにAIに推測させると、不確かな情報の上に不確かな情報を
- *   重ねることになり誤誘導リスクが増す。加えて、経路生成自体がAI生成の
- *   場合との直列実行でタイムアウトが積み重なるリスクも抑えられる
- *   (検索グラウンディングは1回あたり最大55秒かかるため)。
+ *   重ねることになり誤誘導リスクが増す。
+ * - 経路自体がAI生成(isRouteAiGenerated)の場合も生成しない: `/api/routes/search`
+ *   は未認証・レート制限なしで呼べるため、経路生成AI(検索55秒+抽出15秒)と
+ *   本機能のAI生成(同じく最大70秒)が同一リクエストで両方走ると、1リクエスト
+ *   あたり2系統の課金対象API呼び出しを確実に誘発でき、コスト濫用・DoSの
+ *   実害を広げてしまう(セキュリティレビュー指摘に基づく対応)。到着駅の
+ *   gate/exitがfixture収録済みでも、出発地〜到着駅間の経路自体がfixtureに
+ *   無い区間(=AI生成)なら、その1リクエストでは改札後導線のAI生成を諦める。
  */
-function canGenerateNarrative(result: FacilitiesBuildSuccess, mode: RouteMode): boolean {
+function canGenerateNarrative(
+  result: FacilitiesBuildSuccess,
+  mode: RouteMode,
+  isRouteAiGenerated: boolean
+): boolean {
   if (mode === "accessible") return false;
+  if (isRouteAiGenerated) return false;
   if (!result.gate || !result.exit) return false;
   const gateProvenance = result.gate.provenance ?? "ai_inferred";
   const exitProvenance = result.exit.provenance ?? "ai_inferred";
@@ -65,6 +75,7 @@ export async function buildArrivalGuide(
   arrivalStationName: string,
   arrivalStationCoordinates: Coordinates | null,
   mode: RouteMode,
+  isRouteAiGenerated: boolean,
   stationProvider: Pick<StationProviderPort, "getArrivalGuideNarrativeSteps">
 ): Promise<ArrivalGuide> {
   const steps: GuideStep[] = [];
@@ -73,7 +84,10 @@ export async function buildArrivalGuide(
     steps.push(facilityStep("ticket_gate", result.gate, `${result.gate.name}を利用してください。`));
   }
 
-  if (canGenerateNarrative(result, mode) && stationProvider.getArrivalGuideNarrativeSteps) {
+  if (
+    canGenerateNarrative(result, mode, isRouteAiGenerated) &&
+    stationProvider.getArrivalGuideNarrativeSteps
+  ) {
     const narrativeSteps = await stationProvider.getArrivalGuideNarrativeSteps(
       arrivalStationId,
       arrivalStationName,

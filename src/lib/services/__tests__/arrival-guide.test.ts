@@ -82,6 +82,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       {}
     );
 
@@ -97,13 +98,14 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       {}
     );
     expect(guide.steps.map((s) => s.type)).toEqual(["street_exit"]);
   });
 
   test("gate・exitともnullでもクラッシュせず空のstepsを返す", async () => {
-    const guide = await buildArrivalGuide(baseResult(), "st_1", "テスト駅", null, "easy", {});
+    const guide = await buildArrivalGuide(baseResult(), "st_1", "テスト駅", null, "easy", false, {});
     expect(guide.steps).toEqual([]);
   });
 
@@ -114,6 +116,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       {}
     );
     expect(guide.destinationDirection).toBe("南西");
@@ -126,6 +129,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       {}
     );
     expect(guide.steps[0].confidence.level).toBe("medium");
@@ -139,6 +143,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       {}
     );
     expect(guide.steps[0].confidence.level).toBe("medium");
@@ -152,12 +157,13 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       {}
     );
     expect(guide.steps[0].confidence.level).toBe("high");
   });
 
-  test("gate・exit両方確定(surveyed)していればAI生成のナラティブステップをticket_gateとstreet_exitの間に挿入する", async () => {
+  test("gate・exit両方確定(surveyed)・経路も非AI生成であればAI生成のナラティブステップをticket_gateとstreet_exitの間に挿入する", async () => {
     const getArrivalGuideNarrativeSteps = vi
       .fn()
       .mockResolvedValue([guideStep({ type: "public_passage", title: "地下通路" })]);
@@ -171,6 +177,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       { lat: 35.0, lng: 139.0 },
       "easy",
+      false,
       { getArrivalGuideNarrativeSteps }
     );
 
@@ -193,6 +200,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       { getArrivalGuideNarrativeSteps }
     );
 
@@ -211,6 +219,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "accessible",
+      false,
       { getArrivalGuideNarrativeSteps }
     );
 
@@ -229,6 +238,26 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
+      { getArrivalGuideNarrativeSteps }
+    );
+
+    expect(getArrivalGuideNarrativeSteps).not.toHaveBeenCalled();
+  });
+
+  test("経路自体がAI生成(isRouteAiGenerated=true)の場合はgate/exitがsurveyedでもナラティブ生成を呼ばない(1リクエストで課金対象のAI呼び出しが2系統重ならないようにするため。セキュリティレビュー指摘に基づく)", async () => {
+    const getArrivalGuideNarrativeSteps = vi.fn().mockResolvedValue([]);
+
+    await buildArrivalGuide(
+      baseResult({
+        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
+        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+      }),
+      "st_1",
+      "テスト駅",
+      null,
+      "easy",
+      true,
       { getArrivalGuideNarrativeSteps }
     );
 
@@ -245,6 +274,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       {}
     );
     expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit"]);
@@ -267,6 +297,7 @@ describe("buildArrivalGuide", () => {
       "テスト駅",
       null,
       "easy",
+      false,
       { getArrivalGuideNarrativeSteps }
     );
 

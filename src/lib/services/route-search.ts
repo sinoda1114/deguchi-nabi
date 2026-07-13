@@ -640,6 +640,7 @@ export async function searchRouteGuide(
         candidateResult.arrivalStationName,
         candidateResult.arrivalStationCoordinates,
         input.mode,
+        Boolean(candidateResult.chosen.isAiGenerated),
         deps.stationProvider
       ),
       confidenceSummary,
