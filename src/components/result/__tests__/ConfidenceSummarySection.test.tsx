@@ -100,7 +100,7 @@ describe("ConfidenceSummarySection", () => {
 describe("ConfidenceSummarySectionSkeleton", () => {
   test("aria-hiddenなプレースホルダーを描画する", () => {
     const html = renderToStaticMarkup(<ConfidenceSummarySectionSkeleton />);
-    expect(html).toContain("animate-pulse");
+    expect(html).toContain("skeleton-shimmer");
     expect(html).toContain('aria-hidden="true"');
   });
 });

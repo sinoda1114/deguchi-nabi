@@ -33,7 +33,7 @@ export function RouteResultBodySkeleton({ mode }: RouteResultBodySkeletonProps) 
             </span>
           </div>
           <RouteOverviewContentSkeleton />
-          <div className="mt-4 h-4 w-40 animate-pulse rounded-full bg-black/10" />
+          <div className="skeleton-shimmer-on-accent mt-4 h-4 w-40 rounded-full" />
         </div>
 
         <section>
