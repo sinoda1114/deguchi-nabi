@@ -7,16 +7,29 @@ import type {
   RouteSegment,
 } from "@/lib/domain/route";
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
-import { unavailableConfidence } from "@/lib/domain/confidence";
+import { lowConfidence, unavailableConfidence } from "@/lib/domain/confidence";
 import type {
   RailRouteCandidate,
   RouteProviderPort,
 } from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import { haversineMeters } from "@/lib/geo/haversine";
+import { bearingDegrees, bearingDifferenceDegrees, compassLabel } from "@/lib/geo/bearing";
 import { worstConfidenceLevel } from "./confidence-engine";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
+/**
+ * 「最寄り候補」と「目的地の方角」の方位差がこの値を超える場合、候補集合が
+ * 不完全(閉世界仮定の誤り)である可能性が高いとみなし、出口を名指しせず
+ * 方角のみの案内に格下げする。90度(四半円)= 駅の反対側寄りと判断する目安。
+ * docs/04_EXIT_SELECTION_DESIGN.md 参照。
+ */
+const EXIT_BEARING_MISMATCH_THRESHOLD_DEGREES = 90;
+/**
+ * 目的地がこの距離未満(メートル)で駅に近い場合、方角判定をスキップする。
+ * 方位角は2点がごく近いと微小な座標誤差で大きく変動し数学的に不安定なため。
+ */
+const MIN_BEARING_CHECK_DISTANCE_METERS = 50;
 
 export type { Coordinates };
 
@@ -107,6 +120,99 @@ function pickGateForExit(
   return pickFacility(facilities, "gate");
 }
 
+export type ExitRecommendationTier = "exact" | "approximate" | "unavailable";
+
+export interface ExitRecommendation {
+  tier: ExitRecommendationTier;
+  exit: StationFacility | null;
+  /** tier が approximate の場合のみ、目的地の方角(8方位ラベル)。 */
+  destinationDirectionLabel: string | null;
+}
+
+/**
+ * 目的地座標・駅中心座標から出口の推薦確度を判定する。
+ *
+ * 候補出口が座標を持っていても、そのうちの「最寄り」が目的地の方角と
+ * 大きくずれている場合、候補集合そのものが不完全(閉世界仮定の誤り)である
+ * 可能性が高い。この場合は具体的な出口を名指しせず、方角のみの案内に
+ * 格下げする(fixtureで候補が2つしかない駅で、両方とも駅の反対側に
+ * 偏っているケース等)。docs/04_EXIT_SELECTION_DESIGN.md 参照。
+ */
+function resolveExitRecommendation(
+  facilities: StationFacility[],
+  destinationCoordinates: Coordinates | null,
+  stationCenter: Coordinates | null
+): ExitRecommendation {
+  const candidates = facilities.filter((f) => f.facilityType === "exit");
+  if (candidates.length === 0) {
+    return { tier: "unavailable", exit: null, destinationDirectionLabel: null };
+  }
+
+  // 目的地が駅そのもの(destinationCoordinatesが無い)場合は方角の概念が
+  // 不要なため、従来通りの選定(座標があれば最近傍、無ければ先頭一致)を行う。
+  if (!destinationCoordinates) {
+    return {
+      tier: "exact",
+      exit: pickNearestFacility(facilities, "exit", null),
+      destinationDirectionLabel: null,
+    };
+  }
+
+  // 目的地座標はあるが駅中心座標が不明で方角を判定できない場合、先頭一致で
+  // 断定すると閉世界仮定の誤りを再導入してしまう(取得失敗時ほど確信度を
+  // 下げるべきという原則に反する)ため、出口を名指しせず確認不能として扱う。
+  if (!stationCenter) {
+    return { tier: "unavailable", exit: null, destinationDirectionLabel: null };
+  }
+
+  const distanceToDestinationMeters = haversineMeters(
+    stationCenter.lat,
+    stationCenter.lng,
+    destinationCoordinates.lat,
+    destinationCoordinates.lng
+  );
+  // 目的地が駅からごく近い場合、方角は数学的に不安定(微小な座標誤差で
+  // 大きく変動する)ため方角チェックをスキップし、座標ベースの通常の
+  // 最近傍選定に委ねる。
+  if (distanceToDestinationMeters < MIN_BEARING_CHECK_DISTANCE_METERS) {
+    return {
+      tier: "exact",
+      exit: pickNearestFacility(facilities, "exit", destinationCoordinates),
+      destinationDirectionLabel: null,
+    };
+  }
+
+  const targetBearing = bearingDegrees(
+    stationCenter.lat,
+    stationCenter.lng,
+    destinationCoordinates.lat,
+    destinationCoordinates.lng
+  );
+  const destinationDirectionLabel = compassLabel(targetBearing);
+
+  const withCoordinates = candidates.filter((f) => f.coordinates !== null);
+  if (withCoordinates.length === 0) {
+    // 座標を持つ候補が一つも無い(AI生成facility等)場合、先頭一致で
+    // 断定すると方角を無視した誤案内になりうるため、方角のみに格下げする。
+    return { tier: "approximate", exit: null, destinationDirectionLabel };
+  }
+
+  const nearest = pickNearestFacility(facilities, "exit", destinationCoordinates)!;
+  const nearestBearing = bearingDegrees(
+    stationCenter.lat,
+    stationCenter.lng,
+    nearest.coordinates!.lat,
+    nearest.coordinates!.lng
+  );
+  const bearingDiff = bearingDifferenceDegrees(targetBearing, nearestBearing);
+
+  if (bearingDiff > EXIT_BEARING_MISMATCH_THRESHOLD_DEGREES) {
+    return { tier: "approximate", exit: null, destinationDirectionLabel };
+  }
+
+  return { tier: "exact", exit: nearest, destinationDirectionLabel: null };
+}
+
 /**
  * 経路候補の選定結果。ストリーミング表示では、これが確定した時点で
  * ヘッダー・出発地/目的地・所要時間等をすぐに描画できる
@@ -119,6 +225,12 @@ export interface RouteCandidateResult {
   originName: string;
   destinationName: string;
   arrivalStationName: string;
+  /**
+   * 到着駅の中心座標。出口の方角判定(resolveExitRecommendation)に使う。
+   * resolveRouteCandidate で既に取得済みの arrivalStation から作るため、
+   * buildTransferAndExitSegments 側での再フェッチを避けられる。
+   */
+  arrivalStationCoordinates: Coordinates | null;
   estimatedDurationMinutes: number;
   transferCount: number;
   routeWarnings: string[];
@@ -178,6 +290,9 @@ export async function resolveRouteCandidate(
     originName: input.originLabel,
     destinationName: input.destinationLabel,
     arrivalStationName: arrivalStation?.stationName ?? input.destinationStationId,
+    arrivalStationCoordinates: arrivalStation
+      ? { lat: arrivalStation.latitude, lng: arrivalStation.longitude }
+      : null,
     estimatedDurationMinutes: chosen.estimatedDurationMinutes,
     transferCount: chosen.transferCount,
     routeWarnings,
@@ -274,10 +389,21 @@ export async function buildTransferAndExitSegments(
 
   // 出口→改札の順で選ぶ(逆算)。目的地座標に最も近い出口を選び、その出口の
   // connectedGateId から対応する改札を逆引きする(docs/04_EXIT_SELECTION_DESIGN.md)。
+  // 候補集合が不完全(閉世界仮定の誤り)な場合は具体的な出口を名指しせず
+  // 方角のみの案内に格下げする(resolveExitRecommendation参照)。到着駅の
+  // 中心座標は resolveRouteCandidate で取得済みの candidate から再利用し、
+  // ここでの再フェッチは行わない(Promise共有時の重複取得を防ぐため)。
+  // exitが確定しなかった場合、gateも「未確定の出口に紐づく改札」を
+  // 確信度高く名指しできないため、出口が無ければgateも無しとする。
   // エレベーター・エスカレーターは「存在するかどうか」が重要で方向の影響は
   // 小さいため、引き続き先頭一致で選ぶ(Phase 1のスコープ外)。
-  const exit = pickNearestFacility(arrivalFacilities, "exit", input.destinationCoordinates);
-  const gate = pickGateForExit(arrivalFacilities, exit);
+  const recommendation = resolveExitRecommendation(
+    arrivalFacilities,
+    input.destinationCoordinates,
+    candidate.arrivalStationCoordinates
+  );
+  const exit = recommendation.exit;
+  const gate = exit ? pickGateForExit(arrivalFacilities, exit) : null;
   const elevator = pickFacility(arrivalFacilities, "elevator");
   const escalator = pickFacility(arrivalFacilities, "escalator");
 
@@ -311,10 +437,14 @@ export async function buildTransferAndExitSegments(
       : [],
     instruction: gate
       ? `${gate.name}へ向かってください。`
-      : "改札情報を確認できません。",
+      : recommendation.tier === "approximate"
+        ? "改札は現地の案内表示でご確認ください。"
+        : "改札情報を確認できません。",
     confidence: gate
       ? gate.confidence
-      : unavailableConfidence("改札情報が不足しています"),
+      : recommendation.tier === "approximate"
+        ? lowConfidence("出口が未確定のため、改札も確定できません。")
+        : unavailableConfidence("改札情報が不足しています"),
     sourceReferences: [],
     warnings: [],
   };
@@ -338,20 +468,36 @@ export async function buildTransferAndExitSegments(
       : [],
     instruction: exit
       ? `${exit.name}から出てください。`
-      : "出口情報を確認できません。",
+      : recommendation.tier === "approximate"
+        ? `目的地は${recommendation.destinationDirectionLabel}側です。この方角の出口データが不足しているため、具体的な出口はご案内できません。現地の案内表示をご確認ください。`
+        : "出口情報を確認できません。",
     confidence: exit
       ? exit.confidence
-      : unavailableConfidence("出口情報が不足しています"),
+      : recommendation.tier === "approximate"
+        ? lowConfidence(
+            `目的地(${recommendation.destinationDirectionLabel}側)に近い出口データが無いため、方角のみの案内です。`
+          )
+        : unavailableConfidence("出口情報が不足しています"),
     sourceReferences: [],
-    warnings: [],
+    warnings: exit
+      ? []
+      : recommendation.tier === "approximate"
+        ? ["具体的な出口を特定できませんでした。現地の案内表示をご確認ください。"]
+        : [],
   };
+
+  const recommendedExit =
+    exit?.name ??
+    (recommendation.tier === "approximate"
+      ? `${recommendation.destinationDirectionLabel}側(現地で出口をご確認ください)`
+      : "確認できません");
 
   return {
     ok: true,
     result: {
       transferSegment,
       exitSegment,
-      recommendedExit: exit?.name ?? "確認できません",
+      recommendedExit,
       gate,
       exit,
       elevator,

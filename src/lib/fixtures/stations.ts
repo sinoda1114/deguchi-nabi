@@ -24,6 +24,19 @@ const mediumConfidence = (reason: string) => ({
   sourceCount: 1,
 });
 
+/**
+ * 公式構内図等での現地確認を一切行っていないデータ用。mediumConfidenceは
+ * 「一度確認したが情報が古い」ケース向けで verifiedAt を固定値にするため、
+ * 未確認データにそのまま使うと reason の文言と verifiedAt が矛盾する。
+ */
+const unverifiedMediumConfidence = (reason: string) => ({
+  level: "medium" as const,
+  reasons: [reason],
+  verifiedAt: null,
+  expiresAt: null,
+  sourceCount: 0,
+});
+
 export const FIXTURE_STATIONS: Station[] = [
   {
     stationId: "st_nishiya",
@@ -183,6 +196,44 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: "fac_shibuya_miyamasuzaka_gate",
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+  },
+  {
+    // これまでの登録出口(ヒカリエ改札・宮益坂口)は駅の東側に偏っており、
+    // 南西側(桜丘町・Shibuya Sakura Stage方面)の目的地に対して常に
+    // 東側出口を誤って推薦してしまう欠落があった。方角バランスを取るため
+    // 南西側の出口を追加する(docs/04_EXIT_SELECTION_DESIGN.md 参照)。
+    // 座標は一般的な地図情報を基にした概算であり、公式構内図による現地確認・
+    // 改札との接続関係・段差状況は未確認。confidence は medium、
+    // accessible は安全側に倒し未確認のまま true と断定しない(false)、
+    // verifiedAt も現地確認していないため null とする
+    // (「確認済みだが部分的」という状態を明示し、他の高確信度データと
+    // 混同しないようにする)。
+    facilityId: "fac_shibuya_sakuragaoka_gate",
+    stationId: "st_shibuya",
+    facilityType: "gate",
+    name: "桜丘改札",
+    level: "地上1階",
+    accessible: false,
+    coordinates: { lat: 35.6564, lng: 139.6989 },
+    connectedGateId: null,
+    confidence: unverifiedMediumConfidence(
+      "一般的な地図情報を基に追加。公式構内図による現地確認・改札接続・段差状況は未確認"
+    ),
+    verifiedAt: null,
+  },
+  {
+    facilityId: "fac_shibuya_exit_sakuragaoka",
+    stationId: "st_shibuya",
+    facilityType: "exit",
+    name: "桜丘口",
+    level: "地上1階",
+    accessible: false,
+    coordinates: { lat: 35.6564, lng: 139.6989 },
+    connectedGateId: "fac_shibuya_sakuragaoka_gate",
+    confidence: unverifiedMediumConfidence(
+      "一般的な地図情報を基に追加。公式構内図による現地確認・改札接続・段差状況は未確認"
+    ),
+    verifiedAt: null,
   },
   {
     facilityId: "fac_shinjuku_new_south_gate",

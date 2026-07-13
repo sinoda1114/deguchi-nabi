@@ -24,3 +24,13 @@ export function unavailableConfidence(reason: string): Confidence {
     sourceCount: 0,
   };
 }
+
+export function lowConfidence(reason: string): Confidence {
+  return {
+    level: "low",
+    reasons: [reason],
+    verifiedAt: null,
+    expiresAt: null,
+    sourceCount: 0,
+  };
+}
