@@ -8,9 +8,9 @@ import type { StationProviderPort } from "@/lib/integrations/station-provider/St
 import type { BoardingPosition, Platform, Station, StationFacility } from "@/lib/domain/station";
 import type { RailRouteCandidate } from "@/lib/integrations/route-provider/RouteProviderPort";
 import { type Confidence } from "@/lib/domain/confidence";
-import { KeyInstructionText } from "@/components/result/KeyInstructionText";
-import { RecommendedExitValue } from "@/components/result/RecommendedExitValue";
+import { RouteOverviewContent } from "@/components/result/RouteOverviewContent";
 import { FacilitiesWarningBadges } from "@/components/result/FacilitiesWarningBadges";
+import { RouteTimelineDiagramSection } from "@/components/result/RouteTimelineDiagramSection";
 import { RouteDiagramSection } from "@/components/result/RouteDiagramSection";
 import { ConfidenceSummarySection } from "@/components/result/ConfidenceSummarySection";
 
@@ -174,7 +174,7 @@ function buildSpiedStationProvider(): StationProviderPort & {
 }
 
 describe("page.tsx の Promise as Props 配線(複数の実コンポーネントへの共有)", () => {
-  test("trainSegmentsPromiseを3つの異なるコンポーネントへ渡しても、駅・号車情報の取得は1回分しか行われない", async () => {
+  test("trainSegmentsPromiseを4つの異なるコンポーネントへ渡しても、駅・号車情報の取得は1回分しか行われない", async () => {
     const stationProvider = buildSpiedStationProvider();
 
     // page.tsx と同じく、builder は1回だけ呼び出し、戻り値のPromiseを共有する。
@@ -184,7 +184,17 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
     });
 
     await Promise.all([
-      KeyInstructionText({ trainSegmentsPromise, facilitiesPromise }),
+      RouteOverviewContent({
+        trainSegmentsPromise,
+        facilitiesPromise,
+        mode: "easy",
+        transferCount: 0,
+      }),
+      RouteTimelineDiagramSection({
+        trainSegmentsPromise,
+        facilitiesPromise,
+        destinationName: "到着駅",
+      }),
       RouteDiagramSection({ trainSegmentsPromise, facilitiesPromise }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);
@@ -205,9 +215,18 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
     });
 
     await Promise.all([
-      KeyInstructionText({ trainSegmentsPromise, facilitiesPromise }),
-      RecommendedExitValue({ facilitiesPromise }),
+      RouteOverviewContent({
+        trainSegmentsPromise,
+        facilitiesPromise,
+        mode: "easy",
+        transferCount: 0,
+      }),
       FacilitiesWarningBadges({ facilitiesPromise }),
+      RouteTimelineDiagramSection({
+        trainSegmentsPromise,
+        facilitiesPromise,
+        destinationName: "到着駅",
+      }),
       RouteDiagramSection({ trainSegmentsPromise, facilitiesPromise }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);

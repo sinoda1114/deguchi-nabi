@@ -28,6 +28,14 @@
   --duration-fast: 150ms;
   --duration-normal: 250ms;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* 経路区間の種別(乗車・乗換・出口)を色で瞬時に区別するための配色。
+     「駅でスマホを2〜3秒見ただけで次の行動が分かる」ことを優先した
+     ユーザーフィードバックに基づく(乗車=青、乗換=橙、出口は既存の--accent緑を流用)。 */
+  --segment-train: oklch(55% 0.17 255);
+  --segment-train-foreground: oklch(98% 0.01 255);
+  --segment-transfer: oklch(68% 0.16 55);
+  --segment-transfer-foreground: oklch(22% 0.06 55);
 }
 
 @theme inline {
@@ -63,6 +71,10 @@
   --danger-foreground: oklch(32% 0.07 25);
   --default: oklch(30% 0.006 250);
   --default-foreground: oklch(75% 0.01 250);
+  --segment-train: oklch(72% 0.15 255);
+  --segment-train-foreground: oklch(18% 0.03 255);
+  --segment-transfer: oklch(78% 0.14 60);
+  --segment-transfer-foreground: oklch(20% 0.05 60);
 }
 
 :root[data-theme="light"] {
@@ -82,6 +94,10 @@
   --danger-foreground: oklch(96% 0.02 25);
   --default: oklch(92% 0.005 95);
   --default-foreground: oklch(45% 0.01 95);
+  --segment-train: oklch(55% 0.17 255);
+  --segment-train-foreground: oklch(98% 0.01 255);
+  --segment-transfer: oklch(68% 0.16 55);
+  --segment-transfer-foreground: oklch(22% 0.06 55);
 }
 
 * {

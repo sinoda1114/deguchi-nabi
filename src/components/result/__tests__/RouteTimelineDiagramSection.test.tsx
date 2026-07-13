@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { KeyInstructionText } from "@/components/result/KeyInstructionText";
-import { KeyInstructionTextSkeleton } from "@/components/result/KeyInstructionTextSkeleton";
+import { RouteTimelineDiagramSection } from "@/components/result/RouteTimelineDiagramSection";
 import type { RouteSegment } from "@/lib/domain/route";
 import type { FacilitiesSearchResult } from "@/lib/services/route-search";
 import type { Confidence } from "@/lib/domain/confidence";
@@ -61,8 +60,8 @@ const OK_RESULT: FacilitiesSearchResult = {
       warnings: [],
     },
     recommendedExit: "A1出口",
-    gate: { facilityId: "g1", stationId: "d", facilityType: "gate", name: "中央改札", level: "1F", accessible: true, coordinates: null, connectedGateId: null, confidence: highConfidence, verifiedAt: null },
-    exit: { facilityId: "e1", stationId: "d", facilityType: "exit", name: "A1出口", level: "1F", accessible: true, coordinates: null, connectedGateId: null, confidence: highConfidence, verifiedAt: null },
+    gate: null,
+    exit: null,
     elevator: null,
     hasApproximateGuidance: false,
     approximateDirectionLabel: null,
@@ -74,29 +73,27 @@ const NG_RESULT: FacilitiesSearchResult = {
   reason: "改札・出口情報を確認できません。",
 };
 
-describe("KeyInstructionText", () => {
-  test("ok:trueならcomputeKeyInstructionの文言を描画する", async () => {
-    const element = await KeyInstructionText({
+describe("RouteTimelineDiagramSection", () => {
+  test("出発駅・到着駅・出口・目的地のタイムラインを描画する", async () => {
+    const element = await RouteTimelineDiagramSection({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
+      destinationName: "テスト目的地",
     });
     const html = renderToStaticMarkup(element);
-    expect(html).toBe("5号車付近に乗車、中央改札、A1出口へ。");
+    expect(html).toContain("出発駅");
+    expect(html).toContain("到着駅");
+    expect(html).toContain("A1出口");
+    expect(html).toContain("テスト目的地");
   });
 
-  test("ok:falseならfacilitiesのエラー理由を描画する", async () => {
-    const element = await KeyInstructionText({
+  test("facilitiesがok:falseの場合はエラーメッセージを描画する", async () => {
+    const element = await RouteTimelineDiagramSection({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(NG_RESULT),
+      destinationName: "テスト目的地",
     });
     const html = renderToStaticMarkup(element);
-    expect(html).toBe("改札・出口情報を確認できません。");
-  });
-});
-
-describe("KeyInstructionTextSkeleton", () => {
-  test("aria-hiddenなプレースホルダーを描画する", () => {
-    const html = renderToStaticMarkup(<KeyInstructionTextSkeleton />);
-    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain("改札・出口情報を確認できません。");
   });
 });

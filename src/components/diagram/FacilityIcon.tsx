@@ -1,7 +1,7 @@
 import type { FacilityType } from "@/lib/domain/station";
 
 interface FacilityIconProps {
-  type: FacilityType | "train" | "car";
+  type: FacilityType | "train" | "car" | "start" | "destination";
   className?: string;
 }
 
@@ -14,6 +14,8 @@ const PATHS: Record<string, string> = {
   passage: "M3 12h18 M14 6l6 6-6 6",
   train: "M6 3h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M4 15l-2 4 M16 15l2 4 M6 7h8",
   car: "M4 16h1a2 2 0 0 0 4 0h6a2 2 0 0 0 4 0h1v-4l-2-4H6L4 12v4Z M4 12h16",
+  start: "M10 2c-3.3 0-6 2.7-6 6 0 4.5 6 10 6 10s6-5.5 6-10c0-3.3-2.7-6-6-6Z M10 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z",
+  destination: "M5 17.5V2.5 M5 4h10l-2.5 3.5L15 11H5",
 };
 
 const LABELS: Record<string, string> = {
@@ -25,6 +27,8 @@ const LABELS: Record<string, string> = {
   passage: "連絡通路",
   train: "列車",
   car: "号車",
+  start: "出発地",
+  destination: "目的地",
 };
 
 export function FacilityIcon({ type, className = "h-4 w-4" }: FacilityIconProps) {

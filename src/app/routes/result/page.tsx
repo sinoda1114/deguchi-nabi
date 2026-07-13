@@ -13,12 +13,11 @@ import type { AccessibilityCondition, RouteMode } from "@/lib/domain/route";
 import { routeProvider, stationProvider, placeProvider } from "@/lib/integrations";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { RetrySearchButton } from "@/components/result/RetrySearchButton";
-import { KeyInstructionCard } from "@/components/result/KeyInstructionCard";
-import { KeyInstructionText } from "@/components/result/KeyInstructionText";
-import { KeyInstructionTextSkeleton } from "@/components/result/KeyInstructionTextSkeleton";
-import { RouteSummaryCard } from "@/components/result/RouteSummaryCard";
-import { RecommendedExitValue } from "@/components/result/RecommendedExitValue";
-import { RecommendedExitValueSkeleton } from "@/components/result/RecommendedExitValueSkeleton";
+import { RouteOverviewCard } from "@/components/result/RouteOverviewCard";
+import { RouteOverviewContent } from "@/components/result/RouteOverviewContent";
+import { RouteOverviewContentSkeleton } from "@/components/result/RouteOverviewContentSkeleton";
+import { RouteTimelineDiagramSection } from "@/components/result/RouteTimelineDiagramSection";
+import { RouteTimelineDiagramSectionSkeleton } from "@/components/result/RouteTimelineDiagramSectionSkeleton";
 import { RouteDiagramSection } from "@/components/result/RouteDiagramSection";
 import { RouteDiagramSectionSkeleton } from "@/components/result/RouteDiagramSectionSkeleton";
 import { FacilitiesWarningBadges } from "@/components/result/FacilitiesWarningBadges";
@@ -150,7 +149,7 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
     <div className="flex flex-1 flex-col">
       <AppHeader user={user} />
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-5 px-4 py-6">
-        <KeyInstructionCard
+        <RouteOverviewCard
           mode={mode}
           routeId={candidate.routeId}
           originName={candidate.originName}
@@ -158,11 +157,14 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
           originStationId={resolved.originStationId}
           destinationStationId={resolved.destinationStationId}
           canSave={Boolean(user)}
-          keyInstructionNode={
-            <Suspense fallback={<KeyInstructionTextSkeleton />}>
-              <KeyInstructionText
+          estimatedDurationMinutes={candidate.estimatedDurationMinutes}
+          overviewContentNode={
+            <Suspense fallback={<RouteOverviewContentSkeleton />}>
+              <RouteOverviewContent
                 trainSegmentsPromise={trainSegmentsPromise}
                 facilitiesPromise={facilitiesPromise}
+                mode={mode}
+                transferCount={candidate.transferCount}
               />
             </Suspense>
           }
@@ -174,18 +176,18 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
           <FacilitiesWarningBadges facilitiesPromise={facilitiesPromise} />
         </Suspense>
 
-        <RouteSummaryCard
-          originName={candidate.originName}
-          destinationName={candidate.destinationName}
-          arrivalStationName={candidate.arrivalStationName}
-          recommendedExitNode={
-            <Suspense fallback={<RecommendedExitValueSkeleton />}>
-              <RecommendedExitValue facilitiesPromise={facilitiesPromise} />
-            </Suspense>
-          }
-          estimatedDurationMinutes={candidate.estimatedDurationMinutes}
-          transferCount={candidate.transferCount}
-        />
+        <section>
+          <h2 className="mb-3 text-xs font-bold text-[var(--foreground-muted)]">
+            ルートの流れ
+          </h2>
+          <Suspense fallback={<RouteTimelineDiagramSectionSkeleton />}>
+            <RouteTimelineDiagramSection
+              trainSegmentsPromise={trainSegmentsPromise}
+              facilitiesPromise={facilitiesPromise}
+              destinationName={candidate.destinationName}
+            />
+          </Suspense>
+        </section>
 
         <section>
           <h2 className="mb-2 text-xs font-bold text-[var(--foreground-muted)]">
