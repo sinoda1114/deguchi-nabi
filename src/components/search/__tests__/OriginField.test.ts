@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { resolveOriginInputValue } from "../OriginField";
+import { buildHomeStationOriginChoice, resolveOriginInputValue } from "../OriginField";
 import type { OriginChoice } from "../OriginField";
 import type { Station } from "@/lib/domain/station";
+import type { User } from "@/lib/domain/user";
 
 const HOME_STATION: Station = {
   stationId: "st_shibuya",
@@ -35,5 +36,28 @@ describe("resolveOriginInputValue", () => {
     const value: OriginChoice = { type: "station", stationId: "st_nishiya", label: "西谷駅" };
     const result = resolveOriginInputValue(value, HOME_STATION, "");
     expect(result).toBe("西谷駅");
+  });
+});
+
+describe("buildHomeStationOriginChoice", () => {
+  const USER: User = {
+    userId: "user_1",
+    email: "user@example.com",
+    displayName: "テストユーザー",
+    homeStationId: "st_shibuya",
+    plan: "free",
+    locale: "ja",
+    createdAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
+  };
+
+  test("ログイン中はサーバー側のhomeStation選択として type: home_station を返す", () => {
+    const result = buildHomeStationOriginChoice(USER, HOME_STATION);
+    expect(result).toEqual({ type: "home_station", label: "渋谷駅" });
+  });
+
+  test("未ログイン時は type: home_station を使わず、具体的な駅IDを持つ type: station を返す(サーバー側はhome_stationをログインユーザーのDB登録駅としてしか解釈できず、未ログインだと「最寄り駅が登録されていません」エラーになるため)", () => {
+    const result = buildHomeStationOriginChoice(null, HOME_STATION);
+    expect(result).toEqual({ type: "station", stationId: "st_shibuya", label: "渋谷駅" });
   });
 });

@@ -7,7 +7,7 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import type { Station } from "@/lib/domain/station";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
 import type { RouteMode } from "@/lib/domain/route";
-import { OriginField, type OriginChoice } from "./OriginField";
+import { OriginField, buildHomeStationOriginChoice, type OriginChoice } from "./OriginField";
 import { DestinationField } from "./DestinationField";
 import { RouteModeSelector } from "./RouteModeSelector";
 import { SwapFieldsButton } from "./SwapFieldsButton";
@@ -88,7 +88,7 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 外部システム(localStorage)との同期
     setLocalDefaultOriginStation(defaultStation);
     if (!origin && defaultStation) {
-      setOrigin({ type: "home_station", label: defaultStation.stationName });
+      setOrigin(buildHomeStationOriginChoice(user, defaultStation));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
