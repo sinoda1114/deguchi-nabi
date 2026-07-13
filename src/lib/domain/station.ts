@@ -1,4 +1,4 @@
-import type { Confidence } from "./confidence";
+import type { Confidence, Provenance } from "./confidence";
 
 export interface Coordinates {
   lat: number;
@@ -60,6 +60,13 @@ export interface StationFacility {
   connectedGateId: string | null;
   confidence: Confidence;
   verifiedAt: string | null;
+  /**
+   * 出所(現地調査済み/地図で確認/AI推定)。GuideStep生成時にconfidenceの上限を
+   * 決めるために使う(capConfidenceForProvenance参照)。省略時は最も慎重な
+   * "ai_inferred"として扱う(出所不明なデータを誤って高信頼扱いしないため、
+   * 安全側にフォールバックする設計)。
+   */
+  provenance?: Provenance;
 }
 
 export interface Destination {

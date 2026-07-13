@@ -1,9 +1,11 @@
 import type {
   BoardingPosition,
+  Coordinates,
   Platform,
   Station,
   StationFacility,
 } from "@/lib/domain/station";
+import type { GuideStep } from "@/lib/domain/route";
 
 export interface StationProviderPort {
   searchStations(query: string): Promise<Station[]>;
@@ -27,4 +29,18 @@ export interface StationProviderPort {
     longitude: number,
     limit: number
   ): Promise<Station[]>;
+  /**
+   * 改札から出口までの改札後方向・自由通路・地下街等の詳細導線(GuideStep[])を
+   * 補う任意メソッド(docs/04 §Phase 2.5)。fixtureにこの粒度のデータが無い
+   * 駅・区間向けのAI生成による補完で、未実装のアダプターは単に呼ばれない
+   * (呼び出し側はoptional chainingで安全に呼ぶ想定。既存の全実装・テスト
+   * ダブルへの影響を避けるため、必須メソッドにはしていない)。
+   */
+  getArrivalGuideNarrativeSteps?(
+    stationId: string,
+    stationName: string,
+    gateName: string,
+    exitName: string,
+    arrivalStationCoordinates?: Coordinates | null
+  ): Promise<GuideStep[]>;
 }

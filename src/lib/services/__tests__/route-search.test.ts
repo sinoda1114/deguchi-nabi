@@ -197,6 +197,20 @@ describe("searchRouteGuide", () => {
     expect(result.route.confidenceSummary.gate).toBe("high");
   });
 
+  test("easy モードで到着駅のarrivalGuideにticket_gate/street_exitステップを含む", async () => {
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider: buildStationProvider(FACILITIES_WITH_ELEVATOR),
+    };
+    const result = await searchRouteGuide({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.route.arrivalGuide?.steps.map((s) => s.type)).toEqual([
+      "ticket_gate",
+      "street_exit",
+    ]);
+  });
+
   test("accessible モードでエレベーター情報がなければ確認不能として拒否する", async () => {
     const noElevator = FACILITIES_WITH_ELEVATOR.filter((f) => f.facilityType !== "elevator");
     const deps: RouteSearchDeps = {
