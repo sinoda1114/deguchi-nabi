@@ -26,7 +26,7 @@ export async function ConfidenceSummarySection({
 
   if (!facilitiesResult.ok) {
     return (
-      <p className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--foreground-muted)]">
+      <p className="stream-reveal rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--foreground-muted)]">
         {facilitiesResult.reason}
       </p>
     );
@@ -34,5 +34,9 @@ export async function ConfidenceSummarySection({
 
   const summary = computeConfidenceSummary(trainSegments, facilitiesResult.result, mode);
 
-  return <ConfidenceSummary summary={summary} />;
+  return (
+    <div className="stream-reveal">
+      <ConfidenceSummary summary={summary} />
+    </div>
+  );
 }

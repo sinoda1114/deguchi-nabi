@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { RouteOverviewContent } from "@/components/result/RouteOverviewContent";
+import { RouteEaseScoreStat } from "@/components/result/RouteEaseScoreStat";
 import type { RouteSegment } from "@/lib/domain/route";
 import type { FacilitiesSearchResult } from "@/lib/services/route-search";
 import type { Confidence } from "@/lib/domain/confidence";
@@ -68,23 +68,40 @@ const OK_RESULT: FacilitiesSearchResult = {
   },
 };
 
-/**
- * RouteOverviewContent は号車・出口・迷いにくさをそれぞれ独立した
- * Suspense境界(RouteBoardingStat/RouteExitStat/RouteEaseScoreStat)に
- * 委譲するレイアウト専用コンポーネントになった。各欄の実データ描画は
- * それぞれの単体テスト(RouteBoardingStat.test.tsx等)で検証済みのため、
- * ここでは「乗換回数(Promise不要で同期表示)とレイアウトが崩れていないこと」
- * のみ検証する。
- */
-describe("RouteOverviewContent", () => {
-  test("乗換回数を同期表示する(号車・出口・迷いにくさの解決は待たない)", () => {
-    const element = RouteOverviewContent({
+const NG_RESULT: FacilitiesSearchResult = {
+  ok: false,
+  reason: "改札・出口情報を確認できません。",
+};
+
+describe("RouteEaseScoreStat", () => {
+  test("facilitiesがok:trueの場合は迷いにくさスコアを表示する", async () => {
+    const element = await RouteEaseScoreStat({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
       mode: "easy",
-      transferCount: 2,
     });
     const html = renderToStaticMarkup(element);
-    expect(html).toContain("乗換2回");
+    expect(html).toContain("迷いにくさ");
+  });
+
+  test("facilitiesがok:falseの場合は理由を表示する", async () => {
+    const element = await RouteEaseScoreStat({
+      trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
+      facilitiesPromise: Promise.resolve(NG_RESULT),
+      mode: "easy",
+    });
+    const html = renderToStaticMarkup(element);
+    expect(html).toContain("改札・出口情報を確認できません。");
+  });
+
+  test("facilitiesが失敗した場合、trainSegmentsPromiseが未解決のままでもエラー理由を返す(不要な待機をしないことの回帰テスト)", async () => {
+    const neverResolvingTrainSegments: Promise<RouteSegment[]> = new Promise(() => {});
+    const element = await RouteEaseScoreStat({
+      trainSegmentsPromise: neverResolvingTrainSegments,
+      facilitiesPromise: Promise.resolve(NG_RESULT),
+      mode: "easy",
+    });
+    const html = renderToStaticMarkup(element);
+    expect(html).toContain("改札・出口情報を確認できません。");
   });
 });

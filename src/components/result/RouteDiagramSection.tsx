@@ -23,7 +23,7 @@ export async function RouteDiagramSection({
 
   if (!facilitiesResult.ok) {
     return (
-      <p className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--foreground-muted)]">
+      <p className="stream-reveal rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--foreground-muted)]">
         {facilitiesResult.reason}
       </p>
     );
@@ -35,5 +35,9 @@ export async function RouteDiagramSection({
     facilitiesResult.result.exitSegment,
   ];
 
-  return <RouteDiagram segments={segments} />;
+  return (
+    <div className="stream-reveal">
+      <RouteDiagram segments={segments} />
+    </div>
+  );
 }

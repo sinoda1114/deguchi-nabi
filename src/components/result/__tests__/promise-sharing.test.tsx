@@ -8,7 +8,9 @@ import type { StationProviderPort } from "@/lib/integrations/station-provider/St
 import type { BoardingPosition, Platform, Station, StationFacility } from "@/lib/domain/station";
 import type { RailRouteCandidate } from "@/lib/integrations/route-provider/RouteProviderPort";
 import { type Confidence } from "@/lib/domain/confidence";
-import { RouteOverviewContent } from "@/components/result/RouteOverviewContent";
+import { RouteBoardingStat } from "@/components/result/RouteBoardingStat";
+import { RouteExitStat } from "@/components/result/RouteExitStat";
+import { RouteEaseScoreStat } from "@/components/result/RouteEaseScoreStat";
 import { FacilitiesWarningBadges } from "@/components/result/FacilitiesWarningBadges";
 import { RouteTimelineDiagramSection } from "@/components/result/RouteTimelineDiagramSection";
 import { RouteDiagramSection } from "@/components/result/RouteDiagramSection";
@@ -174,7 +176,7 @@ function buildSpiedStationProvider(): StationProviderPort & {
 }
 
 describe("page.tsx の Promise as Props 配線(複数の実コンポーネントへの共有)", () => {
-  test("trainSegmentsPromiseを4つの異なるコンポーネントへ渡しても、駅・号車情報の取得は1回分しか行われない", async () => {
+  test("trainSegmentsPromiseを5つの異なるコンポーネントへ渡しても、駅・号車情報の取得は1回分しか行われない", async () => {
     const stationProvider = buildSpiedStationProvider();
 
     // page.tsx と同じく、builder は1回だけ呼び出し、戻り値のPromiseを共有する。
@@ -184,12 +186,8 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
     });
 
     await Promise.all([
-      RouteOverviewContent({
-        trainSegmentsPromise,
-        facilitiesPromise,
-        mode: "easy",
-        transferCount: 0,
-      }),
+      RouteBoardingStat({ trainSegmentsPromise }),
+      RouteEaseScoreStat({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
       RouteTimelineDiagramSection({
         trainSegmentsPromise,
         facilitiesPromise,
@@ -206,7 +204,7 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
     expect(stationProvider.getBoardingPositionSpy).toHaveBeenCalledTimes(1);
   });
 
-  test("facilitiesPromiseを5つの異なるコンポーネントへ渡しても、改札・出口情報の取得は1回しか行われない", async () => {
+  test("facilitiesPromiseを6つの異なるコンポーネントへ渡しても、改札・出口情報の取得は1回しか行われない", async () => {
     const stationProvider = buildSpiedStationProvider();
 
     const trainSegmentsPromise = buildTrainSegments(CHOSEN, { stationProvider });
@@ -215,12 +213,8 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
     });
 
     await Promise.all([
-      RouteOverviewContent({
-        trainSegmentsPromise,
-        facilitiesPromise,
-        mode: "easy",
-        transferCount: 0,
-      }),
+      RouteExitStat({ facilitiesPromise }),
+      RouteEaseScoreStat({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
       FacilitiesWarningBadges({ facilitiesPromise }),
       RouteTimelineDiagramSection({
         trainSegmentsPromise,
