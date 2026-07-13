@@ -12,8 +12,13 @@ import { DestinationField } from "./DestinationField";
 import { RouteModeSelector } from "./RouteModeSelector";
 import { SwapFieldsButton } from "./SwapFieldsButton";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
+import { toSearchCandidate } from "@/lib/services/place-resolution";
 import { swapOriginAndDestination } from "@/lib/services/swap-origin-destination";
 import { loadSearchFormDraft, saveSearchFormDraft } from "@/lib/search-form-persistence";
+import {
+  listLocalFavoriteDestinations,
+  removeLocalFavoriteDestination,
+} from "@/lib/services/local-favorite-destinations";
 
 /**
  * 入れ替えロジック(swapOriginAndDestination)が要求する駅の完全情報フェッチ。
@@ -68,6 +73,31 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
   useEffect(() => {
     saveSearchFormDraft({ origin, destination, mode });
   }, [origin, destination, mode]);
+
+  // 未ログイン中にlocalStorageへ貯めたお気に入りは、ログイン検知時に一度だけ
+  // サーバー側へ移行する。成功した項目だけを個別にlocalStorageから取り除くため、
+  // 移行に失敗した項目や、移行処理の最中に別画面から追加された項目は消えずに残る。
+  const migratedLocalFavoritesRef = useRef(false);
+  useEffect(() => {
+    if (!user || migratedLocalFavoritesRef.current) return;
+    const local = listLocalFavoriteDestinations();
+    if (local.length === 0) return;
+    migratedLocalFavoritesRef.current = true;
+    (async () => {
+      for (const favorite of local) {
+        try {
+          await apiFetch("/api/favorite-destinations", {
+            method: "POST",
+            body: JSON.stringify({ candidate: toSearchCandidate(favorite) }),
+          });
+          removeLocalFavoriteDestination(favorite.favoriteDestinationId);
+        } catch {
+          // 個別の失敗は無視して次へ進める。移行できなかった分はlocalStorageに残す。
+        }
+      }
+      router.refresh();
+    })();
+  }, [user, router]);
 
   async function handleSwap() {
     if (!origin || !destination || swapping) return;
