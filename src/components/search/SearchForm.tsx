@@ -19,6 +19,10 @@ import {
   listLocalFavoriteDestinations,
   removeLocalFavoriteDestination,
 } from "@/lib/services/local-favorite-destinations";
+import {
+  getLocalDefaultOriginStation,
+  setLocalDefaultOriginStation as persistLocalDefaultOriginStation,
+} from "@/lib/services/local-default-origin-station";
 
 /**
  * 入れ替えロジック(swapOriginAndDestination)が要求する駅の完全情報フェッチ。
@@ -58,6 +62,7 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
   const [error, setError] = useState<string | null>(null);
   const [swapping, setSwapping] = useState(false);
   const [swapError, setSwapError] = useState<string | null>(null);
+  const [localDefaultOriginStation, setLocalDefaultOriginStation] = useState<Station | null>(null);
 
   // 入れ替えAPIの待機中にユーザーが出発地/目的地を編集した場合、完了時に古い
   // (入れ替え開始時点の)結果で最新の選択を上書きしてしまう競合を防ぐため、
@@ -73,6 +78,28 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
   useEffect(() => {
     saveSearchFormDraft({ origin, destination, mode });
   }, [origin, destination, mode]);
+
+  // 未ログイン中のみ、SSRでは取得できないlocalStorage(外部システム)のデフォルト出発駅を
+  // ここで取り込む。下書き(draft)も無く出発地が未選択なら、ログイン時のhomeStationと同様に
+  // 自動選択する。マウント時とログイン検知時にのみ実行すればよいため依存配列はuserのみ。
+  useEffect(() => {
+    if (user) return;
+    const defaultStation = getLocalDefaultOriginStation();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 外部システム(localStorage)との同期
+    setLocalDefaultOriginStation(defaultStation);
+    if (!origin && defaultStation) {
+      setOrigin({ type: "home_station", label: defaultStation.stationName });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  const effectiveHomeStation = user ? homeStation : localDefaultOriginStation;
+
+  function handleSetLocalDefaultOriginStation(station: Station) {
+    if (persistLocalDefaultOriginStation(station)) {
+      setLocalDefaultOriginStation(station);
+    }
+  }
 
   // 未ログイン中にlocalStorageへ貯めたお気に入りは、ログイン検知時に一度だけ
   // サーバー側へ移行する。成功した項目だけを個別にlocalStorageから取り除くため、
@@ -160,16 +187,24 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <OriginField user={user} homeStation={homeStation} value={origin} onChange={setOrigin} />
+      <OriginField
+        user={user}
+        homeStation={homeStation}
+        value={origin}
+        onChange={setOrigin}
+        localDefaultStation={localDefaultOriginStation}
+        onSetLocalDefaultStation={handleSetLocalDefaultOriginStation}
+      />
       <SwapFieldsButton
         isDisabled={!origin || !destination}
         isPending={swapping}
         onPress={handleSwap}
       />
       {/*
-        目的地検索の位置バイアスは常に homeStation の座標を使う。origin が現在地/他駅選択でも
-        追従はしない近似(現在地座標は都度取得しておらずここでは扱えない)が、多くの場合
-        出発地は登録駅であり、無バイアス(全国検索)よりは大幅に精度が上がるため許容する。
+        目的地検索の位置バイアスは常に「実効ホーム駅」(ログイン時はhomeStation、未ログイン時は
+        この端末のデフォルト出発駅)の座標を使う。origin が現在地/他駅選択でも追従はしない
+        近似(現在地座標は都度取得しておらずここでは扱えない)が、多くの場合出発地はこの駅で
+        あり、無バイアス(全国検索)よりは大幅に精度が上がるため許容する。
       */}
       <DestinationField
         user={user}
@@ -177,7 +212,9 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
         value={destination}
         onChange={setDestination}
         originCoordinates={
-          homeStation ? { lat: homeStation.latitude, lng: homeStation.longitude } : null
+          effectiveHomeStation
+            ? { lat: effectiveHomeStation.latitude, lng: effectiveHomeStation.longitude }
+            : null
         }
       />
       {swapError ? <p className="text-sm text-[var(--danger)]">{swapError}</p> : null}
