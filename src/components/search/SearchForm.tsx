@@ -7,7 +7,7 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import type { Station } from "@/lib/domain/station";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
 import type { RouteMode } from "@/lib/domain/route";
-import { OriginField, buildHomeStationOriginChoice, type OriginChoice } from "./OriginField";
+import { OriginField, repairStaleOriginChoice, type OriginChoice } from "./OriginField";
 import { DestinationField } from "./DestinationField";
 import { RouteModeSelector } from "./RouteModeSelector";
 import { SwapFieldsButton } from "./SwapFieldsButton";
@@ -82,15 +82,15 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
   // 未ログイン中のみ、SSRでは取得できないlocalStorage(外部システム)のデフォルト出発駅を
   // ここで取り込む。下書き(draft)も無く出発地が未選択なら、ログイン時のhomeStationと同様に
   // 自動選択する。マウント時とログイン検知時にのみ実行すればよいため依存配列はuserのみ。
+  // repairStaleOriginChoiceは、sessionStorageの下書きに残っている壊れた
+  // type: "home_station"(未ログイン時は送信不能)も毎回自己修復する
+  // (旧バージョンで保存された下書きがそのまま復元され続ける不具合の対策)。
   useEffect(() => {
     if (user) return;
     const defaultStation = getLocalDefaultOriginStation();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 外部システム(localStorage)との同期
     setLocalDefaultOriginStation(defaultStation);
-    if (!origin && defaultStation) {
-      setOrigin(buildHomeStationOriginChoice(user, defaultStation));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setOrigin((current) => repairStaleOriginChoice(current, user, defaultStation));
   }, [user]);
 
   const effectiveHomeStation = user ? homeStation : localDefaultOriginStation;
