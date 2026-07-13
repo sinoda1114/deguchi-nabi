@@ -1,7 +1,7 @@
 import type { FacilityType } from "@/lib/domain/station";
 
 interface FacilityIconProps {
-  type: FacilityType | "train" | "car" | "start" | "destination";
+  type: FacilityType | "train" | "car" | "start" | "destination" | "facility" | "direction";
   className?: string;
 }
 
@@ -16,6 +16,12 @@ const PATHS: Record<string, string> = {
   car: "M4 16h1a2 2 0 0 0 4 0h6a2 2 0 0 0 4 0h1v-4l-2-4H6L4 12v4Z M4 12h16",
   start: "M10 2c-3.3 0-6 2.7-6 6 0 4.5 6 10 6 10s6-5.5 6-10c0-3.3-2.7-6-6-6Z M10 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z",
   destination: "M5 17.5V2.5 M5 4h10l-2.5 3.5L15 11H5",
+  // ホーム上の設備(階段・エスカレーター・エレベーターいずれか)を表す抽象アイコン。
+  // 種別を問わず「ホームで使う設備がある」ことだけを一目で伝える。
+  facility: "M3 17h4v-4h4v-4h4v-4h4",
+  // 改札を出た直後の方向・目的地の推奨方向など、断定できる具体名が無い
+  // 場合の「向き」を示す矢印アイコン。
+  direction: "M4 10h11 M11 5l5 5-5 5",
 };
 
 const LABELS: Record<string, string> = {
@@ -29,6 +35,8 @@ const LABELS: Record<string, string> = {
   car: "号車",
   start: "出発地",
   destination: "目的地",
+  facility: "設備",
+  direction: "方向",
 };
 
 export function FacilityIcon({ type, className = "h-4 w-4" }: FacilityIconProps) {

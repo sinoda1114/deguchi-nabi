@@ -65,6 +65,19 @@ const OK_RESULT: FacilitiesSearchResult = {
     elevator: null,
     hasApproximateGuidance: false,
     approximateDirectionLabel: null,
+    arrivalGuide: {
+      steps: [
+        {
+          type: "street_exit",
+          title: "A1出口",
+          instruction: "A1出口から地上へ出てください。",
+          landmarks: [],
+          confidence: highConfidence,
+          provenance: "surveyed",
+        },
+      ],
+      destinationDirection: null,
+    },
   },
 };
 

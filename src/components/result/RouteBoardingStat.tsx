@@ -17,6 +17,7 @@ export async function RouteBoardingStat({ trainSegmentsPromise }: RouteBoardingS
   return (
     <OverviewStat
       icon="car"
+      label="乗車位置"
       primary={firstBoarding ? `${firstBoarding.carNumber}号車` : "確認できません"}
       secondary={firstBoarding?.doorPosition}
     />

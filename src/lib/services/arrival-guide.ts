@@ -44,7 +44,7 @@ function facilityStep(type: GuideStepType, facility: StationFacility, instructio
  *   無い区間(=AI生成)なら、その1リクエストでは改札後導線のAI生成を諦める。
  */
 function canGenerateNarrative(
-  result: FacilitiesBuildSuccess,
+  result: Pick<FacilitiesBuildSuccess, "gate" | "exit">,
   mode: RouteMode,
   isRouteAiGenerated: boolean
 ): boolean {
@@ -70,7 +70,7 @@ function canGenerateNarrative(
  * 常にこの1箇所を経由させ、判定漏れを防ぐ。
  */
 export async function buildArrivalGuide(
-  result: FacilitiesBuildSuccess,
+  result: Pick<FacilitiesBuildSuccess, "gate" | "exit" | "approximateDirectionLabel">,
   arrivalStationId: string,
   arrivalStationName: string,
   arrivalStationCoordinates: Coordinates | null,

@@ -6,14 +6,20 @@ interface RouteTimelineDiagramProps {
 }
 
 /**
- * 各ノードの色。乗車は種別配色(--segment-train)に合わせ、出発地は控えめな
- * グレー、出口は既存ブランドカラー(--accent)、目的地はゴール地点として
- * 目立つ--dangerを使う(「駅でスマホを2〜3秒見ただけで次の行動が分かる」
+ * 各ノードの色。乗車・ホーム設備は種別配色(--segment-train)に合わせ、
+ * 改札は乗換の延長(--segment-transfer)、通路は経由点として控えめな
+ * グレー、出口は既存ブランドカラー(--accent)、方角のみの推奨方向は
+ * 未確定であることを示す--warning、目的地はゴール地点として目立つ
+ * --dangerを使う(「駅でスマホを2〜3秒見ただけで次の行動が分かる」
  * ことを優先し、ノードごとの意味を色で瞬時に伝える)。
  */
 const NODE_ACCENT: Record<RouteTimelineIcon, string> = {
   start: "var(--foreground-muted)",
   train: "var(--segment-train)",
+  facility: "var(--segment-train)",
+  gate: "var(--segment-transfer)",
+  passage: "var(--foreground-muted)",
+  direction: "var(--warning)",
   exit: "var(--accent)",
   destination: "var(--danger)",
 };
@@ -22,12 +28,16 @@ const NODE_ACCENT: Record<RouteTimelineIcon, string> = {
  * NODE_ACCENTの各背景色に対して十分なコントラストを持つ前景色。
  * text-white固定だと--segment-trainのような明度の高い色でコントラスト
  * 不足になるため、既存デザイントークンの対応するforeground変数を使う
- * (startは--foreground-mutedに専用のforeground変数が無いため、明度差が
- * 大きく確保できる--backgroundで代用する。AIレビュー指摘に基づく修正)。
+ * (start/passageは専用のforeground変数が無いため、明度差が大きく
+ * 確保できる--backgroundで代用する。AIレビュー指摘に基づく修正)。
  */
 const NODE_FOREGROUND: Record<RouteTimelineIcon, string> = {
   start: "var(--background)",
   train: "var(--segment-train-foreground)",
+  facility: "var(--segment-train-foreground)",
+  gate: "var(--segment-transfer-foreground)",
+  passage: "var(--background)",
+  direction: "var(--warning-foreground)",
   exit: "var(--accent-foreground)",
   destination: "var(--danger-foreground)",
 };

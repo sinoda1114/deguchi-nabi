@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { RouteExitStat } from "@/components/result/RouteExitStat";
+import { RouteGateStat } from "@/components/result/RouteGateStat";
 import type { FacilitiesBuildSuccess, FacilitiesSearchResult } from "@/lib/services/route-search";
 import type { Confidence } from "@/lib/domain/confidence";
 
@@ -53,9 +53,9 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
       arrivalGuide: {
         steps: [
           {
-            type: "street_exit",
-            title: "東口",
-            instruction: "東口から地上へ出てください。",
+            type: "ticket_gate",
+            title: "中央改札",
+            instruction: "中央改札を利用してください。",
             landmarks: [],
             confidence: highConfidence,
             provenance: "surveyed",
@@ -73,35 +73,35 @@ const NG_RESULT: FacilitiesSearchResult = {
   reason: "改札・出口情報を確認できません。",
 };
 
-describe("RouteExitStat", () => {
-  test("具体的な出口名を表示する", async () => {
-    const element = await RouteExitStat({ facilitiesPromise: Promise.resolve(okResult()) });
+describe("RouteGateStat", () => {
+  test("具体的な改札名を表示する", async () => {
+    const element = await RouteGateStat({ facilitiesPromise: Promise.resolve(okResult()) });
     const html = renderToStaticMarkup(element);
-    expect(html).toContain("東口");
-    expect(html).toContain("利用出口");
+    expect(html).toContain("中央改札");
+    expect(html).toContain("利用改札");
   });
 
-  test("出口名が確認できず方角のみ判明している場合、方角を出口名として使わず推奨方向として区別して表示する", async () => {
-    const element = await RouteExitStat({
+  test("改札名が確認できない場合、方角を代用せず「確認できません」と表示する", async () => {
+    const element = await RouteGateStat({
       facilitiesPromise: Promise.resolve(
         okResult({ arrivalGuide: { steps: [], destinationDirection: "南" } })
       ),
     });
     const html = renderToStaticMarkup(element);
-    expect(html).not.toMatch(/利用出口[\s\S]{0,80}>南側</);
-    expect(html).toContain("推奨方向: 南側");
+    expect(html).toContain("確認できません");
+    expect(html).not.toContain("南側");
   });
 
   test("confidenceがhigh以外の場合、「未確認情報」の注記を表示する", async () => {
-    const element = await RouteExitStat({
+    const element = await RouteGateStat({
       facilitiesPromise: Promise.resolve(
         okResult({
           arrivalGuide: {
             steps: [
               {
-                type: "street_exit",
-                title: "南口",
-                instruction: "南口から地上へ出てください。",
+                type: "ticket_gate",
+                title: "西改札",
+                instruction: "西改札を利用してください。",
                 landmarks: [],
                 confidence: { level: "low", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 0 },
                 provenance: "map_estimate",
@@ -113,12 +113,12 @@ describe("RouteExitStat", () => {
       ),
     });
     const html = renderToStaticMarkup(element);
-    expect(html).toContain("南口");
+    expect(html).toContain("西改札");
     expect(html).toContain("未確認情報");
   });
 
   test("facilitiesがok:falseの場合は確認できない旨を表示する", async () => {
-    const element = await RouteExitStat({ facilitiesPromise: Promise.resolve(NG_RESULT) });
+    const element = await RouteGateStat({ facilitiesPromise: Promise.resolve(NG_RESULT) });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("確認できません");
   });

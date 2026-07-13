@@ -1,9 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { buildRouteTimelineNodes } from "../route-timeline-nodes";
-import type { RouteSegment } from "@/lib/domain/route";
+import type { ArrivalGuide, GuideStep, RouteSegment } from "@/lib/domain/route";
 import type { FacilitiesBuildSuccess } from "../route-search";
 import type { Confidence } from "@/lib/domain/confidence";
-import type { StationFacility } from "@/lib/domain/station";
 
 const highConfidence: Confidence = {
   level: "high",
@@ -35,64 +34,40 @@ function buildTrainSegment(overrides: Partial<RouteSegment> = {}): RouteSegment 
   };
 }
 
-const EXIT_FACILITY: StationFacility = {
-  facilityId: "exit_1",
-  stationId: "destination",
-  facilityType: "exit",
-  name: "A1出口",
-  level: "1F",
-  accessible: true,
-  coordinates: null,
-  connectedGateId: null,
-  confidence: highConfidence,
-  verifiedAt: null,
-};
-
-function buildFacilities(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesBuildSuccess {
+function guideStep(overrides: Partial<GuideStep> = {}): GuideStep {
   return {
-    transferSegment: {
-      type: "transfer",
-      from: "到着駅",
-      to: "到着駅",
-      line: null,
-      direction: null,
-      platform: null,
-      boardingPosition: null,
-      facilities: [],
-      instruction: "改札へ向かってください。",
-      confidence: highConfidence,
-      sourceReferences: [],
-      warnings: [],
-    },
-    exitSegment: {
-      type: "exit",
-      from: "到着駅",
-      to: "到着駅",
-      line: null,
-      direction: null,
-      platform: null,
-      boardingPosition: null,
-      facilities: [],
-      instruction: "A1出口から出てください。",
-      confidence: highConfidence,
-      sourceReferences: [],
-      warnings: [],
-    },
-    recommendedExit: "A1出口",
-    gate: null,
-    exit: EXIT_FACILITY,
-    elevator: null,
-    hasApproximateGuidance: false,
-    approximateDirectionLabel: null,
+    type: "street_exit",
+    title: "A1出口",
+    instruction: "A1出口から地上へ出てください。",
+    landmarks: [],
+    confidence: highConfidence,
+    provenance: "surveyed",
+    ...overrides,
+  };
+}
+
+function buildArrivalGuide(overrides: Partial<ArrivalGuide> = {}): ArrivalGuide {
+  return {
+    steps: [guideStep()],
+    destinationDirection: null,
+    ...overrides,
+  };
+}
+
+function buildFacilities(
+  overrides: Partial<Pick<FacilitiesBuildSuccess, "arrivalGuide">> = {}
+): Pick<FacilitiesBuildSuccess, "arrivalGuide"> {
+  return {
+    arrivalGuide: buildArrivalGuide(),
     ...overrides,
   };
 }
 
 describe("buildRouteTimelineNodes", () => {
-  test("乗換なしの単純な経路は 出発駅→乗車→到着駅→出口→目的地 の4ノードを組み立てる", () => {
+  test("乗換なしの単純な経路は 出発駅→到着駅→出口→目的地 のノードを組み立てる", () => {
     const nodes = buildRouteTimelineNodes(
       [buildTrainSegment()],
-      buildFacilities(),
+      buildFacilities() as FacilitiesBuildSuccess,
       "マクドナルド 横浜ベイクォーター店"
     );
 
@@ -109,7 +84,11 @@ describe("buildRouteTimelineNodes", () => {
       buildTrainSegment({ from: "出発駅", to: "乗換駅" }),
       buildTrainSegment({ from: "乗換駅", to: "到着駅", boardingPosition: null }),
     ];
-    const nodes = buildRouteTimelineNodes(segments, buildFacilities(), "目的地");
+    const nodes = buildRouteTimelineNodes(
+      segments,
+      buildFacilities() as FacilitiesBuildSuccess,
+      "目的地"
+    );
 
     expect(nodes).toEqual([
       { label: "出発駅", icon: "start", sub: "5号車" },
@@ -123,23 +102,144 @@ describe("buildRouteTimelineNodes", () => {
   test("号車情報が無い区間はsubをnullにする", () => {
     const nodes = buildRouteTimelineNodes(
       [buildTrainSegment({ boardingPosition: null })],
-      buildFacilities(),
+      buildFacilities() as FacilitiesBuildSuccess,
       "目的地"
     );
     expect(nodes[0]).toEqual({ label: "出発駅", icon: "start", sub: null });
   });
 
-  test("出口が確定していない(approximateタイア)場合はrecommendedExitをラベルに使う", () => {
+  test("大規模駅: 改札→改札後方向→通路→出口の中間ステップを順序どおりノード化する", () => {
     const nodes = buildRouteTimelineNodes(
       [buildTrainSegment()],
-      buildFacilities({ exit: null, recommendedExit: "西側" }),
+      buildFacilities({
+        arrivalGuide: buildArrivalGuide({
+          steps: [
+            guideStep({ type: "ticket_gate", title: "中央改札" }),
+            guideStep({ type: "post_gate_direction", title: "改札を出て右" }),
+            guideStep({ type: "public_passage", title: "地下通路" }),
+            guideStep({ type: "street_exit", title: "A7出口" }),
+          ],
+        }),
+      }) as FacilitiesBuildSuccess,
       "目的地"
     );
-    expect(nodes[2]).toEqual({ label: "西側", icon: "exit", sub: null });
+
+    expect(nodes.map((n) => n.label)).toEqual([
+      "出発駅",
+      "到着駅",
+      "中央改札",
+      "改札を出て右",
+      "地下通路",
+      "A7出口",
+      "目的地",
+    ]);
+    expect(nodes.map((n) => n.icon)).toEqual([
+      "start",
+      "train",
+      "gate",
+      "direction",
+      "passage",
+      "exit",
+      "destination",
+    ]);
+  });
+
+  test("小規模駅: 改札のみでも不要な通路ノードを追加しない(改札=出口が兼用のケース)", () => {
+    const nodes = buildRouteTimelineNodes(
+      [buildTrainSegment()],
+      buildFacilities({
+        arrivalGuide: buildArrivalGuide({ steps: [guideStep({ type: "ticket_gate", title: "東口改札" })] }),
+      }) as FacilitiesBuildSuccess,
+      "目的地"
+    );
+    expect(nodes.map((n) => n.label)).toEqual(["出発駅", "到着駅", "東口改札", "目的地"]);
+  });
+
+  test("具体的な出口が確認できず方角のみ判明している場合は「推奨方向」を独立ノードとして追加する(出口名の代用にしない)", () => {
+    const nodes = buildRouteTimelineNodes(
+      [buildTrainSegment()],
+      buildFacilities({
+        arrivalGuide: buildArrivalGuide({ steps: [], destinationDirection: "南" }),
+      }) as FacilitiesBuildSuccess,
+      "目的地"
+    );
+    expect(nodes.map((n) => n.label)).toEqual(["出発駅", "到着駅", "推奨方向: 南側", "目的地"]);
+    expect(nodes.find((n) => n.label.startsWith("推奨方向"))?.icon).toBe("direction");
+  });
+
+  test("confidenceがhigh以外のステップには「未確認情報」の注記を付ける(調査済み情報と見分けがつかなくなる問題への対応)", () => {
+    const nodes = buildRouteTimelineNodes(
+      [buildTrainSegment()],
+      buildFacilities({
+        arrivalGuide: buildArrivalGuide({
+          steps: [
+            guideStep({
+              type: "ticket_gate",
+              title: "西改札",
+              confidence: { level: "low", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 0 },
+            }),
+            guideStep({
+              type: "street_exit",
+              title: "A1出口",
+              confidence: highConfidence,
+            }),
+          ],
+        }),
+      }) as FacilitiesBuildSuccess,
+      "目的地"
+    );
+    const gateNode = nodes.find((n) => n.label === "西改札");
+    const exitNode = nodes.find((n) => n.label === "A1出口");
+    expect(gateNode?.sub).toBe("未確認情報");
+    expect(exitNode?.sub).toBeNull();
+  });
+
+  test("arrivalGuide.stepsにdestination_directionステップが含まれる場合は推奨方向ノードを二重追加しない", () => {
+    const nodes = buildRouteTimelineNodes(
+      [buildTrainSegment()],
+      buildFacilities({
+        arrivalGuide: buildArrivalGuide({
+          steps: [guideStep({ type: "destination_direction", title: "南側方面" })],
+          destinationDirection: "南",
+        }),
+      }) as FacilitiesBuildSuccess,
+      "目的地"
+    );
+    expect(nodes.filter((n) => n.label.startsWith("推奨方向"))).toHaveLength(0);
+    expect(nodes.map((n) => n.label)).toEqual(["出発駅", "到着駅", "南側方面", "目的地"]);
+  });
+
+  test("street_exitステップがある場合は推奨方向ノードを追加しない(方角と具体的出口の重複表示を避ける)", () => {
+    const nodes = buildRouteTimelineNodes(
+      [buildTrainSegment()],
+      buildFacilities({
+        arrivalGuide: buildArrivalGuide({
+          steps: [guideStep({ type: "street_exit", title: "A1出口" })],
+          destinationDirection: "南",
+        }),
+      }) as FacilitiesBuildSuccess,
+      "目的地"
+    );
+    expect(nodes.some((n) => n.label.startsWith("推奨方向"))).toBe(false);
+  });
+
+  test("改札・出口とも確認できず方角も判明していない場合は改札後ノードを一切追加しない(推測で埋めない)", () => {
+    const nodes = buildRouteTimelineNodes(
+      [buildTrainSegment()],
+      buildFacilities({
+        arrivalGuide: buildArrivalGuide({ steps: [], destinationDirection: null }),
+      }) as FacilitiesBuildSuccess,
+      "目的地"
+    );
+    expect(nodes.map((n) => n.label)).toEqual(["出発駅", "到着駅", "目的地"]);
   });
 
   test("train区間が空の場合は出発駅ノードを含めない(データ不整合時にクラッシュしない)", () => {
-    const nodes = buildRouteTimelineNodes([], buildFacilities(), "目的地");
+    const nodes = buildRouteTimelineNodes(
+      [],
+      buildFacilities() as FacilitiesBuildSuccess,
+      "目的地"
+    );
     expect(nodes[0]).toEqual({ label: "A1出口", icon: "exit", sub: null });
     expect(nodes).toHaveLength(2);
   });

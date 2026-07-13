@@ -3,7 +3,7 @@ import { buildArrivalGuide } from "@/lib/services/arrival-guide";
 import type { FacilitiesBuildSuccess } from "@/lib/services/route-search";
 import type { StationFacility } from "@/lib/domain/station";
 import type { Confidence } from "@/lib/domain/confidence";
-import type { GuideStep, RouteSegment } from "@/lib/domain/route";
+import type { GuideStep } from "@/lib/domain/route";
 
 const highConfidence: Confidence = {
   level: "high",
@@ -13,30 +13,12 @@ const highConfidence: Confidence = {
   sourceCount: 1,
 };
 
-const DUMMY_SEGMENT: RouteSegment = {
-  type: "transfer",
-  from: "到着駅",
-  to: "到着駅",
-  line: null,
-  direction: null,
-  platform: null,
-  boardingPosition: null,
-  facilities: [],
-  instruction: "",
-  confidence: highConfidence,
-  sourceReferences: [],
-  warnings: [],
-};
+type BaseResult = Pick<FacilitiesBuildSuccess, "gate" | "exit" | "approximateDirectionLabel">;
 
-function baseResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesBuildSuccess {
+function baseResult(overrides: Partial<BaseResult> = {}): BaseResult {
   return {
-    transferSegment: DUMMY_SEGMENT,
-    exitSegment: DUMMY_SEGMENT,
-    recommendedExit: "A1出口",
     gate: null,
     exit: null,
-    elevator: null,
-    hasApproximateGuidance: false,
     approximateDirectionLabel: null,
     ...overrides,
   };
@@ -111,7 +93,7 @@ describe("buildArrivalGuide", () => {
 
   test("approximateDirectionLabelをdestinationDirectionへそのまま引き継ぐ", async () => {
     const guide = await buildArrivalGuide(
-      baseResult({ hasApproximateGuidance: true, approximateDirectionLabel: "南西" }),
+      baseResult({ approximateDirectionLabel: "南西" }),
       "st_1",
       "テスト駅",
       null,
