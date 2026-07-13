@@ -10,10 +10,18 @@ vi.mock("@/lib/store/json-file-store", () => ({
 }));
 
 const generateBoardingPosition = vi.fn();
-vi.mock("../ai-generation", () => ({
-  generateBoardingPosition: (...args: unknown[]) => generateBoardingPosition(...args),
-  generateStationFacilities: vi.fn(async () => []),
-}));
+const generateStationFacilities = vi.fn(async (..._args: unknown[]) => [] as unknown[]);
+vi.mock("../ai-generation", async () => {
+  // isPlainArrivalPlatformLabel は実実装をそのまま使う(CompositeStationAdapter側の
+  // 分岐判定を正しく検証するため。generateBoardingPosition/generateStationFacilities
+  // のみ実際のAI呼び出しをモックに差し替える)。
+  const actual = await vi.importActual<typeof import("../ai-generation")>("../ai-generation");
+  return {
+    ...actual,
+    generateBoardingPosition: (...args: unknown[]) => generateBoardingPosition(...args),
+    generateStationFacilities: (...args: unknown[]) => generateStationFacilities(...args),
+  };
+});
 
 const generateArrivalNarrativeSteps = vi.fn();
 vi.mock("../arrival-guide-ai-generation", () => ({
@@ -82,12 +90,14 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "渋谷方面"
     );
     expect(result?.carNumber).toBe(4);
+    // fixtureのplatformNumber("14")がAI生成の到着番線ヒントとして引き渡される。
     expect(generateBoardingPosition).toHaveBeenCalledWith(
       "test-key",
       "新宿駅",
       "JR山手線",
       "渋谷方面",
-      "pf_shinjuku_jr_yamanote"
+      "pf_shinjuku_jr_yamanote",
+      "14"
     );
   });
 
@@ -107,7 +117,22 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "未知駅",
       "テスト線",
       "到着方面",
-      "line__st_unknown__テスト線__到着方面"
+      "line__st_unknown__テスト線__到着方面",
+      null
+    );
+  });
+
+  test("AI生成ルート由来の到着番線ラベル(platformId)が渡された場合、号車推定へ引き渡す", async () => {
+    generateBoardingPosition.mockResolvedValue(AI_POSITION);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.getBoardingPosition("st_unknown", "未知駅", "3", "テスト線", "到着方面");
+    expect(generateBoardingPosition).toHaveBeenCalledWith(
+      "test-key",
+      "未知駅",
+      "テスト線",
+      "到着方面",
+      "line__st_unknown__テスト線__到着方面",
+      "3"
     );
   });
 
@@ -138,12 +163,16 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "渋谷方面"
     );
     expect(result?.carNumber).toBe(4);
+    // "pf_"接頭辞のfixture platformIdは、番線ラベルとして誤用しないためnullになる
+    // (isPlainArrivalPlatformLabel参照。別駅のplatformIdをそのままAIプロンプトに
+    // 混入させない)。
     expect(generateBoardingPosition).toHaveBeenCalledWith(
       "test-key",
       "渋谷駅",
       "相鉄新横浜線",
       "渋谷方面",
-      "line__st_shibuya__相鉄新横浜線__渋谷方面"
+      "line__st_shibuya__相鉄新横浜線__渋谷方面",
+      null
     );
   });
 
@@ -162,7 +191,8 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "新宿駅",
       "JR山手線",
       "渋谷方面",
-      "pf_shinjuku_jr_yamanote"
+      "pf_shinjuku_jr_yamanote",
+      "14"
     );
   });
 
@@ -281,6 +311,102 @@ describe("CompositeStationAdapter.searchStations", () => {
     resolveApi(null);
     const result = await promise;
     expect(result.some((s) => s.stationId === "st_nishiya")).toBe(true);
+  });
+});
+
+const AI_FACILITY = {
+  facilityId: "fac_ai",
+  stationId: "",
+  facilityType: "gate" as const,
+  name: "AI推定改札",
+  level: "地上1階",
+  accessible: false,
+  coordinates: null,
+  connectedGateId: null,
+  confidence: {
+    level: "medium" as const,
+    reasons: ["AIによる推測情報(検索結果に基づく)。現地未確認のため参考程度に扱ってください。"],
+    verifiedAt: null,
+    expiresAt: null,
+    sourceCount: 0,
+  },
+  verifiedAt: null,
+  provenance: "ai_inferred" as const,
+};
+
+describe("CompositeStationAdapter.getFacilities", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(storeState)) delete storeState[key];
+    generateStationFacilities.mockReset().mockResolvedValue([]);
+    searchStationsFromHeartRails.mockReset().mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test("fixtureにfacilitiesがあればそれを返し、AIは呼ばない", async () => {
+    const adapter = new CompositeStationAdapter("test-key");
+    const result = await adapter.getFacilities("st_shibuya");
+    expect(result.length).toBeGreaterThan(0);
+    expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+
+  test("fixtureに無い駅は、駅の座標を含めてAI生成にフォールバックする(同名駅の曖昧性解消のため)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    const result = await adapter.getFacilities("hr_test");
+
+    expect(result).toHaveLength(1);
+    expect(generateStationFacilities).toHaveBeenCalledWith(
+      "test-key",
+      "テスト駅",
+      "テスト鉄道",
+      ["テスト線"],
+      { lat: 35.1, lng: 136.2 }
+    );
+  });
+
+  test("生成結果はキャッシュされ、次回は再度AIを呼ばない", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test");
+    await adapter.getFacilities("hr_test");
+
+    expect(generateStationFacilities).toHaveBeenCalledTimes(1);
+  });
+
+  test("駅自体が解決できない場合は空配列を返す(AIは呼ばない)", async () => {
+    const adapter = new CompositeStationAdapter("test-key");
+    const result = await adapter.getFacilities("st_unknown_no_station");
+    expect(result).toEqual([]);
+    expect(generateStationFacilities).not.toHaveBeenCalled();
   });
 });
 

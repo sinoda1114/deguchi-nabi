@@ -1,6 +1,10 @@
 import type { StationProviderPort } from "./StationProviderPort";
 import { FixtureStationAdapter } from "./FixtureStationAdapter";
-import { generateBoardingPosition, generateStationFacilities } from "./ai-generation";
+import {
+  generateBoardingPosition,
+  generateStationFacilities,
+  isPlainArrivalPlatformLabel,
+} from "./ai-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import {
   decodeHeartRailsStationId,
@@ -169,11 +173,20 @@ export class CompositeStationAdapter implements StationProviderPort {
     const station = await this.getStation(stationId);
     if (!station) return [];
 
+    // 未認証・レート制限なしの/api/routes/searchから呼ばれうるが、getFacilities自体は
+    // 駅ごとに初回のみ課金が発生する設計(このFACILITIES_CACHEにヒットすれば以降は
+    // AI呼び出し自体を行わない)。Search Grounding化で1回あたりの呼び出しコスト
+    // (検索+抽出の2段)が増えても、駅単位でのキャッシュにより繰り返し攻撃のコストは
+    // 既に抑制されているため、canGenerateNarrativeのような追加の同時実行ガードは
+    // 不要と判断する(同一リクエスト内でfacilities/boarding/narrativeが重なる懸念は
+    // narrative側がisRouteAiGeneratedで既に遮断しているため、facilities自体を
+    // 追加で止める理由は薄い)。
     const generated = await generateStationFacilities(
       this.geminiApiKey,
       station.stationName,
       station.operator,
-      station.lines
+      station.lines,
+      { lat: station.latitude, lng: station.longitude }
     );
     if (generated.length === 0) return [];
 
@@ -227,12 +240,25 @@ export class CompositeStationAdapter implements StationProviderPort {
     const cached = cache.find((c) => c.key === cacheKey);
     if (cached) return cached.boardingPosition;
 
+    // 到着番線が判明していれば号車推定へ引き渡す。fixture platformが検証済みなら
+    // その正規のplatformNumberを使い(最も確実)、そうでない場合はgenerateRailRoute
+    // (ai-route-generation.ts)が検索で確認できた到着番線ラベルをplatformId経由で
+    // 引き継ぐ。ただし"pf_"接頭辞のfixture platformId文字列(別駅のplatformIdが
+    // 誤って渡された場合等)は番線ラベルとして扱わない(isPlainArrivalPlatformLabel参照)。
+    // 取れない場合はnullのまま(無理に埋めない原則を維持)。
+    const arrivalPlatformNumber = verifiedFixturePlatform
+      ? verifiedFixturePlatform.platformNumber
+      : isPlainArrivalPlatformLabel(platformId)
+        ? platformId
+        : null;
+
     const generated = await generateBoardingPosition(
       this.geminiApiKey,
       stationName,
       effectiveLine,
       effectiveDirection,
-      cacheKey
+      cacheKey,
+      arrivalPlatformNumber
     );
     if (!generated) return null;
 

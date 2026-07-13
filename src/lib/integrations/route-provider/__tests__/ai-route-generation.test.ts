@@ -79,4 +79,52 @@ describe("generateRailRoute", () => {
     expect(result?.segments[0].fromStationId).toBe("st_nishiya");
     expect(result?.segments[0].toStationId).toBe(NAGOYA_KOKUSAI_CENTER.stationId);
   });
+
+  test("検索プロンプトに到着番線の確認を依頼する指示を含める", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      lines: ["JR東海道新幹線"],
+      transferCount: 2,
+      estimatedMinutes: 120,
+    });
+
+    await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("到着番線");
+  });
+
+  test("検索結果に到着番線が含まれる場合、segmentのplatformIdへ引き渡す(号車推定への連携用)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      lines: ["JR東海道新幹線"],
+      transferCount: 2,
+      estimatedMinutes: 120,
+      arrivalPlatformNumber: "3",
+    });
+
+    const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+    expect(result?.segments[0].platformId).toBe("3");
+  });
+
+  test("到着番線が確認できない場合はplatformIdを空文字のままにする(無理に埋めない)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      lines: ["JR東海道新幹線"],
+      transferCount: 2,
+      estimatedMinutes: 120,
+    });
+
+    const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+    expect(result?.segments[0].platformId).toBe("");
+  });
+
+  test("到着番線が異常に長い場合や型が不正な場合は採用せず空文字のままにする", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      lines: ["JR東海道新幹線"],
+      transferCount: 2,
+      estimatedMinutes: 120,
+      arrivalPlatformNumber: "あ".repeat(30),
+    });
+
+    const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+    expect(result?.segments[0].platformId).toBe("");
+  });
 });
