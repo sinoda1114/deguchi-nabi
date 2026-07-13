@@ -15,6 +15,11 @@ vi.mock("../ai-generation", () => ({
   generateStationFacilities: vi.fn(async () => []),
 }));
 
+const generateArrivalNarrativeSteps = vi.fn();
+vi.mock("../arrival-guide-ai-generation", () => ({
+  generateArrivalNarrativeSteps: (...args: unknown[]) => generateArrivalNarrativeSteps(...args),
+}));
+
 const searchStationsFromHeartRails = vi.fn(async (_query: string) => null as unknown);
 vi.mock("../heartrails", () => ({
   fetchNearestStationsFromHeartRails: vi.fn(async () => null),
@@ -276,5 +281,109 @@ describe("CompositeStationAdapter.searchStations", () => {
     resolveApi(null);
     const result = await promise;
     expect(result.some((s) => s.stationId === "st_nishiya")).toBe(true);
+  });
+});
+
+describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(storeState)) delete storeState[key];
+    generateArrivalNarrativeSteps.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const NARRATIVE_STEP = {
+    type: "public_passage" as const,
+    title: "地下通路",
+    instruction: "地下通路を直進してください。",
+    landmarks: [],
+    confidence: {
+      level: "medium" as const,
+      reasons: ["AIによる推測情報(検索結果に基づく)。現地未確認のため参考程度に扱ってください。"],
+      verifiedAt: null,
+      expiresAt: null,
+      sourceCount: 0,
+    },
+    provenance: "ai_inferred" as const,
+  };
+
+  test("生成結果をそのまま返す", async () => {
+    generateArrivalNarrativeSteps.mockResolvedValue([NARRATIVE_STEP]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.getArrivalGuideNarrativeSteps(
+      "st_shibuya",
+      "渋谷駅",
+      "ヒカリエ改札",
+      "B5出口"
+    );
+
+    expect(result).toEqual([NARRATIVE_STEP]);
+    expect(generateArrivalNarrativeSteps).toHaveBeenCalledWith(
+      "test-key",
+      "渋谷駅",
+      "ヒカリエ改札",
+      "B5出口",
+      null
+    );
+  });
+
+  test("座標を渡すとそのままAI生成関数へ引き継ぐ", async () => {
+    generateArrivalNarrativeSteps.mockResolvedValue([NARRATIVE_STEP]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getArrivalGuideNarrativeSteps(
+      "st_shibuya",
+      "渋谷駅",
+      "ヒカリエ改札",
+      "B5出口",
+      { lat: 35.6591, lng: 139.7038 }
+    );
+
+    expect(generateArrivalNarrativeSteps).toHaveBeenCalledWith(
+      "test-key",
+      "渋谷駅",
+      "ヒカリエ改札",
+      "B5出口",
+      { lat: 35.6591, lng: 139.7038 }
+    );
+  });
+
+  test("生成結果はキャッシュされ、同じ駅・改札・出口の組み合わせでは再度AIを呼ばない", async () => {
+    generateArrivalNarrativeSteps.mockResolvedValue([NARRATIVE_STEP]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getArrivalGuideNarrativeSteps("st_shibuya", "渋谷駅", "ヒカリエ改札", "B5出口");
+    const result = await adapter.getArrivalGuideNarrativeSteps(
+      "st_shibuya",
+      "渋谷駅",
+      "ヒカリエ改札",
+      "B5出口"
+    );
+
+    expect(result).toEqual([NARRATIVE_STEP]);
+    expect(generateArrivalNarrativeSteps).toHaveBeenCalledTimes(1);
+  });
+
+  test("生成結果が空配列の場合はキャッシュしない(一時的なAPI障害を恒久的な情報なしとして固定しないため)", async () => {
+    generateArrivalNarrativeSteps.mockResolvedValue([]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getArrivalGuideNarrativeSteps("st_shibuya", "渋谷駅", "ヒカリエ改札", "B5出口");
+    await adapter.getArrivalGuideNarrativeSteps("st_shibuya", "渋谷駅", "ヒカリエ改札", "B5出口");
+
+    expect(generateArrivalNarrativeSteps).toHaveBeenCalledTimes(2);
+  });
+
+  test("改札名・出口名の組み合わせが異なれば別キャッシュキーとして扱う", async () => {
+    generateArrivalNarrativeSteps.mockResolvedValue([NARRATIVE_STEP]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getArrivalGuideNarrativeSteps("st_shibuya", "渋谷駅", "ヒカリエ改札", "B5出口");
+    await adapter.getArrivalGuideNarrativeSteps("st_shibuya", "渋谷駅", "宮益坂改札", "宮益坂口");
+
+    expect(generateArrivalNarrativeSteps).toHaveBeenCalledTimes(2);
   });
 });

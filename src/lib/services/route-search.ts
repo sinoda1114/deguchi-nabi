@@ -16,6 +16,7 @@ import type { StationProviderPort } from "@/lib/integrations/station-provider/St
 import { haversineMeters } from "@/lib/geo/haversine";
 import { bearingDegrees, bearingDifferenceDegrees, compassLabel } from "@/lib/geo/bearing";
 import { worstConfidenceLevel } from "./confidence-engine";
+import { buildArrivalGuide } from "./arrival-guide";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 /**
@@ -631,9 +632,17 @@ export async function searchRouteGuide(
       },
       keyInstruction,
       segments,
-      // 改札後の詳細導線(GuideStep[])は未実装のため null。既存レスポンス契約を
-      // 壊さない加算的フィールドとして先に型のみ追加している(設計: docs/04 §Phase 2.5)。
-      arrivalGuide: null,
+      // fixtureの改札・出口データ+AI生成の改札後導線からGuideStep[]を組み立てる
+      // (docs/04 §Phase 2.5)。
+      arrivalGuide: await buildArrivalGuide(
+        facilitiesOutcome.result,
+        input.destinationStationId,
+        candidateResult.arrivalStationName,
+        candidateResult.arrivalStationCoordinates,
+        input.mode,
+        Boolean(candidateResult.chosen.isAiGenerated),
+        deps.stationProvider
+      ),
       confidenceSummary,
       warnings: candidateResult.routeWarnings,
       generatedAt: now.toISOString(),

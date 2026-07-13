@@ -1,6 +1,7 @@
 import type { StationProviderPort } from "./StationProviderPort";
 import { FixtureStationAdapter } from "./FixtureStationAdapter";
 import { generateBoardingPosition, generateStationFacilities } from "./ai-generation";
+import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import {
   decodeHeartRailsStationId,
   fetchNearestStationsFromHeartRails,
@@ -8,11 +9,32 @@ import {
 } from "./heartrails";
 import { readCollection, writeCollection } from "@/lib/store/json-file-store";
 import { FIXTURE_PLATFORMS } from "@/lib/fixtures/stations";
-import type { BoardingPosition, Platform, Station, StationFacility } from "@/lib/domain/station";
+import type {
+  BoardingPosition,
+  Coordinates,
+  Platform,
+  Station,
+  StationFacility,
+} from "@/lib/domain/station";
+import type { GuideStep } from "@/lib/domain/route";
 
 const FACILITIES_CACHE = "ai-station-facilities";
 const BOARDING_CACHE = "ai-boarding-positions";
 const NEARBY_STATION_CACHE = "nearby-stations";
+const ARRIVAL_GUIDE_CACHE = "ai-arrival-guide-steps";
+
+interface ArrivalGuideCacheEntry {
+  key: string;
+  steps: GuideStep[];
+}
+
+/**
+ * 改札後導線AI生成のキャッシュキー。同じ駅の同じ改札→出口の組み合わせで
+ * 再生成(検索グラウンディングは最大55秒かかる)を避けるため。
+ */
+function arrivalGuideCacheKey(stationId: string, gateName: string, exitName: string): string {
+  return `${stationId}__${gateName}__${exitName}`;
+}
 // 短い部分一致クエリ(例: "中央")で全国から大量ヒットしうるため、
 // レスポンス・キャッシュ肥大化を防ぐ上限。1文字駅名も存在するため
 // 文字数制限ではなく件数制限で絞る。
@@ -216,6 +238,39 @@ export class CompositeStationAdapter implements StationProviderPort {
 
     try {
       writeCollection(BOARDING_CACHE, [...cache, { key: cacheKey, boardingPosition: generated }]);
+    } catch {
+      // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。
+    }
+
+    return generated;
+  }
+
+  async getArrivalGuideNarrativeSteps(
+    stationId: string,
+    stationName: string,
+    gateName: string,
+    exitName: string,
+    arrivalStationCoordinates: Coordinates | null = null
+  ): Promise<GuideStep[]> {
+    const cacheKey = arrivalGuideCacheKey(stationId, gateName, exitName);
+    const cache = readCollection<ArrivalGuideCacheEntry>(ARRIVAL_GUIDE_CACHE);
+    const cached = cache.find((c) => c.key === cacheKey);
+    if (cached) return cached.steps;
+
+    const generated = await generateArrivalNarrativeSteps(
+      this.geminiApiKey,
+      stationName,
+      gateName,
+      exitName,
+      arrivalStationCoordinates
+    );
+    // 生成結果が空の場合はキャッシュしない(一時的なAPI障害を恒久的な
+    // 「情報なし」として固定してしまうのを防ぐ。既存のfacilities/boarding
+    // キャッシュと同じ方針)。
+    if (generated.length === 0) return [];
+
+    try {
+      writeCollection(ARRIVAL_GUIDE_CACHE, [...cache, { key: cacheKey, steps: generated }]);
     } catch {
       // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。
     }

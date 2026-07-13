@@ -6,6 +6,13 @@ import type { RouteMode } from "@/lib/domain/route";
 
 // fixture未収録駅間はGemini Search Groundingで検索(検索55秒+抽出15秒を直列実行)するため、
 // プラットフォームのデフォルト実行時間上限より長くかかりうる。明示的に確保する。
+//
+// 改札後導線(arrivalGuide)のAI補完も同じ検索+抽出パターン(最大70秒)を使うが、
+// arrival-guide.tsのcanGenerateNarrativeが「経路自体がAI生成の場合は生成しない」
+// よう排他制御しているため、1リクエストで両方のAI呼び出しが同時に走ることはない
+// (未認証・レート制限の無いこのエンドポイントで、1リクエストあたりの課金対象API
+// 呼び出し数が積み重なるコスト濫用/DoSリスクを避けるための設計。セキュリティ
+// レビュー指摘に基づく)。よって上限はこれまで通り単一呼び出し分で足りる。
 export const maxDuration = 90;
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];

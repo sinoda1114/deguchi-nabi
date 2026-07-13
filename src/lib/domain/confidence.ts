@@ -42,6 +42,14 @@ export function lowConfidence(reason: string): Confidence {
  */
 export type Provenance = "surveyed" | "map_estimate" | "ai_inferred";
 
+/**
+ * 表示用ラベル。"surveyed"は「実際に現地を歩いて確認した」ケースだけでなく、
+ * 駅の公式構内図・公式資料等の一次情報源で確認できたケースも含む(いずれも
+ * AIの推測やGoogleマップ等の一般的な地図情報からの概算とは異なり、施設の
+ * 実在・名称を裏付ける確度の高い根拠であるため)。"map_estimate"は、公式資料
+ * による裏付けが無く、一般的な地図情報のみに基づく概算(AIレビュー指摘を受け、
+ * 用語の混同を避けるためこのコメントを追記)。
+ */
 export const PROVENANCE_LABEL: Record<Provenance, string> = {
   surveyed: "現地調査済み",
   map_estimate: "地図で確認",

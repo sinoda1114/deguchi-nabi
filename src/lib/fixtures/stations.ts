@@ -132,6 +132,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: null,
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
   {
     facilityId: "fac_shibuya_hikarie_gate",
@@ -144,6 +145,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: null,
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
   {
     facilityId: "fac_shibuya_exit_b5",
@@ -156,6 +158,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: "fac_shibuya_hikarie_gate",
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
   {
     facilityId: "fac_shibuya_elevator_hikarie",
@@ -168,6 +171,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: null,
     confidence: mediumConfidence("稼働状況の最終確認日が古い"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
   {
     // 宮下パーク・渋谷横丁方面の目的地に対して、B5出口(ヒカリエ側)より
@@ -184,6 +188,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: null,
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
   {
     facilityId: "fac_shibuya_exit_miyamasuzaka",
@@ -196,6 +201,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: "fac_shibuya_miyamasuzaka_gate",
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
   {
     // これまでの登録出口(ヒカリエ改札・宮益坂口)は駅の東側に偏っており、
@@ -220,6 +226,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
       "一般的な地図情報を基に追加。公式構内図による現地確認・改札接続・段差状況は未確認"
     ),
     verifiedAt: null,
+    provenance: "map_estimate",
   },
   {
     facilityId: "fac_shibuya_exit_sakuragaoka",
@@ -234,6 +241,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
       "一般的な地図情報を基に追加。公式構内図による現地確認・改札接続・段差状況は未確認"
     ),
     verifiedAt: null,
+    provenance: "map_estimate",
   },
   {
     facilityId: "fac_shinjuku_new_south_gate",
@@ -246,6 +254,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: null,
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
   {
     facilityId: "fac_shinjuku_exit_new_south",
@@ -258,6 +267,7 @@ export const FIXTURE_FACILITIES: StationFacility[] = [
     connectedGateId: "fac_shinjuku_new_south_gate",
     confidence: highConfidence("公式構内図で確認済み"),
     verifiedAt: VERIFIED_AT,
+    provenance: "surveyed",
   },
 ];
 

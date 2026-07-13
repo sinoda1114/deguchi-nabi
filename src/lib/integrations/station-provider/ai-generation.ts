@@ -102,6 +102,7 @@ JSON形式で回答してください。`;
     connectedGateId: null,
     confidence: aiConfidence(),
     verifiedAt: null,
+    provenance: "ai_inferred",
   }));
 }
 
