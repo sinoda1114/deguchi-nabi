@@ -159,20 +159,61 @@ body {
 /* Suspense境界が解決してスケルトンから実コンテンツへ切り替わる瞬間の演出。
    即座に切り替わると「固まって急に変わった」ように見えるため、上から
    ふわっと降りてくる動きを付けて「ストリーミングで生成が進んでいる」体感を出す
-   (ユーザーフィードバックに基づく)。 */
+   (ユーザーフィードバックに基づく)。 durationを250ms→480msへ、移動距離と
+   scaleも拡大し、処理が速く終わるケースでも「一瞬でパッと切り替わった」
+   ではなく「ヌルッと生成された」と感じられる強さにする(再フィードバックに基づく調整)。 */
 @keyframes stream-reveal {
   from {
     opacity: 0;
-    transform: translateY(-10px);
+    transform: translateY(-16px) scale(0.97);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
 .stream-reveal {
-  animation: stream-reveal var(--duration-normal) var(--ease-out-expo) both;
+  animation: stream-reveal 480ms var(--ease-out-expo) both;
+}
+
+/* スケルトンの「動いている感」を、単純な明滅(animate-pulse)より強く出すための
+   横流れシマーエフェクト。処理が速く終わっても、スケルトンが表示される短い間
+   だけでも「今まさに生成中」と視認できるよう、周期を短め(1.2s)にする。
+   背景色違い(白系サーフェス / 緑カード上の半透明黒)向けに2種類用意する。 */
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.skeleton-shimmer {
+  /* color-mix()未対応ブラウザではbackground-image宣言全体が無視されるため、
+     先にbackground-colorでフォールバックしておく(シマーの動きは失われるが
+     単色スケルトンとしては視認できる)。 */
+  background-color: var(--surface-raised);
+  background-image: linear-gradient(
+    100deg,
+    var(--surface-raised) 35%,
+    color-mix(in oklch, var(--surface-raised), var(--foreground) 12%) 50%,
+    var(--surface-raised) 65%
+  );
+  background-size: 250% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-shimmer-on-accent {
+  background-image: linear-gradient(
+    100deg,
+    rgba(0, 0, 0, 0.1) 35%,
+    rgba(0, 0, 0, 0.22) 50%,
+    rgba(0, 0, 0, 0.1) 65%
+  );
+  background-size: 250% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

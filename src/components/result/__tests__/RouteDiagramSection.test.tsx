@@ -100,7 +100,7 @@ describe("RouteDiagramSection", () => {
 describe("RouteDiagramSectionSkeleton", () => {
   test("aria-hiddenなプレースホルダーを描画する", () => {
     const html = renderToStaticMarkup(<RouteDiagramSectionSkeleton />);
-    expect(html).toContain("animate-pulse");
+    expect(html).toContain("skeleton-shimmer");
     expect(html).toContain('aria-hidden="true"');
   });
 });
