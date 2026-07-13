@@ -6,8 +6,14 @@ import { Button, Input } from "@heroui/react";
 import { ApiError, apiFetch } from "@/lib/api-client";
 import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
-import { candidateLabel, isSameFavoriteTarget, toSearchCandidate } from "@/lib/services/place-resolution";
+import {
+  candidateLabel,
+  isSameFavoriteTarget,
+  toFavoriteDestinationInput,
+  toSearchCandidate,
+} from "@/lib/services/place-resolution";
 import { sortFavoriteDestinationsByRecency } from "@/lib/services/favorite-destination-order";
+import { addLocalFavoriteDestination, listLocalFavoriteDestinations } from "@/lib/services/local-favorite-destinations";
 import { SearchPictogram } from "./SearchPictogram";
 import type { Coordinates } from "@/lib/domain/station";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
@@ -68,6 +74,25 @@ export function DestinationField({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQuery, value, originCoordinates?.lat, originCoordinates?.lng]);
 
+  // ログイン中は親から渡るfavoriteDestinations(サーバー確定値)にそのまま追従する
+  // (ログイン後にローカル保存分をサーバーへ移行した場合の再取得にも対応するため)。
+  // 未ログイン中は、SSRでは取得できないlocalStorage(外部システム)の内容をここで取り込む
+  // 必要があり、レンダー中に直接読むとSSR/CSRでhydration mismatchになるためuseEffectで行う。
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (user) {
+      setFavorites(favoriteDestinations);
+      return;
+    }
+    const local = listLocalFavoriteDestinations();
+    const existingIds = new Set(favoriteDestinations.map((f) => f.favoriteDestinationId));
+    setFavorites([
+      ...favoriteDestinations,
+      ...local.filter((f) => !existingIds.has(f.favoriteDestinationId)),
+    ]);
+  }, [user, favoriteDestinations]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   const isFavorited = (candidate: SearchCandidate) =>
     favorites.some((f) => isSameFavoriteTarget(f, candidate));
   const isSaved = value ? isFavorited(value) : false;
@@ -78,6 +103,21 @@ export function DestinationField({
     if (savingKey || isFavorited(candidate)) return;
     setSavingKey(key);
     setSaveError(null);
+
+    // 未ログイン時はサーバーに送らずlocalStorageへ保存する(ログイン後にサーバー側へ移行できる)。
+    if (!user) {
+      const result = addLocalFavoriteDestination(toFavoriteDestinationInput(candidate));
+      if (result.ok) {
+        setFavorites((prev) => [...prev, result.favoriteDestination]);
+      } else if (result.reason === "limit_exceeded") {
+        setSaveError("登録できる目的地の上限に達しています");
+      } else {
+        setSaveError("この端末に保存できませんでした。ブラウザの設定をご確認ください。");
+      }
+      setSavingKey(null);
+      return;
+    }
+
     try {
       const res = await apiFetch<{ favoriteDestination: FavoriteDestination }>(
         "/api/favorite-destinations",
@@ -143,7 +183,7 @@ export function DestinationField({
         }}
       />
 
-      {value && user ? (
+      {value ? (
         <Button
           size="sm"
           variant="secondary"
@@ -188,25 +228,23 @@ export function DestinationField({
                       : `施設・${candidate.destination.address}`}
                   </span>
                 </button>
-                {user ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      saveFavorite(candidate);
-                    }}
-                    disabled={favorited || savingKey !== null}
-                    aria-label={favorited ? "登録済み" : "よく使う行き先に追加"}
-                    aria-pressed={favorited}
-                    className="mr-2 shrink-0 p-1 disabled:cursor-default"
-                  >
-                    <SearchPictogram
-                      type="favorite"
-                      filled={favorited}
-                      className={`h-4 w-4 ${favorited ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"}`}
-                    />
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    saveFavorite(candidate);
+                  }}
+                  disabled={favorited || savingKey !== null}
+                  aria-label={favorited ? "登録済み" : "よく使う行き先に追加"}
+                  aria-pressed={favorited}
+                  className="mr-2 shrink-0 p-1 disabled:cursor-default"
+                >
+                  <SearchPictogram
+                    type="favorite"
+                    filled={favorited}
+                    className={`h-4 w-4 ${favorited ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"}`}
+                  />
+                </button>
               </li>
             );
           })}
