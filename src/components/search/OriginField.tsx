@@ -13,6 +13,27 @@ export type OriginChoice =
   | { type: "station"; stationId: string; label: string };
 
 /**
+ * 「実効ホーム駅」ボタン(ログイン時は登録駅、未ログイン時はlocalStorageの
+ * デフォルト駅)を押した際の OriginChoice を組み立てる。
+ *
+ * type: "home_station" は、サーバー側 resolveOriginDestination が
+ * 「ログインユーザーのDB登録済み最寄り駅(sessionUser.homeStationId)」
+ * としてのみ解釈できる値であり、未ログイン時にこれを送ると sessionUser
+ * が無いため「最寄り駅が登録されていません」エラーになる。未ログイン時は
+ * 具体的な stationId が判明しているため、代わりに type: "station" として
+ * 送る(サーバー側はstation型ならログイン状態を問わずそのまま解決できる)。
+ */
+export function buildHomeStationOriginChoice(
+  user: User | null,
+  station: Station
+): OriginChoice {
+  if (user) {
+    return { type: "home_station", label: station.stationName };
+  }
+  return { type: "station", stationId: station.stationId, label: station.stationName };
+}
+
+/**
  * 出発地入力欄に表示する文字列を決定する。
  * home_station選択時は、sessionStorageの下書きに保存された選択時点の
  * ラベル(古い登録駅名の可能性がある)より、常に最新のeffectiveHomeStation
@@ -125,10 +146,13 @@ export function OriginField({
         {effectiveHomeStation ? (
           <Button
             size="sm"
-            variant={value?.type === "home_station" ? "primary" : "secondary"}
-            onPress={() =>
-              onChange({ type: "home_station", label: effectiveHomeStation.stationName })
+            variant={
+              value?.type === "home_station" ||
+              (value?.type === "station" && value.stationId === effectiveHomeStation.stationId)
+                ? "primary"
+                : "secondary"
             }
+            onPress={() => onChange(buildHomeStationOriginChoice(user, effectiveHomeStation))}
           >
             {effectiveHomeStation.stationName}({user ? "登録駅" : "出発地"})
           </Button>
