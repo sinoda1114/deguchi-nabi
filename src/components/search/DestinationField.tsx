@@ -222,6 +222,17 @@ export function DestinationField({
                       ? `駅・${candidate.station.prefecture}`
                       : `施設・${candidate.destination.address}`}
                   </span>
+                  {/* Google Placesで確認できた営業状態・公式サイト情報(目的地特定の確度向上)。
+                      確認できていない項目(フィールド省略)は何も表示しない(断定しない設計)。 */}
+                  {candidate.kind === "place" &&
+                  candidate.destination.businessStatus === "closed_temporarily" ? (
+                    <span className="text-xs text-[var(--danger)]">一時休業中</span>
+                  ) : null}
+                  {candidate.kind === "place" && candidate.destination.websiteUri ? (
+                    <span className="text-xs text-[var(--foreground-muted)]">
+                      公式サイト確認済み
+                    </span>
+                  ) : null}
                 </button>
                 <button
                   type="button"
