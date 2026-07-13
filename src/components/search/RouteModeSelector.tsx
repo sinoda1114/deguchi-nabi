@@ -35,7 +35,7 @@ export function RouteModeSelector({ value, onChange }: RouteModeSelectorProps) {
             aria-pressed={selected}
             onPress={() => onChange(mode)}
             fullWidth
-            className="h-full min-w-0 flex-col items-center gap-0.5 py-2.5 text-center whitespace-normal"
+            className="h-full min-w-0 flex-col items-center justify-start gap-0.5 py-2.5 text-center whitespace-normal"
           >
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-current/10">
               <SearchPictogram type={MODE_ICON[mode]} className="h-4 w-4" />
