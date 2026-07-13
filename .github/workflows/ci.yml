@@ -76,6 +76,29 @@ jobs:
         if: steps.detect.outputs.run == 'true'
         run: npm run build
 
+      # E2E 未整備のプロジェクトを赤くしないよう、package.json に test:e2e スクリプトが
+      # 定義されているかを検出する（Playwright 導入前のテンプレ/初期状態を許容するため）。
+      - name: Detect E2E script
+        id: detect-e2e
+        if: steps.detect.outputs.run == 'true'
+        run: |
+          if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts['test:e2e'] ? 0 : 1)"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::test:e2e スクリプトが無いため E2E テストをスキップ"
+          fi
+
+      # Playwright はブラウザバイナリが別途必要（npm ci だけでは入らない）。
+      - name: Install Playwright browsers
+        if: steps.detect.outputs.run == 'true' && steps.detect-e2e.outputs.run == 'true'
+        run: npx playwright install --with-deps
+
+      # E2E テスト（ビルド後の実物を起動して検証する想定。package.json: test:e2e = "playwright test"）。
+      - name: E2E test
+        if: steps.detect.outputs.run == 'true' && steps.detect-e2e.outputs.run == 'true'
+        run: npm run test:e2e
+
       # 依存の脆弱性監査。high 以上で失敗。moderate 以下は許容。
       - name: Audit dependencies
         if: steps.detect.outputs.run == 'true'
