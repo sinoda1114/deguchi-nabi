@@ -8,6 +8,7 @@ import type { SearchCandidate } from "@/lib/services/place-resolution";
 import { candidateLabel, isSameFavoriteTarget, toSearchCandidate } from "@/lib/services/place-resolution";
 import { sortFavoriteDestinationsByRecency } from "@/lib/services/favorite-destination-order";
 import { splitForDisclosure } from "@/lib/services/progressive-disclosure";
+import { SearchPictogram } from "./SearchPictogram";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
 
 interface DestinationFieldProps {
@@ -87,7 +88,8 @@ export function DestinationField({
 
   return (
     <div className="relative">
-      <label className="mb-1 block text-xs font-bold text-[var(--foreground-muted)]">
+      <label className="mb-1 flex items-center gap-1 text-xs font-bold text-[var(--foreground-muted)]">
+        <SearchPictogram type="destination" className="h-3.5 w-3.5" />
         目的地
       </label>
 
@@ -142,7 +144,14 @@ export function DestinationField({
             onPress={handleSaveFavorite}
             className="mt-2"
           >
-            {isSaved ? "追加済み" : "★ よく使う行き先に追加"}
+            {isSaved ? (
+              "追加済み"
+            ) : (
+              <>
+                <SearchPictogram type="favorite" className="h-3.5 w-3.5" />
+                よく使う行き先に追加
+              </>
+            )}
           </Button>
           {saveError ? (
             <p className="mt-1 text-xs text-[var(--danger)]">{saveError}</p>

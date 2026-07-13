@@ -2,6 +2,7 @@
 
 import { Button } from "@heroui/react";
 import { ROUTE_MODE_LABEL, type RouteMode } from "@/lib/domain/route";
+import { SearchPictogram, type SearchPictogramType } from "./SearchPictogram";
 
 const MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
@@ -9,6 +10,12 @@ const MODE_DESCRIPTION: Record<RouteMode, string> = {
   fastest: "到着時間を優先",
   easy: "乗換・改札・出口が分かりやすい導線を優先",
   accessible: "階段を避け、エレベーター等を優先",
+};
+
+const MODE_ICON: Record<RouteMode, SearchPictogramType> = {
+  fastest: "fastest",
+  easy: "easy",
+  accessible: "accessible",
 };
 
 interface RouteModeSelectorProps {
@@ -30,6 +37,7 @@ export function RouteModeSelector({ value, onChange }: RouteModeSelectorProps) {
             fullWidth
             className="h-auto min-w-0 flex-col items-start gap-0.5 py-2.5 text-left whitespace-normal"
           >
+            <SearchPictogram type={MODE_ICON[mode]} className="h-4 w-4" />
             <span className="text-sm font-bold">{ROUTE_MODE_LABEL[mode]}</span>
             <span className="text-[11px] leading-tight font-normal opacity-80">
               {MODE_DESCRIPTION[mode]}
