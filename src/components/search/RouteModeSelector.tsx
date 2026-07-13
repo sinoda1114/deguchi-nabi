@@ -37,7 +37,7 @@ export function RouteModeSelector({ value, onChange }: RouteModeSelectorProps) {
             fullWidth
             className="h-auto min-w-0 flex-col items-start gap-0.5 py-2.5 text-left whitespace-normal"
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-current/10">
+            <span className="flex h-7 w-7 items-center justify-center self-center rounded-full bg-current/10">
               <SearchPictogram type={MODE_ICON[mode]} className="h-4 w-4" />
             </span>
             <span className="text-sm font-bold">{ROUTE_MODE_LABEL[mode]}</span>
