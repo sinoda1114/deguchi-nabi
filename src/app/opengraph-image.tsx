@@ -10,8 +10,12 @@ const navy = "#062d65";
 const blue = "#075bff";
 
 export default async function OpenGraphImage() {
-  const iconData = await readFile(new URL("./icon.png", import.meta.url));
-  const iconSrc = `data:image/png;base64,${iconData.toString("base64")}`;
+  try {
+    const iconData = await readFile(new URL("./icon.png", import.meta.url));
+    const iconSrc = `
+  } catch (error) {
+    throw new Error(`Failed to load icon.png: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
 
   return new ImageResponse(
     (
