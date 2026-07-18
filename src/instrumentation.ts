@@ -40,24 +40,40 @@ globalThis.__langfuseSpanProcessor = langfuseSpanProcessor;
  * 同期処理のため、後続の呼び出しは必ず先行呼び出しの同じPromiseを見つけて
  * awaitするだけになり、実際の登録処理(tracerProvider.register()等)は1回しか
  * 走らない。
+ *
+ * 失敗時はキャッシュをクリアし、次回のregister()呼び出しでリトライできるように
+ * する(/security-review指摘: rejectしたPromiseをキャッシュし続けると、
+ * 一時的なネットワーク障害等で1回失敗しただけで以降永久にtelemetryが
+ * 有効化されなくなってしまう)。またregister()自体はエラーを投げない
+ * (telemetry初期化の失敗でサーバー起動・アプリ全体を落とさない。
+ * GeminiAiSdkClient.ts等の「AI/観測性の障害で本体機能を落とさない」
+ * という既存の設計原則を踏襲する)。
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   if (!globalThis.__langfuseTelemetryRegisterPromise) {
-    globalThis.__langfuseTelemetryRegisterPromise = (async () => {
-      const { NodeTracerProvider } = await import("@opentelemetry/sdk-trace-node");
-      const { registerTelemetry } = await import("ai");
-      const { LangfuseVercelAiSdkIntegration } = await import("@langfuse/vercel-ai-sdk");
-
-      const tracerProvider = new NodeTracerProvider({
-        spanProcessors: [langfuseSpanProcessor],
-      });
-      tracerProvider.register();
-
-      registerTelemetry(new LangfuseVercelAiSdkIntegration());
-    })();
+    globalThis.__langfuseTelemetryRegisterPromise = registerTelemetryOnce().catch((e: unknown) => {
+      globalThis.__langfuseTelemetryRegisterPromise = undefined;
+      console.error(
+        "[instrumentation] Langfuse telemetry registration failed:",
+        e instanceof Error ? e.message : "unknown error"
+      );
+    });
   }
 
   await globalThis.__langfuseTelemetryRegisterPromise;
+}
+
+async function registerTelemetryOnce(): Promise<void> {
+  const { NodeTracerProvider } = await import("@opentelemetry/sdk-trace-node");
+  const { registerTelemetry } = await import("ai");
+  const { LangfuseVercelAiSdkIntegration } = await import("@langfuse/vercel-ai-sdk");
+
+  const tracerProvider = new NodeTracerProvider({
+    spanProcessors: [langfuseSpanProcessor],
+  });
+  tracerProvider.register();
+
+  registerTelemetry(new LangfuseVercelAiSdkIntegration());
 }

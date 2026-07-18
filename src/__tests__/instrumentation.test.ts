@@ -136,4 +136,25 @@ describe("instrumentation", () => {
     expect(NodeTracerProviderMock).toHaveBeenCalledTimes(1);
     expect(registerTelemetryMock).toHaveBeenCalledTimes(1);
   });
+
+  test("register()失敗時は例外を投げず(telemetry初期化失敗でアプリ全体を落とさない)、次回呼び出しでリトライできる(/security-review指摘: Promiseキャッシュがrejectしたまま残ると永久にリトライされなくなる懸念への対応)", async () => {
+    vi.stubEnv("NEXT_RUNTIME", "nodejs");
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    NodeTracerProviderMock.mockImplementationOnce(function () {
+      throw new Error("tracer provider init failed");
+    });
+    const { register } = await import("../instrumentation");
+
+    await expect(register()).resolves.toBeUndefined();
+    expect(NodeTracerProviderMock).toHaveBeenCalledTimes(1);
+    expect(registerTelemetryMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    // 2回目の呼び出しでは(1回目の失敗が握りつぶされているため)リトライされ、成功する。
+    await register();
+    expect(NodeTracerProviderMock).toHaveBeenCalledTimes(2);
+    expect(registerTelemetryMock).toHaveBeenCalledTimes(1);
+
+    consoleErrorSpy.mockRestore();
+  });
 });
