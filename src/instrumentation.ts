@@ -65,9 +65,13 @@ export async function register(): Promise<void> {
   await globalThis.__langfuseTelemetryRegisterPromise;
 }
 
+declare global {
+  var __diagAiModuleRegisterTelemetryRef: unknown;
+}
+
 async function registerTelemetryOnce(): Promise<void> {
   const { NodeTracerProvider } = await import("@opentelemetry/sdk-trace-node");
-  const { registerTelemetry } = await import("ai");
+  const aiModule = await import("ai");
   const { LangfuseVercelAiSdkIntegration } = await import("@langfuse/vercel-ai-sdk");
 
   const tracerProvider = new NodeTracerProvider({
@@ -75,5 +79,7 @@ async function registerTelemetryOnce(): Promise<void> {
   });
   tracerProvider.register();
 
-  registerTelemetry(new LangfuseVercelAiSdkIntegration());
+  aiModule.registerTelemetry(new LangfuseVercelAiSdkIntegration());
+  globalThis.__diagAiModuleRegisterTelemetryRef = aiModule.registerTelemetry;
+  console.log("[DIAG2] instrumentation.ts: telemetry registered, ai module ref stored");
 }
