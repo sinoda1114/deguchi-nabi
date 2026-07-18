@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
 const afterMock = vi.fn();
 vi.mock("next/server", () => ({
   after: (...args: unknown[]) => afterMock(...args),
@@ -49,5 +51,28 @@ describe("scheduleLangfuseFlush", () => {
     // after()に渡したコールバック自体がrejectしないことを確認する
     // (rejectすればテストランナーがunhandled rejectionとして検出する)。
     await expect(scheduledTask!()).resolves.toBeUndefined();
+  });
+
+  test("forceFlush()失敗時、エラーオブジェクトを生のまま出力しない(/ai-review指摘: LangfuseのHTTP Exporterが保持するAuthorizationヘッダー(secretKeyのbase64)がエラー形状経由でログに漏れるのを防ぐ)", async () => {
+    let scheduledTask: (() => Promise<void>) | null = null;
+    afterMock.mockImplementation((task: () => Promise<void>) => {
+      scheduledTask = task;
+    });
+    const secretLeakingError = Object.assign(new Error("send failed"), {
+      config: { headers: { Authorization: "Basic c2stbGYtc2VjcmV0Cg==" } },
+    });
+    forceFlushMock.mockRejectedValue(secretLeakingError);
+    const { scheduleLangfuseFlush } = await import("../langfuse-flush");
+
+    scheduleLangfuseFlush();
+    await scheduledTask!();
+
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    const loggedArgs = consoleErrorSpy.mock.calls.flat();
+    const loggedText = loggedArgs
+      .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+      .join(" ");
+    expect(loggedText).not.toContain("Authorization");
+    expect(loggedText).not.toContain("c2stbGYtc2VjcmV0Cg==");
   });
 });

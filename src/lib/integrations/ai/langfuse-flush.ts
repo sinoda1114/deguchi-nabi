@@ -4,6 +4,16 @@ import { langfuseSpanProcessor, __diagModuleId } from "@/instrumentation";
 console.log("[DIAG] langfuse-flush.ts sees instrumentation moduleId=", __diagModuleId);
 
 /**
+ * エラーオブジェクトを安全な文字列に変換してログ出力する。LangfuseのHTTP
+ * Exporterはリクエスト設定(Authorizationヘッダー=secretKeyのbase64値を含む)を
+ * エラーオブジェクトに保持することがあるため、生のエラーオブジェクトを
+ * そのままconsole.errorへ渡さない(/ai-review指摘、High)。
+ */
+function safeErrorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : "unknown error";
+}
+
+/**
  * サーバーレス環境(Vercel)ではレスポンス返却後にプロセスが凍結されうるため、
  * Langfuseへのバッチ送信を`after()`でスケジュールして確実にflushする
  * (Langfuse公式ドキュメントのVercel Cloud Functions向け推奨パターン)。
@@ -27,11 +37,11 @@ export function scheduleLangfuseFlush(): void {
         await langfuseSpanProcessor.forceFlush();
         console.log("[DIAG] forceFlush() succeeded");
       } catch (e) {
-        console.error("[DIAG] forceFlush() failed:", e);
+        console.error("[DIAG] forceFlush() failed:", safeErrorMessage(e));
       }
     });
     console.log("[DIAG] after() scheduled successfully");
   } catch (e) {
-    console.error("[DIAG] after() threw synchronously:", e);
+    console.error("[DIAG] after() threw synchronously:", safeErrorMessage(e));
   }
 }
