@@ -43,6 +43,14 @@ function arrivalGuideCacheKey(stationId: string, gateName: string, exitName: str
 // レスポンス・キャッシュ肥大化を防ぐ上限。1文字駅名も存在するため
 // 文字数制限ではなく件数制限で絞る。
 const MAX_SEARCH_RESULTS = 20;
+/**
+ * 同一駅に対して保持するdestinationHint付きFacilitiesCacheEntryの上限件数。
+ * 未認証・レート制限なしの/api/routes/searchから、同一駅周辺の異なる実在施設名を
+ * 目的地に指定し続けられれば、destinationHintをキャッシュキーに含めたことで
+ * 新規キャッシュキー(=課金対象のAI呼び出し)が際限なく生成されうる懸念への緩和策
+ * (/ai-review指摘、High)。上限を超えたら作成順で最も古いエントリを削除する。
+ */
+const MAX_DESTINATION_HINT_ENTRIES_PER_STATION = 5;
 
 interface FacilitiesCacheEntry {
   stationId: string;
@@ -229,13 +237,14 @@ export class CompositeStationAdapter implements StationProviderPort {
     if (!station) return [];
 
     // 未認証・レート制限なしの/api/routes/searchから呼ばれうるが、getFacilities自体は
-    // 駅ごとに初回のみ課金が発生する設計(このFACILITIES_CACHEにヒットすれば以降は
-    // AI呼び出し自体を行わない)。Search Grounding化で1回あたりの呼び出しコスト
-    // (検索+抽出の2段)が増えても、駅単位でのキャッシュにより繰り返し攻撃のコストは
-    // 既に抑制されているため、canGenerateNarrativeのような追加の同時実行ガードは
-    // 不要と判断する(同一リクエスト内でfacilities/boarding/narrativeが重なる懸念は
-    // narrative側がisRouteAiGeneratedで既に遮断しているため、facilities自体を
-    // 追加で止める理由は薄い)。
+    // 駅+目的地の組み合わせごとに初回のみ課金が発生する設計(このFACILITIES_CACHEに
+    // ヒットすれば以降はAI呼び出し自体を行わない)。ただしdestinationHintを
+    // キャッシュキーに含めたことで、同一駅でも異なる実在施設名を指定し続けられれば
+    // 新規キャッシュキーが際限なく生成されうる(/ai-review指摘、High)。
+    // MAX_DESTINATION_HINT_ENTRIES_PER_STATIONで駅ごとのdestinationHint付き
+    // エントリ数に上限を設け、古いものから削除することで無制限の肥大化・課金誘発を
+    // 緩和する(destinationHint無し=駅自体が目的地のエントリは対象外。1駅につき
+    // 高々1件で、目的地情報を伴う攻撃面ではないため)。
     const generated = await generateStationFacilities(
       this.geminiApiKey,
       station.stationName,
@@ -249,8 +258,13 @@ export class CompositeStationAdapter implements StationProviderPort {
     const withStationId = generated.map((f) => ({ ...f, stationId }));
 
     try {
+      const cacheAfterEviction = this.evictOldestDestinationHintEntryIfNeeded(
+        cache,
+        stationId,
+        destinationHint
+      );
       writeCollection(FACILITIES_CACHE, [
-        ...cache,
+        ...cacheAfterEviction,
         { stationId, destinationHint, facilities: withStationId },
       ]);
     } catch {
@@ -258,6 +272,31 @@ export class CompositeStationAdapter implements StationProviderPort {
     }
 
     return withStationId;
+  }
+
+  /**
+   * 同一駅のdestinationHint付きエントリが上限に達している場合、作成順で最も
+   * 古い1件を除いたキャッシュ配列を返す(evict)。上限未満の場合やdestinationHint
+   * がnull(駅自体が目的地)の場合はそのまま返す。
+   */
+  private evictOldestDestinationHintEntryIfNeeded(
+    cache: FacilitiesCacheEntry[],
+    stationId: string,
+    destinationHint: string | null
+  ): FacilitiesCacheEntry[] {
+    if (destinationHint === null) return cache;
+
+    const oldestIndex = cache.findIndex(
+      (c) => c.stationId === stationId && c.destinationHint !== null
+    );
+    const entryCount = cache.filter(
+      (c) => c.stationId === stationId && c.destinationHint !== null
+    ).length;
+    if (entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION || oldestIndex === -1) {
+      return cache;
+    }
+
+    return cache.filter((_, i) => i !== oldestIndex);
   }
 
   async getBoardingPosition(

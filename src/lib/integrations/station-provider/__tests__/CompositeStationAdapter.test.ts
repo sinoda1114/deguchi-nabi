@@ -608,6 +608,65 @@ describe("CompositeStationAdapter.getFacilities", () => {
 
     expect(generateStationFacilities).toHaveBeenCalledTimes(2);
   });
+
+  test("同一駅へのdestinationHint付きキャッシュエントリ数には上限があり、古いものから削除される(/ai-review指摘、High: 未認証・レート制限なしのエンドポイントから同一駅に異なる実在施設名を指定し続けることでキャッシュを無制限に肥大化させ、課金対象のAI呼び出しを繰り返し誘発できてしまう懸念への緩和策)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    // 上限(5件)を超える6件の異なるdestinationHintで新規生成させる。
+    for (let i = 0; i < 6; i++) {
+      await adapter.getFacilities("hr_test", `テスト施設${i}`);
+    }
+
+    // 上限を超えた分、最も古い(テスト施設0)は削除されているため、
+    // 再度同じdestinationHintで問い合わせると再度AIが呼ばれる(キャッシュされていない)。
+    generateStationFacilities.mockClear();
+    await adapter.getFacilities("hr_test", "テスト施設0");
+    expect(generateStationFacilities).toHaveBeenCalledTimes(1);
+
+    // 直近の施設(テスト施設5)はまだキャッシュに残っているため、AIは呼ばれない。
+    generateStationFacilities.mockClear();
+    await adapter.getFacilities("hr_test", "テスト施設5");
+    expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+
+  test("destinationHint無し(駅目的地)のキャッシュはdestinationHint付きエントリ数の上限の対象外", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test");
+    for (let i = 0; i < 6; i++) {
+      await adapter.getFacilities("hr_test", `テスト施設${i}`);
+    }
+
+    generateStationFacilities.mockClear();
+    await adapter.getFacilities("hr_test");
+    expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
 });
 
 describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
