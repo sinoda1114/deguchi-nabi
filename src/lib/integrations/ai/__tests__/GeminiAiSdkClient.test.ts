@@ -56,7 +56,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: {} });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      await generateStructuredContent("key", "prompt", {});
+      await generateStructuredContent("key", "prompt", { type: "object" });
 
       expect(timeoutSpy).toHaveBeenCalledTimes(1);
       expect(timeoutSpy.mock.calls[0][0]).toBeLessThanOrEqual(15000);
@@ -66,7 +66,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("timeout"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", {});
+      const result = await generateStructuredContent("key", "prompt", { type: "object" });
 
       expect(result).toBeNull();
     });
@@ -75,9 +75,29 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("NoObjectGeneratedError"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
+      const result = await generateStructuredContent("key", "prompt", { type: "object" });
+
+      expect(result).toBeNull();
+    });
+
+    test("responseSchemaがtypeフィールドを持たない場合はnullを返す(例外を投げない、不正スキーマがそのままAI SDKへ渡らないようにするガード)", async () => {
+      generateObjectMock.mockResolvedValue({ object: { ok: true } });
+
+      const { generateStructuredContent } = await import("../GeminiAiSdkClient");
       const result = await generateStructuredContent("key", "prompt", {});
 
       expect(result).toBeNull();
+      expect(generateObjectMock).not.toHaveBeenCalled();
+    });
+
+    test("responseSchemaが配列の場合はnullを返す(例外を投げない)", async () => {
+      generateObjectMock.mockResolvedValue({ object: { ok: true } });
+
+      const { generateStructuredContent } = await import("../GeminiAiSdkClient");
+      const result = await generateStructuredContent("key", "prompt", [] as unknown as object);
+
+      expect(result).toBeNull();
+      expect(generateObjectMock).not.toHaveBeenCalled();
     });
   });
 
@@ -92,7 +112,12 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { steps: [] } });
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await searchAndGenerateStructuredContent("key", "search prompt", "extract", {});
+      const result = await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        { type: "object" }
+      );
 
       expect(result).toEqual({ steps: [] });
       expect(generateTextMock).toHaveBeenCalledTimes(1);
@@ -115,7 +140,9 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: {} });
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {});
+      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
+        type: "object",
+      });
 
       expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
     });
