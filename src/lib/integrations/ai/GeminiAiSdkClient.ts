@@ -1,5 +1,6 @@
 import { createGoogle } from "@ai-sdk/google";
 import { generateObject, generateText, jsonSchema } from "ai";
+import { scheduleLangfuseFlush } from "./langfuse-flush";
 
 const MODEL_ID = "gemini-flash-latest";
 const REQUEST_TIMEOUT_MS = 15000;
@@ -87,6 +88,9 @@ export async function generateStructuredContent<T>(
     return object as T;
   } catch {
     return null;
+  } finally {
+    // 成否に関わらずtelemetryは送る(失敗時の原因調査こそLangfuseで見たい対象のため)。
+    scheduleLangfuseFlush();
   }
 }
 
@@ -144,5 +148,7 @@ export async function searchAndGenerateStructuredContent<T>(
     return object as T;
   } catch {
     return null;
+  } finally {
+    scheduleLangfuseFlush();
   }
 }

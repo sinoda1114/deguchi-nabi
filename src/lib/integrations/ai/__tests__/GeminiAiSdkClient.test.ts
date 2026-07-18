@@ -28,6 +28,11 @@ vi.mock("@ai-sdk/google", () => ({
   createGoogle: (...args: unknown[]) => createGoogleMock(...args),
 }));
 
+const scheduleLangfuseFlushMock = vi.fn();
+vi.mock("../langfuse-flush", () => ({
+  scheduleLangfuseFlush: () => scheduleLangfuseFlushMock(),
+}));
+
 describe("GeminiAiSdkClient", () => {
   const originalAbortTimeout = AbortSignal.timeout;
 
@@ -99,6 +104,24 @@ describe("GeminiAiSdkClient", () => {
       expect(result).toBeNull();
       expect(generateObjectMock).not.toHaveBeenCalled();
     });
+
+    test("成功時もLangfuseへのflushをスケジュールする", async () => {
+      generateObjectMock.mockResolvedValue({ object: { ok: true } });
+
+      const { generateStructuredContent } = await import("../GeminiAiSdkClient");
+      await generateStructuredContent("key", "prompt", { type: "object" });
+
+      expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
+    });
+
+    test("失敗時(null返却)もLangfuseへのflushをスケジュールする(telemetryは成否問わず送る)", async () => {
+      generateObjectMock.mockRejectedValue(new Error("timeout"));
+
+      const { generateStructuredContent } = await import("../GeminiAiSdkClient");
+      await generateStructuredContent("key", "prompt", { type: "object" });
+
+      expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("searchAndGenerateStructuredContent", () => {
@@ -167,6 +190,32 @@ describe("GeminiAiSdkClient", () => {
       const result = await searchAndGenerateStructuredContent("key", "search prompt", "extract", {});
 
       expect(result).toBeNull();
+    });
+
+    test("成功時もLangfuseへのflushをスケジュールする", async () => {
+      generateTextMock.mockResolvedValue({
+        text: "検索結果テキスト",
+        providerMetadata: {
+          google: { groundingMetadata: { webSearchQueries: ["q1"] } },
+        },
+      });
+      generateObjectMock.mockResolvedValue({ object: { steps: [] } });
+
+      const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
+      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
+        type: "object",
+      });
+
+      expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
+    });
+
+    test("検索フェーズが例外を投げた場合もLangfuseへのflushをスケジュールする", async () => {
+      generateTextMock.mockRejectedValue(new Error("timeout"));
+
+      const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
+      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {});
+
+      expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
   });
 });
