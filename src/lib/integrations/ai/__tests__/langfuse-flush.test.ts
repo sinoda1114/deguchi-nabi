@@ -8,6 +8,7 @@ vi.mock("next/server", () => ({
 const forceFlushMock = vi.fn();
 vi.mock("@/instrumentation", () => ({
   langfuseSpanProcessor: { forceFlush: (...args: unknown[]) => forceFlushMock(...args) },
+  __diagModuleId: "test-module-id",
 }));
 
 describe("scheduleLangfuseFlush", () => {

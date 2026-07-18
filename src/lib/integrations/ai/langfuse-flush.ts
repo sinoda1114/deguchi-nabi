@@ -1,5 +1,7 @@
 import { after } from "next/server";
-import { langfuseSpanProcessor } from "@/instrumentation";
+import { langfuseSpanProcessor, __diagModuleId } from "@/instrumentation";
+
+console.log("[DIAG] langfuse-flush.ts sees instrumentation moduleId=", __diagModuleId);
 
 /**
  * サーバーレス環境(Vercel)ではレスポンス返却後にプロセスが凍結されうるため、
@@ -17,15 +19,19 @@ import { langfuseSpanProcessor } from "@/instrumentation";
  * 落とさないよう握りつぶす。
  */
 export function scheduleLangfuseFlush(): void {
+  console.log("[DIAG] scheduleLangfuseFlush() called");
   try {
     after(async () => {
+      console.log("[DIAG] after() callback executing, calling forceFlush()");
       try {
         await langfuseSpanProcessor.forceFlush();
-      } catch {
-        // Langfuseへの送信失敗(ネットワーク障害・認証エラー等)。
+        console.log("[DIAG] forceFlush() succeeded");
+      } catch (e) {
+        console.error("[DIAG] forceFlush() failed:", e);
       }
     });
-  } catch {
-    // リクエストコンテキスト外。telemetryは諦めるが、呼び出し元は継続させる。
+    console.log("[DIAG] after() scheduled successfully");
+  } catch (e) {
+    console.error("[DIAG] after() threw synchronously:", e);
   }
 }
