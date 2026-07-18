@@ -481,7 +481,8 @@ describe("CompositeStationAdapter.getFacilities", () => {
       "テスト駅",
       "テスト鉄道",
       ["テスト線"],
-      { lat: 35.1, lng: 136.2 }
+      { lat: 35.1, lng: 136.2 },
+      null
     );
   });
 
@@ -512,6 +513,100 @@ describe("CompositeStationAdapter.getFacilities", () => {
     const result = await adapter.getFacilities("st_unknown_no_station");
     expect(result).toEqual([]);
     expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+
+  test("destinationHint(目的地施設名)を渡すとgenerateStationFacilitiesへそのまま伝播する", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test", "テストカフェ");
+
+    expect(generateStationFacilities).toHaveBeenCalledWith(
+      "test-key",
+      "テスト駅",
+      "テスト鉄道",
+      ["テスト線"],
+      { lat: 35.1, lng: 136.2 },
+      "テストカフェ"
+    );
+  });
+
+  test("destinationHintが異なれば同じ駅でも別々にキャッシュされ、それぞれAIを1回ずつ呼ぶ(目的地ごとに改札・出口の推奨が変わりうるため)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test", "テストカフェA");
+    await adapter.getFacilities("hr_test", "テストカフェB");
+
+    expect(generateStationFacilities).toHaveBeenCalledTimes(2);
+  });
+
+  test("同じdestinationHintであれば再度AIを呼ばずキャッシュを使う", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test", "テストカフェ");
+    await adapter.getFacilities("hr_test", "テストカフェ");
+
+    expect(generateStationFacilities).toHaveBeenCalledTimes(1);
+  });
+
+  test("destinationHint無し(駅目的地)のキャッシュと、destinationHint有り(施設目的地)のキャッシュは別物として扱われる", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test");
+    await adapter.getFacilities("hr_test", "テストカフェ");
+
+    expect(generateStationFacilities).toHaveBeenCalledTimes(2);
   });
 });
 

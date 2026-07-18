@@ -50,6 +50,32 @@ describe("generateStationFacilities", () => {
     expect(searchPrompt).toContain("139.7016");
   });
 
+  test("destinationHint(目的地施設名)を渡すと検索プロンプトに含め、目的地に最も近い改札・出口を優先するよう指示する(検証実験で目的地名を検索クエリに含めると精度が大きく向上することを確認済み)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ facilities: [] });
+
+    await generateStationFacilities(
+      "key",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      "kawara CAFE&DINING 横浜店"
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("kawara CAFE&DINING 横浜店");
+    expect(searchPrompt).toContain("最も近い");
+  });
+
+  test("destinationHintを渡さない場合は目的地関連の指示を含めない(駅そのものが目的地のケース)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ facilities: [] });
+
+    await generateStationFacilities("key", "渋谷駅", "東急電鉄", ["東急東横線"]);
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).not.toContain("最も近い改札・出口");
+  });
+
   test("有効なfacilityをStationFacility[]へ変換し、provenanceをai_inferredにする", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({
       facilities: [

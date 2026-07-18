@@ -46,6 +46,15 @@ const MAX_SEARCH_RESULTS = 20;
 
 interface FacilitiesCacheEntry {
   stationId: string;
+  /**
+   * 目的地施設名(place由来の目的地のみ、駅そのものが目的地の場合はnull)。
+   * 同じ駅でも目的地によって推奨される改札・出口が変わりうるため、
+   * stationIdとの複合キーでキャッシュを分ける。既存のキャッシュエントリ
+   * (このフィールド追加前に書き込まれたもの)にはこのフィールドが存在しない
+   * が、読み込み時に`?? null`で補完するため後方互換性は保たれる
+   * (destinationHintを指定しない=駅目的地の検索には引き続きヒットする)。
+   */
+  destinationHint: string | null;
   facilities: StationFacility[];
 }
 
@@ -203,12 +212,17 @@ export class CompositeStationAdapter implements StationProviderPort {
     }
   }
 
-  async getFacilities(stationId: string): Promise<StationFacility[]> {
+  async getFacilities(
+    stationId: string,
+    destinationHint: string | null = null
+  ): Promise<StationFacility[]> {
     const fixtureFacilities = await this.fixture.getFacilities(stationId);
     if (fixtureFacilities.length > 0) return fixtureFacilities;
 
     const cache = readCollection<FacilitiesCacheEntry>(FACILITIES_CACHE);
-    const cached = cache.find((c) => c.stationId === stationId);
+    const cached = cache.find(
+      (c) => c.stationId === stationId && (c.destinationHint ?? null) === destinationHint
+    );
     if (cached) return cached.facilities;
 
     const station = await this.getStation(stationId);
@@ -227,7 +241,8 @@ export class CompositeStationAdapter implements StationProviderPort {
       station.stationName,
       station.operator,
       station.lines,
-      { lat: station.latitude, lng: station.longitude }
+      { lat: station.latitude, lng: station.longitude },
+      destinationHint
     );
     if (generated.length === 0) return [];
 
@@ -236,7 +251,7 @@ export class CompositeStationAdapter implements StationProviderPort {
     try {
       writeCollection(FACILITIES_CACHE, [
         ...cache,
-        { stationId, facilities: withStationId },
+        { stationId, destinationHint, facilities: withStationId },
       ]);
     } catch {
       // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。

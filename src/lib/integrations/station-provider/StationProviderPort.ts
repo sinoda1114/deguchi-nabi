@@ -11,7 +11,13 @@ export interface StationProviderPort {
   searchStations(query: string): Promise<Station[]>;
   getStation(stationId: string): Promise<Station | null>;
   getPlatforms(stationId: string): Promise<Platform[]>;
-  getFacilities(stationId: string): Promise<StationFacility[]>;
+  /**
+   * destinationHintは目的地施設名(place由来の目的地のみ)。渡すとAI生成
+   * フォールバック時、目的地に最も近い改札・出口を優先して検索する
+   * (検証実験で目的地名を検索クエリに含めると精度が大きく向上することを確認済み)。
+   * fixture収録駅では現状未使用(fixtureデータは既に確定情報のため)。
+   */
+  getFacilities(stationId: string, destinationHint?: string | null): Promise<StationFacility[]>;
   /**
    * 号車・ドア位置を取得する。platformId は fixture 収録駅で判明していれば渡す
    * (空文字列可)。fixture に一致が無い場合は stationName/line/direction を元に

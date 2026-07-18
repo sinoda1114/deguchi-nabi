@@ -428,8 +428,15 @@ export async function buildTransferAndExitSegments(
   input: RouteSearchInput,
   deps: Pick<RouteSearchDeps, "stationProvider">
 ): Promise<FacilitiesSearchResult> {
+  // 目的地がplace由来(施設等)の場合、施設名を検索ヒントとしてgetFacilitiesへ
+  // 渡す。目的地の公式サイト・グルメサイト等のアクセス情報ページに最寄り
+  // 改札・出口が明記されていることが多く、駅単体の検索より精度が大きく
+  // 向上することを検証実験で確認した。目的地が駅そのもの(station由来)の
+  // 場合はヒント不要(駅全体の主要な改札・出口で十分)。
+  const destinationHint = input.destinationCoordinates ? input.destinationLabel : null;
   const arrivalFacilities = await deps.stationProvider.getFacilities(
-    input.destinationStationId
+    input.destinationStationId,
+    destinationHint
   );
 
   // 出口→改札の順で選ぶ(逆算)。目的地座標に最も近い出口を選び、その出口の
