@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { generateArrivalNarrativeSteps } from "../arrival-guide-ai-generation";
 
+// arrival-guide-ai-generation.ts はVercel AI SDK版クライアント(GeminiAiSdkClient)を
+// 使用する(縦切りPoCでの移行対象)。
 const searchAndGenerateStructuredContent = vi.fn();
-vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
+vi.mock("@/lib/integrations/ai/GeminiAiSdkClient", () => ({
   searchAndGenerateStructuredContent: (...args: unknown[]) =>
     searchAndGenerateStructuredContent(...args),
 }));
