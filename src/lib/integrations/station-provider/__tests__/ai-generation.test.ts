@@ -50,7 +50,7 @@ describe("generateStationFacilities", () => {
     expect(searchPrompt).toContain("139.7016");
   });
 
-  test("destinationHint(目的地施設名)を渡すと検索プロンプトに含め、目的地に最も近い改札・出口を優先するよう指示する(検証実験で目的地名を検索クエリに含めると精度が大きく向上することを確認済み)", async () => {
+  test("destinationHint(目的地施設名)を渡すと検索プロンプトに加算型で含め、駅全体の回答を維持したまま目的地アクセス情報を追加検索するよう指示する(絞り込み型は本番同一構成のE2E検証で駅全体検索より劣化することを確認したため加算型に変更、council議論参照)", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ facilities: [] });
 
     await generateStationFacilities(
@@ -64,16 +64,17 @@ describe("generateStationFacilities", () => {
 
     const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
     expect(searchPrompt).toContain("kawara CAFE&DINING 横浜店");
-    expect(searchPrompt).toContain("最も近い");
+    expect(searchPrompt).toContain("アクセス情報");
+    expect(searchPrompt).toContain("通常どおり");
   });
 
-  test("destinationHintを渡さない場合は目的地関連の指示を含めない(駅そのものが目的地のケース)", async () => {
+  test("destinationHintを渡さない場合は目的地アクセス情報の追加検索指示を含めない(駅そのものが目的地のケース)", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ facilities: [] });
 
     await generateStationFacilities("key", "渋谷駅", "東急電鉄", ["東急東横線"]);
 
     const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
-    expect(searchPrompt).not.toContain("最も近い改札・出口");
+    expect(searchPrompt).not.toContain("アクセス情報");
   });
 
   test("有効なfacilityをStationFacility[]へ変換し、provenanceをai_inferredにする", async () => {
