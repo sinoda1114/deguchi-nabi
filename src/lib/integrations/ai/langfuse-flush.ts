@@ -27,14 +27,18 @@ function safeErrorMessage(e: unknown): string {
  * 落とさないよう握りつぶすが、原因調査ができるようconsole.errorには残す。
  */
 export function scheduleLangfuseFlush(): void {
+  console.log("[DIAG2] scheduleLangfuseFlush() called");
   try {
     after(async () => {
+      console.log("[DIAG2] after() callback executing, calling forceFlush()");
       try {
         await langfuseSpanProcessor.forceFlush();
+        console.log("[DIAG2] forceFlush() succeeded");
       } catch (e) {
         console.error("[langfuse-flush] forceFlush() failed:", safeErrorMessage(e));
       }
     });
+    console.log("[DIAG2] after() scheduled");
   } catch (e) {
     console.error("[langfuse-flush] after() threw synchronously:", safeErrorMessage(e));
   }

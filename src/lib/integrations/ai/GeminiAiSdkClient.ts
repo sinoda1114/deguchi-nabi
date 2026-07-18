@@ -1,6 +1,28 @@
 import { createGoogle } from "@ai-sdk/google";
 import { generateObject, generateText, jsonSchema } from "ai";
+import * as aiModuleStatic from "ai";
 import { scheduleLangfuseFlush } from "./langfuse-flush";
+
+declare global {
+  var __diagAiModuleRegisterTelemetryRef: unknown;
+}
+
+/**
+ * [DIAG2] instrumentation.tsが動的import("ai")で取得したモジュールと、
+ * このファイルが静的importした"ai"モジュールが、Next.js/Turbopackの
+ * バンドル分割によって別インスタンスになっていないかを確認する一時的な
+ * 診断コード。registerTelemetryが登録された"ai"モジュールインスタンスと、
+ * 実際にgenerateObject/generateTextを呼び出す"ai"モジュールインスタンスが
+ * 食い違っていると、telemetryイベントの購読者が実際の呼び出しに
+ * 気づけずスパンが1件も生成されない可能性がある。
+ */
+function diagLogAiModuleIdentity(): void {
+  const stored = globalThis.__diagAiModuleRegisterTelemetryRef;
+  console.log(
+    "[DIAG2] GeminiAiSdkClient.ts: static ai module registerTelemetry === instrumentation.ts stored ref?",
+    stored !== undefined ? stored === aiModuleStatic.registerTelemetry : "NOT_YET_REGISTERED"
+  );
+}
 
 const MODEL_ID = "gemini-flash-latest";
 const REQUEST_TIMEOUT_MS = 15000;
@@ -71,6 +93,7 @@ export async function generateStructuredContent<T>(
   responseSchema: object,
   callerId: string = "gemini-ai-sdk.generateStructuredContent"
 ): Promise<T | null> {
+  diagLogAiModuleIdentity();
   try {
     const google = googleProvider(apiKey);
     const { object } = await generateObject({
@@ -115,6 +138,7 @@ export async function searchAndGenerateStructuredContent<T>(
   responseSchema: object,
   callerId: string = "gemini-ai-sdk.searchAndGenerateStructuredContent"
 ): Promise<T | null> {
+  diagLogAiModuleIdentity();
   try {
     const google = googleProvider(apiKey);
 
