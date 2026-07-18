@@ -113,7 +113,24 @@ export class CompositeStationAdapter implements StationProviderPort {
     // キャッシュ書き込みが失敗していても(読み取り専用ファイルシステム等)、
     // HeartRails由来のstationIdには駅名・座標が自己完結的に埋め込まれているため
     // ここで復元できる(路線名等は失われるが、駅の存在自体は解決できる)。
-    return decodeHeartRailsStationId(stationId);
+    const decoded = decodeHeartRailsStationId(stationId);
+    if (!decoded) return null;
+
+    // decodeだけではlines(乗り入れ路線)が復元できず、本番(Vercel等の読み取り
+    // 専用ファイルシステム)ではnearby-stationsキャッシュが常に効かないため、
+    // 事実上毎回lines空の状態になってしまう。lines空はgenerateStationFacilities
+    // への検索プロンプトを劣化させる(「◯◯駅()の主要な改札名・出口名...」)ため、
+    // HeartRailsへ再照会してlinesを復元する(operatorはHeartRails自体が
+    // 提供しないため再照会しても常に空文字のまま。heartrails.ts参照)。
+    // 再照会が失敗しても、decodeの結果(路線情報なし)を返せば従来通り動作するため、
+    // 従来より悪化することはない。
+    const refetched = await fetchNearestStationsFromHeartRails(
+      decoded.latitude,
+      decoded.longitude
+    );
+    const matched = refetched?.find((s) => s.stationId === stationId);
+
+    return matched ?? decoded;
   }
 
   getPlatforms(stationId: string) {
