@@ -62,7 +62,7 @@ function isValidConfidenceLevel(value: unknown): value is ConfidenceLevel {
   return typeof value === "string" && VALID_CONFIDENCE_LEVELS.includes(value as ConfidenceLevel);
 }
 
-interface GeneratedFacility {
+export interface GeneratedFacility {
   facilityType: FacilityType;
   name: string;
   level: string;
@@ -78,7 +78,7 @@ const VALID_FACILITY_TYPES: FacilityType[] = [
   "passage",
 ];
 
-function isValidFacility(f: unknown): f is GeneratedFacility {
+export function isValidFacility(f: unknown): f is GeneratedFacility {
   if (typeof f !== "object" || f === null) return false;
   const candidate = f as Record<string, unknown>;
   return (
@@ -90,7 +90,7 @@ function isValidFacility(f: unknown): f is GeneratedFacility {
   );
 }
 
-const FACILITIES_SCHEMA = {
+export const FACILITIES_SCHEMA = {
   type: "object",
   properties: {
     facilities: {
@@ -112,6 +112,36 @@ const FACILITIES_SCHEMA = {
   },
   required: ["facilities"],
 };
+
+/**
+ * 検証済みの GeneratedFacility を StationFacility へ変換する共有ヘルパー。
+ * Search Grounding 版(generateStationFacilities)と Serper 検索パイプライン版
+ * (facilities-search-pipeline.ts)の両方から使い、変換ロジックの二重化を防ぐ。
+ * confidence の算出方針は呼び出し側で異なる(前者はモデル自己申告をキャップ、
+ * 後者は deriveSourceConfidence で採用ソースから導出)ため、confidence と
+ * verifiedAt は引数として受け取る。provenance は常に "ai_inferred"。
+ */
+export function toStationFacility(
+  f: GeneratedFacility,
+  confidence: Confidence,
+  verifiedAt: string | null
+): StationFacility {
+  return {
+    facilityId: randomUUID(),
+    stationId: "",
+    facilityType: f.facilityType,
+    name: f.name,
+    level: f.level,
+    accessible: f.facilityType === "elevator",
+    coordinates: null,
+    // AI生成は座標・出口→改札の連結を持たないため、目的地座標に応じた
+    // 出口選定の対象にはならない(常に従来通りの先頭一致で扱われる)。
+    connectedGateId: null,
+    confidence,
+    verifiedAt,
+    provenance: "ai_inferred",
+  };
+}
 
 /**
  * 駅の改札・出口・エスカレーター/エレベーターの下書き情報を、Google Search
@@ -173,21 +203,9 @@ export async function generateStationFacilities(
 
   if (!Array.isArray(result?.facilities)) return [];
 
-  return result.facilities.filter(isValidFacility).map((f) => ({
-    facilityId: randomUUID(),
-    stationId: "",
-    facilityType: f.facilityType,
-    name: f.name,
-    level: f.level,
-    accessible: f.facilityType === "elevator",
-    coordinates: null,
-    // AI生成は座標・出口→改札の連結を持たないため、目的地座標に応じた
-    // 出口選定の対象にはならない(常に従来通りの先頭一致で扱われる)。
-    connectedGateId: null,
-    confidence: groundedAiConfidence(f.confidence),
-    verifiedAt: null,
-    provenance: "ai_inferred",
-  }));
+  return result.facilities
+    .filter(isValidFacility)
+    .map((f) => toStationFacility(f, groundedAiConfidence(f.confidence), null));
 }
 
 interface GeneratedBoardingPosition {

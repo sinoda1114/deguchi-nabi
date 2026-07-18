@@ -1,10 +1,7 @@
 import type { StationProviderPort } from "./StationProviderPort";
 import { FixtureStationAdapter } from "./FixtureStationAdapter";
-import {
-  generateBoardingPosition,
-  generateStationFacilities,
-  isPlainArrivalPlatformLabel,
-} from "./ai-generation";
+import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-generation";
+import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import {
   decodeHeartRailsStationId,
@@ -312,7 +309,7 @@ export class CompositeStationAdapter implements StationProviderPort {
       }
     }
 
-    const generated = await generateStationFacilities(
+    const generated = await generateStationFacilitiesDispatch(
       this.geminiApiKey,
       station.stationName,
       station.operator,

@@ -23,6 +23,34 @@ describe("isOfficialDomain", () => {
     expect(isOfficialDomain("www.tokyometro.jp")).toBe(true);
   });
 
+  test("主要私鉄・地下鉄・JR各社の公式ドメインもtrue(PR5で追加)", () => {
+    const officialHosts = [
+      "www.tokyu.co.jp",
+      "www.odakyu.jp",
+      "www.keio.co.jp",
+      "www.seiburailway.jp",
+      "www.tobu.co.jp",
+      "www.keisei.co.jp",
+      "www.keikyu.co.jp",
+      "www.sotetsu.co.jp",
+      "jr-central.co.jp",
+      "www.westjr.co.jp",
+      "www.jr-odekake.net",
+      "www.jrkyushu.co.jp",
+      "www.jrhokkaido.co.jp",
+      "www.osakametro.co.jp",
+      "www.hankyu.co.jp",
+      "www.hanshin.co.jp",
+      "www.kintetsu.co.jp",
+      "www.nankai.co.jp",
+      "www.nishitetsu.jp",
+      "www.nagoya-kotsu.jp",
+    ];
+    for (const host of officialHosts) {
+      expect(isOfficialDomain(host)).toBe(true);
+    }
+  });
+
   test(".go.jpドメインは包括的にtrue", () => {
     expect(isOfficialDomain("www.mlit.go.jp")).toBe(true);
   });
