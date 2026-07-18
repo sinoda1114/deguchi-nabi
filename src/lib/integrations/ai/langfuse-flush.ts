@@ -1,5 +1,17 @@
 import { after } from "next/server";
-import { langfuseSpanProcessor } from "@/instrumentation";
+import { langfuseSpanProcessor, __diagModuleId } from "@/instrumentation";
+
+console.log("[DIAG] langfuse-flush.ts sees instrumentation moduleId=", __diagModuleId);
+
+/**
+ * エラーオブジェクトを安全な文字列に変換してログ出力する。LangfuseのHTTP
+ * Exporterはリクエスト設定(Authorizationヘッダー=secretKeyのbase64値を含む)を
+ * エラーオブジェクトに保持することがあるため、生のエラーオブジェクトを
+ * そのままconsole.errorへ渡さない(/ai-review指摘、High)。
+ */
+function safeErrorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : "unknown error";
+}
 
 /**
  * サーバーレス環境(Vercel)ではレスポンス返却後にプロセスが凍結されうるため、
@@ -17,15 +29,19 @@ import { langfuseSpanProcessor } from "@/instrumentation";
  * 落とさないよう握りつぶす。
  */
 export function scheduleLangfuseFlush(): void {
+  console.log("[DIAG] scheduleLangfuseFlush() called");
   try {
     after(async () => {
+      console.log("[DIAG] after() callback executing, calling forceFlush()");
       try {
         await langfuseSpanProcessor.forceFlush();
-      } catch {
-        // Langfuseへの送信失敗(ネットワーク障害・認証エラー等)。
+        console.log("[DIAG] forceFlush() succeeded");
+      } catch (e) {
+        console.error("[DIAG] forceFlush() failed:", safeErrorMessage(e));
       }
     });
-  } catch {
-    // リクエストコンテキスト外。telemetryは諦めるが、呼び出し元は継続させる。
+    console.log("[DIAG] after() scheduled successfully");
+  } catch (e) {
+    console.error("[DIAG] after() threw synchronously:", safeErrorMessage(e));
   }
 }

@@ -8,6 +8,8 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
  * 送信先が無いだけで、生成自体はエラーにならない(Langfuse SDKの既定挙動)。
  */
 export const langfuseSpanProcessor = new LangfuseSpanProcessor();
+export const __diagModuleId = Math.random().toString(36).slice(2);
+console.log("[DIAG] instrumentation.ts module evaluated, moduleId=", __diagModuleId);
 
 /**
  * Next.jsのinstrumentation規約(https://nextjs.org/docs/app/guides/instrumentation)に
@@ -16,6 +18,7 @@ export const langfuseSpanProcessor = new LangfuseSpanProcessor();
  * Edge runtimeではスキップする(NEXT_RUNTIMEガード)。
  */
 export async function register(): Promise<void> {
+  console.log("[DIAG] instrumentation.register() called. NEXT_RUNTIME=", process.env.NEXT_RUNTIME);
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   const { NodeTracerProvider } = await import("@opentelemetry/sdk-trace-node");
@@ -28,4 +31,5 @@ export async function register(): Promise<void> {
   tracerProvider.register();
 
   registerTelemetry(new LangfuseVercelAiSdkIntegration());
+  console.log("[DIAG] instrumentation.register() completed, telemetry registered");
 }
