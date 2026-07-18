@@ -29,9 +29,12 @@ vi.mock("../arrival-guide-ai-generation", () => ({
 }));
 
 const searchStationsFromHeartRails = vi.fn(async (_query: string) => null as unknown);
+const fetchNearestStationsFromHeartRails = vi.fn(async (_lat: number, _lng: number) => null as unknown);
+const decodeHeartRailsStationId = vi.fn((_stationId: string) => null as unknown);
 vi.mock("../heartrails", () => ({
-  fetchNearestStationsFromHeartRails: vi.fn(async () => null),
-  decodeHeartRailsStationId: vi.fn(() => null),
+  fetchNearestStationsFromHeartRails: (lat: number, lng: number) =>
+    fetchNearestStationsFromHeartRails(lat, lng),
+  decodeHeartRailsStationId: (stationId: string) => decodeHeartRailsStationId(stationId),
   searchStationsFromHeartRails: (query: string) => searchStationsFromHeartRails(query),
 }));
 
@@ -214,6 +217,8 @@ describe("CompositeStationAdapter.searchStations", () => {
   beforeEach(() => {
     for (const key of Object.keys(storeState)) delete storeState[key];
     searchStationsFromHeartRails.mockReset();
+    fetchNearestStationsFromHeartRails.mockReset().mockResolvedValue(null);
+    decodeHeartRailsStationId.mockReset().mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -255,6 +260,106 @@ describe("CompositeStationAdapter.searchStations", () => {
     const resolved = await adapter.getStation(NAGOYA.stationId);
 
     expect(resolved?.stationName).toBe("名古屋駅");
+  });
+
+  test("nearby-stationsキャッシュが効かない場合(本番の読み取り専用ファイルシステム等)、HeartRailsへ再照会してlinesを復元する", async () => {
+    const decodedWithoutLines = {
+      stationId: NAGOYA.stationId,
+      stationName: "名古屋駅",
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: NAGOYA.latitude,
+      longitude: NAGOYA.longitude,
+    };
+    decodeHeartRailsStationId.mockReturnValue(decodedWithoutLines);
+    fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    // searchStations を経由せず、getStation単体呼び出し(cacheミス)を再現する。
+    const resolved = await adapter.getStation(NAGOYA.stationId);
+
+    expect(resolved?.lines).toEqual(["JR東海道本線"]);
+    expect(fetchNearestStationsFromHeartRails).toHaveBeenCalledWith(
+      NAGOYA.latitude,
+      NAGOYA.longitude
+    );
+  });
+
+  test("再照会でも該当駅が見つからない場合はdecode結果(lines空)にフォールバックする(クラッシュしない)", async () => {
+    const decodedWithoutLines = {
+      stationId: NAGOYA.stationId,
+      stationName: "名古屋駅",
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: NAGOYA.latitude,
+      longitude: NAGOYA.longitude,
+    };
+    decodeHeartRailsStationId.mockReturnValue(decodedWithoutLines);
+    fetchNearestStationsFromHeartRails.mockResolvedValue(null);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const resolved = await adapter.getStation(NAGOYA.stationId);
+
+    expect(resolved?.stationName).toBe("名古屋駅");
+    expect(resolved?.lines).toEqual([]);
+  });
+
+  test("stationId自体が復元不能(decodeがnull)な場合はnullを返す(再照会もしない)", async () => {
+    decodeHeartRailsStationId.mockReturnValue(null);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const resolved = await adapter.getStation("invalid_station_id");
+
+    expect(resolved).toBeNull();
+    expect(fetchNearestStationsFromHeartRails).not.toHaveBeenCalled();
+  });
+
+  test("同一stationIdへの複数回のgetStation呼び出しはHeartRailsへの再照会を1回に抑える(メモ化、区間数分の重複呼び出し防止)", async () => {
+    const decodedWithoutLines = {
+      stationId: NAGOYA.stationId,
+      stationName: "名古屋駅",
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: NAGOYA.latitude,
+      longitude: NAGOYA.longitude,
+    };
+    decodeHeartRailsStationId.mockReturnValue(decodedWithoutLines);
+    fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getStation(NAGOYA.stationId);
+    await adapter.getStation(NAGOYA.stationId);
+    const [first, second] = await Promise.all([
+      adapter.getStation(NAGOYA.stationId),
+      adapter.getStation(NAGOYA.stationId),
+    ]);
+
+    expect(fetchNearestStationsFromHeartRails).toHaveBeenCalledTimes(1);
+    expect(first?.lines).toEqual(["JR東海道本線"]);
+    expect(second?.lines).toEqual(["JR東海道本線"]);
+  });
+
+  test("異なるstationIdはそれぞれ独立して再照会する(メモ化がstationId単位であることの確認)", async () => {
+    const SHIN_YOKOHAMA = { ...NAGOYA, stationId: "hr_test_shin_yokohama", lines: ["東海道新幹線"] };
+    decodeHeartRailsStationId.mockImplementation((stationId: string) => ({
+      stationId,
+      stationName: "テスト駅",
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: NAGOYA.latitude,
+      longitude: NAGOYA.longitude,
+    }));
+    fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA, SHIN_YOKOHAMA]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getStation(NAGOYA.stationId);
+    await adapter.getStation(SHIN_YOKOHAMA.stationId);
+
+    expect(fetchNearestStationsFromHeartRails).toHaveBeenCalledTimes(2);
   });
 
   test("HeartRailsが失敗(null)してもfixtureの検索結果は返す", async () => {

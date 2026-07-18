@@ -78,6 +78,16 @@ interface NearbyStationCacheEntry {
  */
 export class CompositeStationAdapter implements StationProviderPort {
   private readonly fixture = new FixtureStationAdapter();
+  /**
+   * HeartRails再照会結果(getStationのlines復元)のインメモリメモ化。
+   * このアダプター自体がintegrations/index.tsでモジュール単位のシングルトンとして
+   * 生成されるため、1リクエスト内の区間数分だけでなく、同一プロセスが複数
+   * リクエストを処理する間(warm起動)も再利用される。stationIdごとにPromiseを
+   * 即座に格納するため、並行呼び出し(同一駅の改札取得とboarding position取得が
+   * 同時に走る場合等)でも再照会が重複しない。issue #59(本番でファイルキャッシュが
+   * 機能しない問題)の恒久対応(DB化)までの緩和策。
+   */
+  private readonly heartRailsStationCache = new Map<string, Promise<Station | null>>();
 
   constructor(private readonly geminiApiKey: string) {}
 
@@ -113,7 +123,38 @@ export class CompositeStationAdapter implements StationProviderPort {
     // キャッシュ書き込みが失敗していても(読み取り専用ファイルシステム等)、
     // HeartRails由来のstationIdには駅名・座標が自己完結的に埋め込まれているため
     // ここで復元できる(路線名等は失われるが、駅の存在自体は解決できる)。
-    return decodeHeartRailsStationId(stationId);
+    const decoded = decodeHeartRailsStationId(stationId);
+    if (!decoded) return null;
+
+    // decodeだけではlines(乗り入れ路線)が復元できず、本番(Vercel等の読み取り
+    // 専用ファイルシステム)ではnearby-stationsキャッシュが常に効かないため、
+    // 事実上毎回lines空の状態になってしまう。lines空はgenerateStationFacilities
+    // への検索プロンプトを劣化させる(「◯◯駅()の主要な改札名・出口名...」)ため、
+    // HeartRailsへ再照会してlinesを復元する(operatorはHeartRails自体が
+    // 提供しないため再照会しても常に空文字のまま。heartrails.ts参照)。
+    // 再照会が失敗しても、decodeの結果(路線情報なし)を返せば従来通り動作するため、
+    // 従来より悪化することはない。同一stationIdへの重複再照会を避けるため、
+    // Promise自体をheartRailsStationCacheに即座に格納してメモ化する
+    // (1経路の区間数分・同時呼び出し分の重複APIコールを防ぐ)。
+    const memoized = this.heartRailsStationCache.get(stationId);
+    if (memoized) return memoized;
+
+    const refetchPromise = this.refetchStationFromHeartRails(stationId, decoded);
+    this.heartRailsStationCache.set(stationId, refetchPromise);
+    return refetchPromise;
+  }
+
+  private async refetchStationFromHeartRails(
+    stationId: string,
+    decoded: Station
+  ): Promise<Station | null> {
+    const refetched = await fetchNearestStationsFromHeartRails(
+      decoded.latitude,
+      decoded.longitude
+    );
+    const matched = refetched?.find((s) => s.stationId === stationId);
+
+    return matched ?? decoded;
   }
 
   getPlatforms(stationId: string) {
