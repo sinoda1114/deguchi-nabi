@@ -1,12 +1,21 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { LangfuseSpanProcessor } from "@langfuse/otel";
+
+declare global {
+  var __langfuseSpanProcessor: LangfuseSpanProcessor | undefined;
+  var __langfuseTelemetryRegistered: boolean | undefined;
+}
 
 // new演算子で呼ばれるコンストラクタをモックする場合、vi.mockファクトリ内で
 // アロー関数を挟むと `new` できずTypeErrorになるため、vi.fn(function(){...})を
 // そのままexportする(vi.fnは通常のfunctionをラップしていればnew呼び出し可能)。
 const forceFlushMock = vi.fn();
-const langfuseSpanProcessorInstance = { forceFlush: forceFlushMock };
+// シングルトン化のバグ(モジュール二重評価時に別インスタンスが生成される)を
+// テストで検出できるよう、呼び出しごとに新しいオブジェクトを返す
+// (常に同じオブジェクトを返すモックだと、実装がglobalThisで正しく使い回して
+// いなくてもテストが偶然パスしてしまう)。
 const LangfuseSpanProcessorMock = vi.fn(function LangfuseSpanProcessor() {
-  return langfuseSpanProcessorInstance;
+  return { forceFlush: forceFlushMock };
 });
 vi.mock("@langfuse/otel", () => ({
   LangfuseSpanProcessor: LangfuseSpanProcessorMock,
@@ -33,6 +42,14 @@ vi.mock("@langfuse/vercel-ai-sdk", () => ({
 }));
 
 describe("instrumentation", () => {
+  beforeEach(() => {
+    // globalThisシングルトンはテスト間で残留するため、各テストを独立した
+    // 「プロセス起動直後」の状態から始められるようリセットする。
+    delete globalThis.__langfuseSpanProcessor;
+    globalThis.__langfuseTelemetryRegistered = undefined;
+    vi.resetModules();
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
@@ -42,17 +59,17 @@ describe("instrumentation", () => {
     vi.stubEnv("NEXT_RUNTIME", "nodejs");
     const { langfuseSpanProcessor } = await import("../instrumentation");
 
-    expect(langfuseSpanProcessor).toBe(langfuseSpanProcessorInstance);
+    expect(langfuseSpanProcessor.forceFlush).toBe(forceFlushMock);
   });
 
   test("NEXT_RUNTIME=nodejsの場合、tracerProviderを登録しAI SDKのtelemetry統合を登録する", async () => {
     vi.stubEnv("NEXT_RUNTIME", "nodejs");
-    const { register } = await import("../instrumentation");
+    const { register, langfuseSpanProcessor } = await import("../instrumentation");
 
     await register();
 
     expect(NodeTracerProviderMock).toHaveBeenCalledWith({
-      spanProcessors: [langfuseSpanProcessorInstance],
+      spanProcessors: [langfuseSpanProcessor],
     });
     expect(tracerProviderRegisterMock).toHaveBeenCalledTimes(1);
     expect(LangfuseVercelAiSdkIntegrationMock).toHaveBeenCalledTimes(1);
@@ -76,5 +93,37 @@ describe("instrumentation", () => {
     await register();
 
     expect(NodeTracerProviderMock).not.toHaveBeenCalled();
+  });
+
+  test("モジュールが複数回評価されても、langfuseSpanProcessorはglobalThis経由で同一インスタンスを再利用する(Next.js/Turbopackが同一プロセス内でinstrumentation.tsを別モジュールグラフとして二重評価する事象の実機診断で確認済み)", async () => {
+    const first = await import("../instrumentation");
+
+    vi.resetModules();
+    const second = await import("../instrumentation");
+
+    expect(second.langfuseSpanProcessor).toBe(first.langfuseSpanProcessor);
+  });
+
+  test("register()が複数回呼ばれても、tracerProviderの登録は1回だけ行う(globalThisフラグで多重登録を防ぐ)", async () => {
+    vi.stubEnv("NEXT_RUNTIME", "nodejs");
+    const { register } = await import("../instrumentation");
+
+    await register();
+    await register();
+
+    expect(NodeTracerProviderMock).toHaveBeenCalledTimes(1);
+    expect(registerTelemetryMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("モジュール再評価後のregister()も、既に登録済みなら再登録しない(globalThisフラグがモジュール境界を越えて有効であることの確認)", async () => {
+    vi.stubEnv("NEXT_RUNTIME", "nodejs");
+    const first = await import("../instrumentation");
+    await first.register();
+
+    vi.resetModules();
+    const second = await import("../instrumentation");
+    await second.register();
+
+    expect(NodeTracerProviderMock).toHaveBeenCalledTimes(1);
   });
 });

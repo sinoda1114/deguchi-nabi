@@ -1,7 +1,5 @@
 import { after } from "next/server";
-import { langfuseSpanProcessor, __diagModuleId } from "@/instrumentation";
-
-console.log("[DIAG] langfuse-flush.ts sees instrumentation moduleId=", __diagModuleId);
+import { langfuseSpanProcessor } from "@/instrumentation";
 
 /**
  * エラーオブジェクトを安全な文字列に変換してログ出力する。LangfuseのHTTP
@@ -26,22 +24,18 @@ function safeErrorMessage(e: unknown): string {
  *    (Langfuseへのネットワーク障害・認証エラー等)。放置すると未処理の
  *    Promise拒否になるため、コールバック内側でも個別にtry/catchする。
  * いずれの失敗も、telemetry送信の失敗でAI生成本体(GeminiAiSdkClient.ts)を
- * 落とさないよう握りつぶす。
+ * 落とさないよう握りつぶすが、原因調査ができるようconsole.errorには残す。
  */
 export function scheduleLangfuseFlush(): void {
-  console.log("[DIAG] scheduleLangfuseFlush() called");
   try {
     after(async () => {
-      console.log("[DIAG] after() callback executing, calling forceFlush()");
       try {
         await langfuseSpanProcessor.forceFlush();
-        console.log("[DIAG] forceFlush() succeeded");
       } catch (e) {
-        console.error("[DIAG] forceFlush() failed:", safeErrorMessage(e));
+        console.error("[langfuse-flush] forceFlush() failed:", safeErrorMessage(e));
       }
     });
-    console.log("[DIAG] after() scheduled successfully");
   } catch (e) {
-    console.error("[DIAG] after() threw synchronously:", safeErrorMessage(e));
+    console.error("[langfuse-flush] after() threw synchronously:", safeErrorMessage(e));
   }
 }
