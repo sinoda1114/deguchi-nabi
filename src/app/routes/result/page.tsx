@@ -11,8 +11,11 @@ import { RouteResultBodySkeleton } from "@/components/result/RouteResultBodySkel
 // 最大70秒)を使いうる。Suspense配下でストリーミングしていても、Functionは
 // レンダリング完了まで生き続けるため、プラットフォームのデフォルト実行時間
 // 上限では打ち切られ、ページが「途中で固まる」ように見える。
-// /api/routes/search/route.ts と同じ上限を明示的に確保する。
-export const maxDuration = 90;
+//
+// 到着駅がfixture未収録の場合、経路自体のAI生成(最大70秒)と到着駅の
+// 改札・出口AI生成(最大70秒)が直列実行され合算で最大140秒かかりうる。
+// /api/routes/search/route.ts と同じ理由・同じ上限に揃える(Issue #68)。
+export const maxDuration = 180;
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
