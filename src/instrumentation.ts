@@ -2,7 +2,7 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 
 declare global {
   var __langfuseSpanProcessor: LangfuseSpanProcessor | undefined;
-  var __langfuseTelemetryRegistered: boolean | undefined;
+  var __langfuseTelemetryRegisterPromise: Promise<void> | undefined;
 }
 
 /**
@@ -32,23 +32,32 @@ globalThis.__langfuseSpanProcessor = langfuseSpanProcessor;
  * Vercel AI SDKのtelemetry統合登録はNode専用APIに依存するため、
  * Edge runtimeではスキップする(NEXT_RUNTIMEガード)。
  *
- * globalThisフラグで多重登録を防ぐ: 上記のモジュール二重評価により
- * register()自体も複数回呼ばれうるため、tracerProvider.register()を
- * 複数回実行して不定な状態になるのを避ける。
+ * globalThisに共有Promiseを保存して多重登録を防ぐ(/ai-review指摘、High):
+ * 上記のモジュール二重評価により register() 自体もほぼ同時に複数回呼ばれうる。
+ * booleanフラグだと「チェック→await import(...)→設定」の間に他の呼び出しが
+ * 割り込みうる(JSはシングルスレッドだが、awaitのたびに制御が戻るため)。
+ * Promiseそのものをキャッシュすれば、Promiseの生成・格納自体はawaitを挟まない
+ * 同期処理のため、後続の呼び出しは必ず先行呼び出しの同じPromiseを見つけて
+ * awaitするだけになり、実際の登録処理(tracerProvider.register()等)は1回しか
+ * 走らない。
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (globalThis.__langfuseTelemetryRegistered) return;
 
-  const { NodeTracerProvider } = await import("@opentelemetry/sdk-trace-node");
-  const { registerTelemetry } = await import("ai");
-  const { LangfuseVercelAiSdkIntegration } = await import("@langfuse/vercel-ai-sdk");
+  if (!globalThis.__langfuseTelemetryRegisterPromise) {
+    globalThis.__langfuseTelemetryRegisterPromise = (async () => {
+      const { NodeTracerProvider } = await import("@opentelemetry/sdk-trace-node");
+      const { registerTelemetry } = await import("ai");
+      const { LangfuseVercelAiSdkIntegration } = await import("@langfuse/vercel-ai-sdk");
 
-  const tracerProvider = new NodeTracerProvider({
-    spanProcessors: [langfuseSpanProcessor],
-  });
-  tracerProvider.register();
+      const tracerProvider = new NodeTracerProvider({
+        spanProcessors: [langfuseSpanProcessor],
+      });
+      tracerProvider.register();
 
-  registerTelemetry(new LangfuseVercelAiSdkIntegration());
-  globalThis.__langfuseTelemetryRegistered = true;
+      registerTelemetry(new LangfuseVercelAiSdkIntegration());
+    })();
+  }
+
+  await globalThis.__langfuseTelemetryRegisterPromise;
 }

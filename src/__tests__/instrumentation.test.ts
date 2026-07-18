@@ -3,7 +3,7 @@ import type { LangfuseSpanProcessor } from "@langfuse/otel";
 
 declare global {
   var __langfuseSpanProcessor: LangfuseSpanProcessor | undefined;
-  var __langfuseTelemetryRegistered: boolean | undefined;
+  var __langfuseTelemetryRegisterPromise: Promise<void> | undefined;
 }
 
 // new演算子で呼ばれるコンストラクタをモックする場合、vi.mockファクトリ内で
@@ -46,7 +46,7 @@ describe("instrumentation", () => {
     // globalThisシングルトンはテスト間で残留するため、各テストを独立した
     // 「プロセス起動直後」の状態から始められるようリセットする。
     delete globalThis.__langfuseSpanProcessor;
-    globalThis.__langfuseTelemetryRegistered = undefined;
+    globalThis.__langfuseTelemetryRegisterPromise = undefined;
     vi.resetModules();
   });
 
@@ -125,5 +125,15 @@ describe("instrumentation", () => {
     await second.register();
 
     expect(NodeTracerProviderMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("register()を並行呼び出ししても登録は1回だけ行う(/ai-review指摘、High: チェックと設定の間にawaitを挟むbooleanフラグでは、ほぼ同時の呼び出しが両方フラグ未設定のまますり抜けうる。まさにこのバグが対象とする「同一プロセス内でinstrumentation.tsが複数モジュールグラフからほぼ同時に評価される」状況を再現する)", async () => {
+    vi.stubEnv("NEXT_RUNTIME", "nodejs");
+    const { register } = await import("../instrumentation");
+
+    await Promise.all([register(), register(), register()]);
+
+    expect(NodeTracerProviderMock).toHaveBeenCalledTimes(1);
+    expect(registerTelemetryMock).toHaveBeenCalledTimes(1);
   });
 });
