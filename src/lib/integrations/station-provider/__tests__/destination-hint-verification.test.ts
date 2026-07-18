@@ -18,17 +18,19 @@ import type { StationFacility } from "@/lib/domain/station";
  *   RUN_HINT_VERIFICATION=1 GEMINI_API_KEY=xxx npx vitest run \
  *     src/lib/integrations/station-provider/__tests__/destination-hint-verification.test.ts
  *
- * 実API課金が発生する(4ペア×2条件×検索+抽出の2段呼び出し=16リクエスト/回)。
+ * 実API課金が発生する(6ペア×2条件×検索+抽出の2段呼び出し=24リクエスト/回。
+ * N=4での初回実行で合計スコアはhint有り≧hint無しをクリアしたが、確度を
+ * 上げるためN=6に拡張した)。
  * Gemini出力は非決定的なため、境界的な結果になった場合は2回実行して
  * 安定側を採用する運用を推奨する。
  *
  * 全ペアを1つのtest内で直列実行するため、タイムアウトは
- * 4ペア×2条件×最大70秒(検索55秒+抽出15秒)=最大560秒を
+ * 6ペア×2条件×最大70秒(検索55秒+抽出15秒)=最大840秒を
  * 余裕を持って超える値にする必要がある(1ペア分の想定で300秒にしていたのは
  * 実装ミス。実行前のレビューで発覚)。
  */
 
-const VERIFICATION_TIMEOUT_MS = 900_000;
+const VERIFICATION_TIMEOUT_MS = 1_200_000;
 
 interface VerificationPair {
   label: string;
@@ -66,6 +68,20 @@ const VERIFICATION_PAIRS: VerificationPair[] = [
     operator: "東京メトロ",
     lines: ["東京メトロ銀座線", "東京メトロ千代田線", "東京メトロ半蔵門線"],
     destinationHint: "表参道ヒルズ",
+  },
+  {
+    label: "池袋駅(JR東日本)/ サンシャインシティ",
+    stationName: "池袋駅",
+    operator: "JR東日本",
+    lines: ["JR山手線", "JR埼京線", "JR湘南新宿ライン"],
+    destinationHint: "サンシャインシティ",
+  },
+  {
+    label: "秋葉原駅(JR東日本)/ ヨドバシAkiba",
+    stationName: "秋葉原駅",
+    operator: "JR東日本",
+    lines: ["JR山手線", "JR京浜東北線", "JR総武線"],
+    destinationHint: "ヨドバシAkiba",
   },
 ];
 
