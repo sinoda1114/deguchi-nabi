@@ -71,6 +71,15 @@ describe("deriveSourceConfidence", () => {
     expect(result.level).toBe("medium");
   });
 
+  test("同一ドメインの重複ページは独立した複数ソースとして数えない(surveyed指定でもmedium止まり)", () => {
+    const sources = [
+      official({ url: "https://www.jreast.co.jp/estation/stations/123.html" }),
+      official({ url: "https://www.jreast.co.jp/estation/stations/123/exit.html" }),
+    ];
+    const result = deriveSourceConfidence(sources, "surveyed");
+    expect(result.level).toBe("medium");
+  });
+
   test("公式ドメインなしで有効な低スコアソースのみの場合はlowかそれ以下になる", () => {
     const neutral = scoreSearchSource(
       { url: "https://example.com/station-info", title: "駅の出口案内について", publishedAt: null },

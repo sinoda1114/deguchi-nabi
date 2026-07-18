@@ -84,6 +84,16 @@ describe("scoreSearchSource", () => {
     expect(withNull.reasons.some((r) => r.includes("発行"))).toBe(false);
   });
 
+  test("発行日が未来の場合は新しさによる加点をしない(不正データの可能性があるため)", () => {
+    const future = scoreSearchSource(
+      candidate({ publishedAt: "2030-01-01T00:00:00Z" }),
+      now
+    );
+    expect(future.reasons.some((r) => r.includes("発行"))).toBe(false);
+    const withNull = scoreSearchSource(candidate({ publishedAt: null }), now);
+    expect(future.score).toBe(withNull.score);
+  });
+
   test("まとめサイト・個人ブログらしきドメインは減点される", () => {
     const blog = scoreSearchSource(
       candidate({ url: "https://station-guide.hatenablog.com/entry/1" }),

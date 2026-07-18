@@ -6,7 +6,7 @@ import {
   type ConfidenceLevel,
   type Provenance,
 } from "@/lib/domain/confidence";
-import type { ScoredSearchSource } from "@/lib/services/source-scoring";
+import { extractHostname, type ScoredSearchSource } from "@/lib/services/source-scoring";
 
 /**
  * source-scoring.ts でスコア済みの検索結果から、既存の Confidence 型に沿った
@@ -23,30 +23,49 @@ import type { ScoredSearchSource } from "@/lib/services/source-scoring";
 /** スコアが0以下の候補は「有効なソース」とみなさない(低品質判定含む)。 */
 const MIN_VALID_SCORE = 0;
 
-/** 独立した公式ソースが2件以上あれば「矛盾なく裏付けられた」とみなす。 */
+/** 独立した公式ドメインが2件以上あれば「矛盾なく裏付けられた」とみなす。 */
 const MULTI_SOURCE_THRESHOLD = 2;
 
-function determineRawLevel(officialSourceCount: number): ConfidenceLevel {
-  if (officialSourceCount >= MULTI_SOURCE_THRESHOLD) return "high";
-  if (officialSourceCount === 1) return "medium";
+/**
+ * 公式ソースのURLから一意なホスト名の集合を数える。同一ドメインの重複ページ
+ * (例: 同じ駅公式サイト内の別ページ2件)を、独立した2ソースとして誤って
+ * 「矛盾なく裏付けられた」扱いしないための独立性判定。
+ */
+function countUniqueOfficialDomains(officialSources: ScoredSearchSource[]): number {
+  const hostnames = new Set(
+    officialSources
+      .map((source) => extractHostname(source.candidate.url))
+      .filter((hostname) => hostname !== "")
+  );
+  return hostnames.size;
+}
+
+function determineRawLevel(uniqueOfficialDomainCount: number): ConfidenceLevel {
+  if (uniqueOfficialDomainCount >= MULTI_SOURCE_THRESHOLD) return "high";
+  if (uniqueOfficialDomainCount === 1) return "medium";
   return "low";
 }
 
 function buildReasons(
   validSources: ScoredSearchSource[],
   officialSources: ScoredSearchSource[],
+  uniqueOfficialDomainCount: number,
   rawLevel: ConfidenceLevel,
   cappedLevel: ConfidenceLevel,
   provenance: Provenance
 ): string[] {
   const reasons: string[] = [];
 
-  if (officialSources.length >= MULTI_SOURCE_THRESHOLD) {
+  if (uniqueOfficialDomainCount >= MULTI_SOURCE_THRESHOLD) {
     reasons.push(
-      `公式ドメインの情報源が${officialSources.length}件見つかり、複数の独立ソースで裏付けられている`
+      `独立した公式ドメインが${uniqueOfficialDomainCount}件見つかり、複数の独立ソースで裏付けられている`
     );
-  } else if (officialSources.length === 1) {
-    reasons.push("公式ドメインの情報源が1件見つかった(裏付けは単一ソースのみ)");
+  } else if (uniqueOfficialDomainCount === 1) {
+    reasons.push(
+      officialSources.length > 1
+        ? "公式ドメインの情報源はあるが同一ドメイン内のみで、独立した複数ソースでの裏付けではない"
+        : "公式ドメインの情報源が1件見つかった(裏付けは単一ソースのみ)"
+    );
   } else {
     reasons.push(`公式ドメインの情報源はなく、有効な情報源${validSources.length}件のみ`);
   }
@@ -80,12 +99,20 @@ export function deriveSourceConfidence(
   }
 
   const officialSources = validSources.filter((source) => source.isOfficialDomain);
-  const rawLevel = determineRawLevel(officialSources.length);
+  const uniqueOfficialDomainCount = countUniqueOfficialDomains(officialSources);
+  const rawLevel = determineRawLevel(uniqueOfficialDomainCount);
   const cappedLevel = capConfidenceForProvenance(rawLevel, provenance);
 
   return {
     level: cappedLevel,
-    reasons: buildReasons(validSources, officialSources, rawLevel, cappedLevel, provenance),
+    reasons: buildReasons(
+      validSources,
+      officialSources,
+      uniqueOfficialDomainCount,
+      rawLevel,
+      cappedLevel,
+      provenance
+    ),
     verifiedAt: null,
     expiresAt: null,
     sourceCount: validSources.length,

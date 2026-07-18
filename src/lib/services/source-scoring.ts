@@ -81,6 +81,15 @@ function safeParseUrl(url: string): URL | null {
 }
 
 /**
+ * URLからホスト名を取り出す。パース失敗時は空文字。
+ * source-confidence.ts が「独立したドメインの件数」を数える際に使う
+ * (同一ドメインの重複ページを別々の独立ソースとして数えないため)。
+ */
+export function extractHostname(url: string): string {
+  return safeParseUrl(url)?.hostname ?? "";
+}
+
+/**
  * ホスト名が公式ドメインパターンに一致するか判定する。
  * URLパース失敗時は呼び出し側で false 扱いになるよう、hostname文字列のみを受け取る。
  */
@@ -106,8 +115,11 @@ function isRecent(publishedAt: string | null, now: Date): boolean {
   if (publishedAt === null) return false;
   const publishedDate = new Date(publishedAt);
   if (Number.isNaN(publishedDate.getTime())) return false;
+  const diffMs = now.getTime() - publishedDate.getTime();
+  // 未来日は不正データの可能性があるため「新しい」とみなさない。
+  if (diffMs < 0) return false;
   const thresholdMs = RECENT_THRESHOLD_YEARS * 365 * 24 * 60 * 60 * 1000;
-  return now.getTime() - publishedDate.getTime() <= thresholdMs;
+  return diffMs <= thresholdMs;
 }
 
 /**
