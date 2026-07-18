@@ -110,14 +110,27 @@ async function fetchAndTransformStations(url: string): Promise<Station[] | null>
     const res = await fetch(url, {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(`[DIAG3-heartrails] non-ok response: status=${res.status}`);
+      return null;
+    }
 
     const data = (await res.json()) as HeartRailsResponse;
     const entries = data.response?.station;
-    if (!Array.isArray(entries)) return null;
+    if (!Array.isArray(entries)) {
+      console.error(
+        `[DIAG3-heartrails] entries not array: ${JSON.stringify(data).slice(0, 300)}`
+      );
+      return null;
+    }
 
     const valid = entries.filter(isValidEntry);
-    if (valid.length === 0) return null;
+    if (valid.length === 0) {
+      console.error(
+        `[DIAG3-heartrails] no valid entries, rawEntriesCount=${entries.length}, sample=${JSON.stringify(entries[0] ?? null)}`
+      );
+      return null;
+    }
 
     const grouped = new Map<
       string,
@@ -163,7 +176,8 @@ async function fetchAndTransformStations(url: string): Promise<Station[] | null>
     }
 
     return Array.from(merged.values());
-  } catch {
+  } catch (e) {
+    console.error(`[DIAG3-heartrails] fetch threw: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }
