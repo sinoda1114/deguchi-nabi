@@ -35,6 +35,17 @@ function googleProvider(apiKey: string) {
  * `JSON.parse(text) as T` と同じく、呼び出し元がスキーマとTの整合に責任を持つ設計を踏襲)。
  */
 function toObjectSchema(responseSchema: object) {
+  // Validate that responseSchema has safe structure
+  if (!responseSchema || typeof responseSchema !== 'object' || Array.isArray(responseSchema)) {
+    throw new TypeError('Invalid schema: must be a plain object');
+  }
+  
+  // Validate required JSON Schema properties
+  const schema = responseSchema as Record<string, unknown>;
+  if (!schema.type || typeof schema.type !== 'string') {
+    throw new TypeError('Invalid schema: missing or invalid "type" property');
+  }
+  
   return jsonSchema<unknown>(responseSchema as Parameters<typeof jsonSchema<unknown>>[0]);
 }
 
