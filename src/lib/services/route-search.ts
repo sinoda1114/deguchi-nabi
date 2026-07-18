@@ -429,11 +429,22 @@ export async function buildTransferAndExitSegments(
   deps: Pick<RouteSearchDeps, "stationProvider">
 ): Promise<FacilitiesSearchResult> {
   // 目的地がplace由来(施設等)の場合、施設名を検索ヒントとしてgetFacilitiesへ
-  // 渡す。目的地の公式サイト・グルメサイト等のアクセス情報ページに最寄り
-  // 改札・出口が明記されていることが多く、駅単体の検索より精度が大きく
-  // 向上することを検証実験で確認した。目的地が駅そのもの(station由来)の
-  // 場合はヒント不要(駅全体の主要な改札・出口で十分)。
-  const destinationHint = input.destinationCoordinates ? input.destinationLabel : null;
+  // 渡す設計だったが、本番同一構成でのE2E検証(西谷駅→kawara CAFE&DINING横浜店等)で
+  // hint有りの方が駅全体検索より改札・出口の確認精度が悪化する(すべて
+  // 「確認できません」になる)ことを確認した。絞り込み型の指示文言("最も近い
+  // 改札・出口を優先して調べて")が、既存の保守的ルール("確認できない設備は
+  // 創作しない")と相互作用し、目的地との近さを確認できない場合に駅全体の
+  // 回答まで抑制してしまうのが原因と推定している(council議論)。
+  //
+  // 検証ゲート(destination-hint-verification.test.ts)で「hint有り≧hint無し」を
+  // 確認できるまで、DESTINATION_HINT_ENABLED環境変数でヒント注入自体を
+  // デフォルトOFFにして止血する。フラグOFF時はgetFacilities呼び出し自体が
+  // destinationHint=nullになり、CompositeStationAdapterのキャッシュ照合・
+  // レートリミッタも含めてこの機能導入前と完全に同一の挙動になる。
+  const destinationHint =
+    process.env.DESTINATION_HINT_ENABLED === "1" && input.destinationCoordinates
+      ? input.destinationLabel
+      : null;
   const arrivalFacilities = await deps.stationProvider.getFacilities(
     input.destinationStationId,
     destinationHint

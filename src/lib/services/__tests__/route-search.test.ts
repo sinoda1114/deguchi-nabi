@@ -605,7 +605,57 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.reason).toContain("バリアフリー");
   });
 
-  test("目的地がplace由来(destinationCoordinatesあり)の場合、getFacilitiesにdestinationLabelをヒントとして渡す(検証実験で目的地名を検索クエリに含めると精度が大きく向上することを確認済み)", async () => {
+  test("DESTINATION_HINT_ENABLED=1かつ目的地がplace由来(destinationCoordinatesあり)の場合、getFacilitiesにdestinationLabelをヒントとして渡す(検証ゲート通過まではフラグOFFが既定。フラグON時の配線自体は維持する)", async () => {
+    vi.stubEnv("DESTINATION_HINT_ENABLED", "1");
+    try {
+      const getFacilitiesSpy = vi.fn(async () => FACILITIES_WITH_ELEVATOR);
+      const stationProvider: StationProviderPort = {
+        ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+        getFacilities: getFacilitiesSpy,
+      };
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider,
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationLabel: "テストカフェ",
+        destinationCoordinates: { lat: 35.1, lng: 136.2 },
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      await buildTransferAndExitSegments(candidate, input, deps);
+
+      expect(getFacilitiesSpy).toHaveBeenCalledWith("destination", "テストカフェ");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("目的地が駅そのもの(destinationCoordinatesなし)の場合、getFacilitiesにヒントを渡さない", async () => {
+    const getFacilitiesSpy = vi.fn(async () => FACILITIES_WITH_ELEVATOR);
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getFacilities: getFacilitiesSpy,
+    };
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider,
+    };
+    const input = { ...BASE_INPUT, mode: "easy" as const };
+    const candidate = await resolveRouteCandidate(input, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    await buildTransferAndExitSegments(candidate, input, deps);
+
+    expect(getFacilitiesSpy).toHaveBeenCalledWith("destination", null);
+  });
+
+  test("DESTINATION_HINT_ENABLED未設定(既定OFF)の場合、目的地がplace由来でもgetFacilitiesにヒントを渡さない(E2E検証でhint有りが駅全体検索より劣化することを確認したため、検証ゲート通過までデフォルトOFFで止血する。/council議論参照)", async () => {
     const getFacilitiesSpy = vi.fn(async () => FACILITIES_WITH_ELEVATOR);
     const stationProvider: StationProviderPort = {
       ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
@@ -621,26 +671,6 @@ describe("buildTransferAndExitSegments", () => {
       destinationLabel: "テストカフェ",
       destinationCoordinates: { lat: 35.1, lng: 136.2 },
     };
-    const candidate = await resolveRouteCandidate(input, deps);
-    expect(candidate.ok).toBe(true);
-    if (!candidate.ok) return;
-
-    await buildTransferAndExitSegments(candidate, input, deps);
-
-    expect(getFacilitiesSpy).toHaveBeenCalledWith("destination", "テストカフェ");
-  });
-
-  test("目的地が駅そのもの(destinationCoordinatesなし)の場合、getFacilitiesにヒントを渡さない", async () => {
-    const getFacilitiesSpy = vi.fn(async () => FACILITIES_WITH_ELEVATOR);
-    const stationProvider: StationProviderPort = {
-      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
-      getFacilities: getFacilitiesSpy,
-    };
-    const deps: RouteSearchDeps = {
-      routeProvider: buildRouteProvider(true),
-      stationProvider,
-    };
-    const input = { ...BASE_INPUT, mode: "easy" as const };
     const candidate = await resolveRouteCandidate(input, deps);
     expect(candidate.ok).toBe(true);
     if (!candidate.ok) return;
