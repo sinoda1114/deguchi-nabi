@@ -667,6 +667,86 @@ describe("CompositeStationAdapter.getFacilities", () => {
     await adapter.getFacilities("hr_test");
     expect(generateStationFacilities).not.toHaveBeenCalled();
   });
+
+  test("destinationHint付きの新規生成が時間窓内で上限に達すると、以降はdestinationHintを無視して駅全体検索にフォールバックする(/security-review指摘: LRU上限は保存件数のみを制限し呼び出し頻度は制限していなかったため、簡易レート制限を追加)", async () => {
+    vi.useFakeTimers();
+    try {
+      generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+      searchStationsFromHeartRails.mockResolvedValue([
+        {
+          stationId: "hr_test",
+          stationName: "テスト駅",
+          operator: "テスト鉄道",
+          lines: ["テスト線"],
+          prefecture: "テスト県",
+          latitude: 35.1,
+          longitude: 136.2,
+        },
+      ]);
+      const adapter = new CompositeStationAdapter("test-key");
+      await adapter.searchStations("テスト");
+
+      // 上限(10回)までは通常通りdestinationHintが使われる。
+      for (let i = 0; i < 10; i++) {
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+      expect(generateStationFacilities).toHaveBeenCalledTimes(10);
+
+      // 11回目はレート制限に達しているため、destinationHintが無視され
+      // (null扱いで)駅全体検索にフォールバックする。
+      generateStationFacilities.mockClear();
+      await adapter.getFacilities("hr_test", "施設11");
+      expect(generateStationFacilities).toHaveBeenCalledWith(
+        "test-key",
+        "テスト駅",
+        "テスト鉄道",
+        ["テスト線"],
+        { lat: 35.1, lng: 136.2 },
+        null
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("レート制限の時間窓が経過すれば、再度destinationHintが使えるようになる", async () => {
+    vi.useFakeTimers();
+    try {
+      generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+      searchStationsFromHeartRails.mockResolvedValue([
+        {
+          stationId: "hr_test",
+          stationName: "テスト駅",
+          operator: "テスト鉄道",
+          lines: ["テスト線"],
+          prefecture: "テスト県",
+          latitude: 35.1,
+          longitude: 136.2,
+        },
+      ]);
+      const adapter = new CompositeStationAdapter("test-key");
+      await adapter.searchStations("テスト");
+
+      for (let i = 0; i < 10; i++) {
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+
+      vi.advanceTimersByTime(60_001);
+
+      generateStationFacilities.mockClear();
+      await adapter.getFacilities("hr_test", "施設new");
+      expect(generateStationFacilities).toHaveBeenCalledWith(
+        "test-key",
+        "テスト駅",
+        "テスト鉄道",
+        ["テスト線"],
+        { lat: 35.1, lng: 136.2 },
+        "施設new"
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
