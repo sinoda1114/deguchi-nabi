@@ -267,8 +267,19 @@ export class CompositeStationAdapter implements StationProviderPort {
     // (異なる実在施設名を巡回指定されれば毎回キャッシュミス→新規AI呼び出しが
     // 発生しうる。/security-review指摘)。直近の時間窓内で新規生成回数が
     // 上限に達している場合、destinationHintを無視して駅全体検索(従来の
-    // 挙動)にフォールバックすることで、時間あたりの課金対象呼び出し回数
-    // 自体にも上限をかける。
+    // 挙動)にフォールバックすることで、destinationHint付きの(=より高コストな)
+    // 生成が再開されるタイミングを遅らせる。フォールバック後のnull生成も
+    // カウント対象に含める(下記rawDestinationHint判定)のは、そうしないと
+    // destinationHint付きで呼び続けるだけでレート制限カウンタが時間経過とともに
+    // 空になり、destinationHint付き生成がすぐ復活してしまうため(/ai-review指摘、High)。
+    //
+    // 正直な限界: このレートリミッタはdestinationHint付き生成の頻度しか
+    // 制限しない。フォールバック後の駅全体検索(destinationHint=null)自体は
+    // 依然として毎回呼び出される(ここでは止めていない)。本番ではIssue #59
+    // (ファイルキャッシュが読み取り専用ファイルシステムで機能しない)が
+    // 未解決のため、nullキャッシュも定着せず、フォールバック生成の総呼び出し
+    // 回数には現状上限がない。IP/セッション単位の真のレート制限機構は
+    // 別途Issue化して追跡する。
     const destinationHint =
       rawDestinationHint !== null && this.isDestinationHintRateLimited()
         ? null
@@ -281,8 +292,24 @@ export class CompositeStationAdapter implements StationProviderPort {
       if (fallbackCached) return fallbackCached.facilities;
     }
 
-    if (destinationHint !== null) {
+    // rawDestinationHintがnull以外なら(フォールバックでnullに正規化された
+    // 場合を含め)必ずカウントする。フォールバック生成を対象外にすると、
+    // destinationHint付きで呼び続けるだけでレート制限カウンタがすぐ空になり、
+    // destinationHint付き生成がすぐ復活してしまう(/ai-review指摘、High)。
+    // 配列サイズは直近MAX件だけ保持すれば判定に十分なため、上限を超えた分は
+    // 古い方から捨てる(高頻度フラッド時に配列が無制限に肥大化するのを防ぐ。
+    // /ai-review指摘、Medium)。
+    if (rawDestinationHint !== null) {
       this.recentDestinationHintGenerationTimestamps.push(Date.now());
+      if (
+        this.recentDestinationHintGenerationTimestamps.length >
+        MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
+      ) {
+        this.recentDestinationHintGenerationTimestamps =
+          this.recentDestinationHintGenerationTimestamps.slice(
+            -MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
+          );
+      }
     }
 
     const generated = await generateStationFacilities(

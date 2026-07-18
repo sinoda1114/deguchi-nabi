@@ -709,6 +709,59 @@ describe("CompositeStationAdapter.getFacilities", () => {
     }
   });
 
+  test("フォールバック生成(destinationHintがnullに正規化された呼び出し)もレート制限のカウントに含まれる(/ai-review指摘、High: フォールバック生成をカウントしないと、レート制限到達後もdestinationHint付きで呼び続けるだけで無制限に新規AI呼び出しを発生させ続けられる。本番はIssue #59によりキャッシュ書き込みが常に失敗するため、フォールバック後のnullキャッシュも定着せずこの穴が現実的に顕在化する。ここではキャッシュを都度クリアしてその状況を模擬する)", async () => {
+    vi.useFakeTimers();
+    try {
+      generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+      searchStationsFromHeartRails.mockResolvedValue([
+        {
+          stationId: "hr_test",
+          stationName: "テスト駅",
+          operator: "テスト鉄道",
+          lines: ["テスト線"],
+          prefecture: "テスト県",
+          latitude: 35.1,
+          longitude: 136.2,
+        },
+      ]);
+      const adapter = new CompositeStationAdapter("test-key");
+      await adapter.searchStations("テスト");
+
+      // t=0: 上限(10回)まで消費。
+      for (let i = 0; i < 10; i++) {
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+
+      // t=30秒: レート制限中に、異なる施設名で10回フォールバックさせる
+      // (Issue #59模擬のため、facilitiesキャッシュのみ都度クリアして毎回
+      // 新規生成にする。NEARBY_STATION_CACHEまで消すとgetStation自体が
+      // 解決できなくなり生成に到達しないため、そちらは残す)。
+      vi.advanceTimersByTime(30_000);
+      for (let i = 10; i < 20; i++) {
+        delete storeState["ai-station-facilities"];
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+
+      // t=65秒: 最初の10回(t=0)は時間窓(60秒)外になるが、t=30の10回は
+      // まだ時間窓内(35秒経過)。フォールバック生成がカウントされていれば、
+      // まだレート制限中のままのはず。
+      vi.advanceTimersByTime(35_000);
+      delete storeState["ai-station-facilities"];
+      generateStationFacilities.mockClear();
+      await adapter.getFacilities("hr_test", "施設new");
+      expect(generateStationFacilities).toHaveBeenCalledWith(
+        "test-key",
+        "テスト駅",
+        "テスト鉄道",
+        ["テスト線"],
+        { lat: 35.1, lng: 136.2 },
+        null
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("レート制限の時間窓が経過すれば、再度destinationHintが使えるようになる", async () => {
     vi.useFakeTimers();
     try {
