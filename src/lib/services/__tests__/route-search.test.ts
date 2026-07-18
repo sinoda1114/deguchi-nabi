@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   searchRouteGuide,
   resolveRouteCandidate,
@@ -603,6 +603,51 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.reason).toContain("バリアフリー");
+  });
+
+  test("目的地がplace由来(destinationCoordinatesあり)の場合、getFacilitiesにdestinationLabelをヒントとして渡す(検証実験で目的地名を検索クエリに含めると精度が大きく向上することを確認済み)", async () => {
+    const getFacilitiesSpy = vi.fn(async () => FACILITIES_WITH_ELEVATOR);
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getFacilities: getFacilitiesSpy,
+    };
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider,
+    };
+    const input = {
+      ...BASE_INPUT,
+      mode: "easy" as const,
+      destinationLabel: "テストカフェ",
+      destinationCoordinates: { lat: 35.1, lng: 136.2 },
+    };
+    const candidate = await resolveRouteCandidate(input, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    await buildTransferAndExitSegments(candidate, input, deps);
+
+    expect(getFacilitiesSpy).toHaveBeenCalledWith("destination", "テストカフェ");
+  });
+
+  test("目的地が駅そのもの(destinationCoordinatesなし)の場合、getFacilitiesにヒントを渡さない", async () => {
+    const getFacilitiesSpy = vi.fn(async () => FACILITIES_WITH_ELEVATOR);
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getFacilities: getFacilitiesSpy,
+    };
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider,
+    };
+    const input = { ...BASE_INPUT, mode: "easy" as const };
+    const candidate = await resolveRouteCandidate(input, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    await buildTransferAndExitSegments(candidate, input, deps);
+
+    expect(getFacilitiesSpy).toHaveBeenCalledWith("destination", null);
   });
 
   test("easy モードではエスカレーターがあればエレベーターより優先して transfer の facilities に使う", async () => {

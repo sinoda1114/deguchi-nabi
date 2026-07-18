@@ -481,7 +481,8 @@ describe("CompositeStationAdapter.getFacilities", () => {
       "テスト駅",
       "テスト鉄道",
       ["テスト線"],
-      { lat: 35.1, lng: 136.2 }
+      { lat: 35.1, lng: 136.2 },
+      null
     );
   });
 
@@ -512,6 +513,292 @@ describe("CompositeStationAdapter.getFacilities", () => {
     const result = await adapter.getFacilities("st_unknown_no_station");
     expect(result).toEqual([]);
     expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+
+  test("destinationHint(目的地施設名)を渡すとgenerateStationFacilitiesへそのまま伝播する", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test", "テストカフェ");
+
+    expect(generateStationFacilities).toHaveBeenCalledWith(
+      "test-key",
+      "テスト駅",
+      "テスト鉄道",
+      ["テスト線"],
+      { lat: 35.1, lng: 136.2 },
+      "テストカフェ"
+    );
+  });
+
+  test("destinationHintが異なれば同じ駅でも別々にキャッシュされ、それぞれAIを1回ずつ呼ぶ(目的地ごとに改札・出口の推奨が変わりうるため)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test", "テストカフェA");
+    await adapter.getFacilities("hr_test", "テストカフェB");
+
+    expect(generateStationFacilities).toHaveBeenCalledTimes(2);
+  });
+
+  test("同じdestinationHintであれば再度AIを呼ばずキャッシュを使う", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test", "テストカフェ");
+    await adapter.getFacilities("hr_test", "テストカフェ");
+
+    expect(generateStationFacilities).toHaveBeenCalledTimes(1);
+  });
+
+  test("destinationHint無し(駅目的地)のキャッシュと、destinationHint有り(施設目的地)のキャッシュは別物として扱われる", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test");
+    await adapter.getFacilities("hr_test", "テストカフェ");
+
+    expect(generateStationFacilities).toHaveBeenCalledTimes(2);
+  });
+
+  test("同一駅へのdestinationHint付きキャッシュエントリ数には上限があり、古いものから削除される(/ai-review指摘、High: 未認証・レート制限なしのエンドポイントから同一駅に異なる実在施設名を指定し続けることでキャッシュを無制限に肥大化させ、課金対象のAI呼び出しを繰り返し誘発できてしまう懸念への緩和策)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    // 上限(5件)を超える6件の異なるdestinationHintで新規生成させる。
+    for (let i = 0; i < 6; i++) {
+      await adapter.getFacilities("hr_test", `テスト施設${i}`);
+    }
+
+    // 上限を超えた分、最も古い(テスト施設0)は削除されているため、
+    // 再度同じdestinationHintで問い合わせると再度AIが呼ばれる(キャッシュされていない)。
+    generateStationFacilities.mockClear();
+    await adapter.getFacilities("hr_test", "テスト施設0");
+    expect(generateStationFacilities).toHaveBeenCalledTimes(1);
+
+    // 直近の施設(テスト施設5)はまだキャッシュに残っているため、AIは呼ばれない。
+    generateStationFacilities.mockClear();
+    await adapter.getFacilities("hr_test", "テスト施設5");
+    expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+
+  test("destinationHint無し(駅目的地)のキャッシュはdestinationHint付きエントリ数の上限の対象外", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test");
+    for (let i = 0; i < 6; i++) {
+      await adapter.getFacilities("hr_test", `テスト施設${i}`);
+    }
+
+    generateStationFacilities.mockClear();
+    await adapter.getFacilities("hr_test");
+    expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+
+  test("destinationHint付きの新規生成が時間窓内で上限に達すると、以降はdestinationHintを無視して駅全体検索にフォールバックする(/security-review指摘: LRU上限は保存件数のみを制限し呼び出し頻度は制限していなかったため、簡易レート制限を追加)", async () => {
+    vi.useFakeTimers();
+    try {
+      generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+      searchStationsFromHeartRails.mockResolvedValue([
+        {
+          stationId: "hr_test",
+          stationName: "テスト駅",
+          operator: "テスト鉄道",
+          lines: ["テスト線"],
+          prefecture: "テスト県",
+          latitude: 35.1,
+          longitude: 136.2,
+        },
+      ]);
+      const adapter = new CompositeStationAdapter("test-key");
+      await adapter.searchStations("テスト");
+
+      // 上限(10回)までは通常通りdestinationHintが使われる。
+      for (let i = 0; i < 10; i++) {
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+      expect(generateStationFacilities).toHaveBeenCalledTimes(10);
+
+      // 11回目はレート制限に達しているため、destinationHintが無視され
+      // (null扱いで)駅全体検索にフォールバックする。
+      generateStationFacilities.mockClear();
+      await adapter.getFacilities("hr_test", "施設11");
+      expect(generateStationFacilities).toHaveBeenCalledWith(
+        "test-key",
+        "テスト駅",
+        "テスト鉄道",
+        ["テスト線"],
+        { lat: 35.1, lng: 136.2 },
+        null
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("フォールバック生成(destinationHintがnullに正規化された呼び出し)もレート制限のカウントに含まれる(/ai-review指摘、High: フォールバック生成をカウントしないと、レート制限到達後もdestinationHint付きで呼び続けるだけで無制限に新規AI呼び出しを発生させ続けられる。本番はIssue #59によりキャッシュ書き込みが常に失敗するため、フォールバック後のnullキャッシュも定着せずこの穴が現実的に顕在化する。ここではキャッシュを都度クリアしてその状況を模擬する)", async () => {
+    vi.useFakeTimers();
+    try {
+      generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+      searchStationsFromHeartRails.mockResolvedValue([
+        {
+          stationId: "hr_test",
+          stationName: "テスト駅",
+          operator: "テスト鉄道",
+          lines: ["テスト線"],
+          prefecture: "テスト県",
+          latitude: 35.1,
+          longitude: 136.2,
+        },
+      ]);
+      const adapter = new CompositeStationAdapter("test-key");
+      await adapter.searchStations("テスト");
+
+      // t=0: 上限(10回)まで消費。
+      for (let i = 0; i < 10; i++) {
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+
+      // t=30秒: レート制限中に、異なる施設名で10回フォールバックさせる
+      // (Issue #59模擬のため、facilitiesキャッシュのみ都度クリアして毎回
+      // 新規生成にする。NEARBY_STATION_CACHEまで消すとgetStation自体が
+      // 解決できなくなり生成に到達しないため、そちらは残す)。
+      vi.advanceTimersByTime(30_000);
+      for (let i = 10; i < 20; i++) {
+        delete storeState["ai-station-facilities"];
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+
+      // t=65秒: 最初の10回(t=0)は時間窓(60秒)外になるが、t=30の10回は
+      // まだ時間窓内(35秒経過)。フォールバック生成がカウントされていれば、
+      // まだレート制限中のままのはず。
+      vi.advanceTimersByTime(35_000);
+      delete storeState["ai-station-facilities"];
+      generateStationFacilities.mockClear();
+      await adapter.getFacilities("hr_test", "施設new");
+      expect(generateStationFacilities).toHaveBeenCalledWith(
+        "test-key",
+        "テスト駅",
+        "テスト鉄道",
+        ["テスト線"],
+        { lat: 35.1, lng: 136.2 },
+        null
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("レート制限の時間窓が経過すれば、再度destinationHintが使えるようになる", async () => {
+    vi.useFakeTimers();
+    try {
+      generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+      searchStationsFromHeartRails.mockResolvedValue([
+        {
+          stationId: "hr_test",
+          stationName: "テスト駅",
+          operator: "テスト鉄道",
+          lines: ["テスト線"],
+          prefecture: "テスト県",
+          latitude: 35.1,
+          longitude: 136.2,
+        },
+      ]);
+      const adapter = new CompositeStationAdapter("test-key");
+      await adapter.searchStations("テスト");
+
+      for (let i = 0; i < 10; i++) {
+        await adapter.getFacilities("hr_test", `施設${i}`);
+      }
+
+      vi.advanceTimersByTime(60_001);
+
+      generateStationFacilities.mockClear();
+      await adapter.getFacilities("hr_test", "施設new");
+      expect(generateStationFacilities).toHaveBeenCalledWith(
+        "test-key",
+        "テスト駅",
+        "テスト鉄道",
+        ["テスト線"],
+        { lat: 35.1, lng: 136.2 },
+        "施設new"
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

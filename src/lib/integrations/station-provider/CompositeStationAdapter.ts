@@ -43,9 +43,38 @@ function arrivalGuideCacheKey(stationId: string, gateName: string, exitName: str
 // レスポンス・キャッシュ肥大化を防ぐ上限。1文字駅名も存在するため
 // 文字数制限ではなく件数制限で絞る。
 const MAX_SEARCH_RESULTS = 20;
+/**
+ * 同一駅に対して保持するdestinationHint付きFacilitiesCacheEntryの上限件数。
+ * 未認証・レート制限なしの/api/routes/searchから、同一駅周辺の異なる実在施設名を
+ * 目的地に指定し続けられれば、destinationHintをキャッシュキーに含めたことで
+ * 新規キャッシュキー(=課金対象のAI呼び出し)が際限なく生成されうる懸念への緩和策
+ * (/ai-review指摘、High)。上限を超えたら作成順で最も古いエントリを削除する。
+ */
+const MAX_DESTINATION_HINT_ENTRIES_PER_STATION = 5;
+/**
+ * destinationHint付きの新規AI生成(課金対象)を許容する時間窓とその上限回数。
+ * LRU上限(保存件数)だけでは、攻撃者が毎回異なる実在施設名を巡回指定する
+ * ことで呼び出し頻度自体は無制限のままになる懸念に対応する
+ * (/security-review指摘: 「保存件数の上限であって呼び出し頻度の上限では
+ * ない」)。サーバーレス環境ではインスタンスがプロセス間で共有されないため
+ * 完全な防御にはならないが、単一インスタンスが温まっている間の連続呼び出し
+ * は抑制できる(真のレート制限=IP/セッション単位の呼び出し回数制限は
+ * 別途必要、issue化して追跡)。
+ */
+const DESTINATION_HINT_RATE_LIMIT_WINDOW_MS = 60_000;
+const MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW = 10;
 
 interface FacilitiesCacheEntry {
   stationId: string;
+  /**
+   * 目的地施設名(place由来の目的地のみ、駅そのものが目的地の場合はnull)。
+   * 同じ駅でも目的地によって推奨される改札・出口が変わりうるため、
+   * stationIdとの複合キーでキャッシュを分ける。既存のキャッシュエントリ
+   * (このフィールド追加前に書き込まれたもの)にはこのフィールドが存在しない
+   * が、読み込み時に`?? null`で補完するため後方互換性は保たれる
+   * (destinationHintを指定しない=駅目的地の検索には引き続きヒットする)。
+   */
+  destinationHint: string | null;
   facilities: StationFacility[];
 }
 
@@ -88,6 +117,11 @@ export class CompositeStationAdapter implements StationProviderPort {
    * 機能しない問題)の恒久対応(DB化)までの緩和策。
    */
   private readonly heartRailsStationCache = new Map<string, Promise<Station | null>>();
+  /**
+   * destinationHint付きの新規AI生成の発生タイムスタンプ(プロセス内簡易
+   * レートリミッタ)。getFacilities参照。
+   */
+  private recentDestinationHintGenerationTimestamps: number[] = [];
 
   constructor(private readonly geminiApiKey: string) {}
 
@@ -203,46 +237,150 @@ export class CompositeStationAdapter implements StationProviderPort {
     }
   }
 
-  async getFacilities(stationId: string): Promise<StationFacility[]> {
+  async getFacilities(
+    stationId: string,
+    rawDestinationHint: string | null = null
+  ): Promise<StationFacility[]> {
     const fixtureFacilities = await this.fixture.getFacilities(stationId);
     if (fixtureFacilities.length > 0) return fixtureFacilities;
 
     const cache = readCollection<FacilitiesCacheEntry>(FACILITIES_CACHE);
-    const cached = cache.find((c) => c.stationId === stationId);
+    const cached = cache.find(
+      (c) => c.stationId === stationId && (c.destinationHint ?? null) === rawDestinationHint
+    );
     if (cached) return cached.facilities;
 
     const station = await this.getStation(stationId);
     if (!station) return [];
 
     // 未認証・レート制限なしの/api/routes/searchから呼ばれうるが、getFacilities自体は
-    // 駅ごとに初回のみ課金が発生する設計(このFACILITIES_CACHEにヒットすれば以降は
-    // AI呼び出し自体を行わない)。Search Grounding化で1回あたりの呼び出しコスト
-    // (検索+抽出の2段)が増えても、駅単位でのキャッシュにより繰り返し攻撃のコストは
-    // 既に抑制されているため、canGenerateNarrativeのような追加の同時実行ガードは
-    // 不要と判断する(同一リクエスト内でfacilities/boarding/narrativeが重なる懸念は
-    // narrative側がisRouteAiGeneratedで既に遮断しているため、facilities自体を
-    // 追加で止める理由は薄い)。
+    // 駅+目的地の組み合わせごとに初回のみ課金が発生する設計(このFACILITIES_CACHEに
+    // ヒットすれば以降はAI呼び出し自体を行わない)。ただしdestinationHintを
+    // キャッシュキーに含めたことで、同一駅でも異なる実在施設名を指定し続けられれば
+    // 新規キャッシュキーが際限なく生成されうる(/ai-review指摘、High)。
+    // MAX_DESTINATION_HINT_ENTRIES_PER_STATIONで駅ごとのdestinationHint付き
+    // エントリ数に上限を設け、古いものから削除することで無制限の肥大化・課金誘発を
+    // 緩和する(destinationHint無し=駅自体が目的地のエントリは対象外。1駅につき
+    // 高々1件で、目的地情報を伴う攻撃面ではないため)。
+    //
+    // ただしエントリ数の上限だけでは「呼び出し頻度」自体は制限できない
+    // (異なる実在施設名を巡回指定されれば毎回キャッシュミス→新規AI呼び出しが
+    // 発生しうる。/security-review指摘)。直近の時間窓内で新規生成回数が
+    // 上限に達している場合、destinationHintを無視して駅全体検索(従来の
+    // 挙動)にフォールバックすることで、destinationHint付きの(=より高コストな)
+    // 生成が再開されるタイミングを遅らせる。フォールバック後のnull生成も
+    // カウント対象に含める(下記rawDestinationHint判定)のは、そうしないと
+    // destinationHint付きで呼び続けるだけでレート制限カウンタが時間経過とともに
+    // 空になり、destinationHint付き生成がすぐ復活してしまうため(/ai-review指摘、High)。
+    //
+    // 正直な限界: このレートリミッタはdestinationHint付き生成の頻度しか
+    // 制限しない。フォールバック後の駅全体検索(destinationHint=null)自体は
+    // 依然として毎回呼び出される(ここでは止めていない)。本番ではIssue #59
+    // (ファイルキャッシュが読み取り専用ファイルシステムで機能しない)が
+    // 未解決のため、nullキャッシュも定着せず、フォールバック生成の総呼び出し
+    // 回数には現状上限がない。IP/セッション単位の真のレート制限機構は
+    // 別途Issue化して追跡する。
+    const destinationHint =
+      rawDestinationHint !== null && this.isDestinationHintRateLimited()
+        ? null
+        : rawDestinationHint;
+
+    if (destinationHint !== rawDestinationHint) {
+      const fallbackCached = cache.find(
+        (c) => c.stationId === stationId && (c.destinationHint ?? null) === destinationHint
+      );
+      if (fallbackCached) return fallbackCached.facilities;
+    }
+
+    // rawDestinationHintがnull以外なら(フォールバックでnullに正規化された
+    // 場合を含め)必ずカウントする。フォールバック生成を対象外にすると、
+    // destinationHint付きで呼び続けるだけでレート制限カウンタがすぐ空になり、
+    // destinationHint付き生成がすぐ復活してしまう(/ai-review指摘、High)。
+    // 配列サイズは直近MAX件だけ保持すれば判定に十分なため、上限を超えた分は
+    // 古い方から捨てる(高頻度フラッド時に配列が無制限に肥大化するのを防ぐ。
+    // /ai-review指摘、Medium)。
+    if (rawDestinationHint !== null) {
+      this.recentDestinationHintGenerationTimestamps.push(Date.now());
+      if (
+        this.recentDestinationHintGenerationTimestamps.length >
+        MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
+      ) {
+        this.recentDestinationHintGenerationTimestamps =
+          this.recentDestinationHintGenerationTimestamps.slice(
+            -MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
+          );
+      }
+    }
+
     const generated = await generateStationFacilities(
       this.geminiApiKey,
       station.stationName,
       station.operator,
       station.lines,
-      { lat: station.latitude, lng: station.longitude }
+      { lat: station.latitude, lng: station.longitude },
+      destinationHint
     );
     if (generated.length === 0) return [];
 
     const withStationId = generated.map((f) => ({ ...f, stationId }));
 
     try {
+      const cacheAfterEviction = this.evictOldestDestinationHintEntryIfNeeded(
+        cache,
+        stationId,
+        destinationHint
+      );
       writeCollection(FACILITIES_CACHE, [
-        ...cache,
-        { stationId, facilities: withStationId },
+        ...cacheAfterEviction,
+        { stationId, destinationHint, facilities: withStationId },
       ]);
     } catch {
       // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。
     }
 
     return withStationId;
+  }
+
+  /**
+   * 直近の時間窓内でdestinationHint付きの新規AI生成が上限回数に達しているか
+   * 判定する(プロセス内簡易レートリミッタ)。判定と同時に時間窓外の古い
+   * タイムスタンプを掃除する。
+   */
+  private isDestinationHintRateLimited(): boolean {
+    const now = Date.now();
+    this.recentDestinationHintGenerationTimestamps =
+      this.recentDestinationHintGenerationTimestamps.filter(
+        (t) => now - t < DESTINATION_HINT_RATE_LIMIT_WINDOW_MS
+      );
+    return (
+      this.recentDestinationHintGenerationTimestamps.length >=
+      MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
+    );
+  }
+
+  /**
+   * 同一駅のdestinationHint付きエントリが上限に達している場合、作成順で最も
+   * 古い1件を除いたキャッシュ配列を返す(evict)。上限未満の場合やdestinationHint
+   * がnull(駅自体が目的地)の場合はそのまま返す。
+   */
+  private evictOldestDestinationHintEntryIfNeeded(
+    cache: FacilitiesCacheEntry[],
+    stationId: string,
+    destinationHint: string | null
+  ): FacilitiesCacheEntry[] {
+    if (destinationHint === null) return cache;
+
+    const oldestIndex = cache.findIndex(
+      (c) => c.stationId === stationId && c.destinationHint !== null
+    );
+    const entryCount = cache.filter(
+      (c) => c.stationId === stationId && c.destinationHint !== null
+    ).length;
+    if (entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION || oldestIndex === -1) {
+      return cache;
+    }
+
+    return cache.filter((_, i) => i !== oldestIndex);
   }
 
   async getBoardingPosition(

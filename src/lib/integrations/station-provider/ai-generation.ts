@@ -133,13 +133,24 @@ export async function generateStationFacilities(
   stationName: string,
   operator: string,
   lines: string[],
-  coordinates: Coordinates | null = null
+  coordinates: Coordinates | null = null,
+  destinationHint: string | null = null
 ): Promise<StationFacility[]> {
   const stationLabel = operator
     ? `${stationName}(${operator}、${lines.join("・")})${locationHint(coordinates)}`
     : `${stationName}(${lines.join("・")})${locationHint(coordinates)}`;
 
-  const searchPrompt = `${stationLabel}の主要な改札名・出口名・エスカレーター/エレベーターの位置について検索して教えてください。
+  // destinationHint(目的地施設名)がある場合、検索クエリに目的地名を含めるよう
+  // 明示的に指示する。目的地の公式サイト・グルメサイト等のアクセス情報ページに
+  // 「最寄り改札はこちら」という一次情報が載っていることが多く、駅単体の検索
+  // だけでは拾えない具体的な改札・出口名が見つかる(検証実験で確認済み:
+  // 目的地名を検索クエリに含めることで、号車・改札・出口・目印まで具体的な
+  // 回答が得られることを実機で確認した)。
+  const destinationInstruction = destinationHint
+    ? `\n特に「${destinationHint}」に最も近い改札・出口を優先して調べてください。目的地の公式サイト・グルメサイト等のアクセス情報ページに、最寄り改札・出口が明記されている場合があります。`
+    : "";
+
+  const searchPrompt = `${stationLabel}の主要な改札名・出口名・エスカレーター/エレベーターの位置について検索して教えてください。${destinationInstruction}
 鉄道会社公式の駅構内図・公式サイトを最優先の情報源としてください。
 同じ駅名が他にも存在する場合は、必ず上記の位置に最も近い駅を対象にしてください。
 公式資料等で確認できない改札・出口・設備は創作せず、確認できたもの数件に絞って回答してください。`;
