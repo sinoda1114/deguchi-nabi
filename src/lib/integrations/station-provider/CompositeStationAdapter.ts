@@ -78,6 +78,16 @@ interface NearbyStationCacheEntry {
  */
 export class CompositeStationAdapter implements StationProviderPort {
   private readonly fixture = new FixtureStationAdapter();
+  /**
+   * HeartRails再照会結果(getStationのlines復元)のインメモリメモ化。
+   * このアダプター自体がintegrations/index.tsでモジュール単位のシングルトンとして
+   * 生成されるため、1リクエスト内の区間数分だけでなく、同一プロセスが複数
+   * リクエストを処理する間(warm起動)も再利用される。stationIdごとにPromiseを
+   * 即座に格納するため、並行呼び出し(同一駅の改札取得とboarding position取得が
+   * 同時に走る場合等)でも再照会が重複しない。issue #59(本番でファイルキャッシュが
+   * 機能しない問題)の恒久対応(DB化)までの緩和策。
+   */
+  private readonly heartRailsStationCache = new Map<string, Promise<Station | null>>();
 
   constructor(private readonly geminiApiKey: string) {}
 
@@ -123,7 +133,21 @@ export class CompositeStationAdapter implements StationProviderPort {
     // HeartRailsへ再照会してlinesを復元する(operatorはHeartRails自体が
     // 提供しないため再照会しても常に空文字のまま。heartrails.ts参照)。
     // 再照会が失敗しても、decodeの結果(路線情報なし)を返せば従来通り動作するため、
-    // 従来より悪化することはない。
+    // 従来より悪化することはない。同一stationIdへの重複再照会を避けるため、
+    // Promise自体をheartRailsStationCacheに即座に格納してメモ化する
+    // (1経路の区間数分・同時呼び出し分の重複APIコールを防ぐ)。
+    const memoized = this.heartRailsStationCache.get(stationId);
+    if (memoized) return memoized;
+
+    const refetchPromise = this.refetchStationFromHeartRails(stationId, decoded);
+    this.heartRailsStationCache.set(stationId, refetchPromise);
+    return refetchPromise;
+  }
+
+  private async refetchStationFromHeartRails(
+    stationId: string,
+    decoded: Station
+  ): Promise<Station | null> {
     const refetched = await fetchNearestStationsFromHeartRails(
       decoded.latitude,
       decoded.longitude

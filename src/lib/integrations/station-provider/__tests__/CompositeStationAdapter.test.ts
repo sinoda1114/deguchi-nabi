@@ -316,6 +316,52 @@ describe("CompositeStationAdapter.searchStations", () => {
     expect(fetchNearestStationsFromHeartRails).not.toHaveBeenCalled();
   });
 
+  test("同一stationIdへの複数回のgetStation呼び出しはHeartRailsへの再照会を1回に抑える(メモ化、区間数分の重複呼び出し防止)", async () => {
+    const decodedWithoutLines = {
+      stationId: NAGOYA.stationId,
+      stationName: "名古屋駅",
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: NAGOYA.latitude,
+      longitude: NAGOYA.longitude,
+    };
+    decodeHeartRailsStationId.mockReturnValue(decodedWithoutLines);
+    fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getStation(NAGOYA.stationId);
+    await adapter.getStation(NAGOYA.stationId);
+    const [first, second] = await Promise.all([
+      adapter.getStation(NAGOYA.stationId),
+      adapter.getStation(NAGOYA.stationId),
+    ]);
+
+    expect(fetchNearestStationsFromHeartRails).toHaveBeenCalledTimes(1);
+    expect(first?.lines).toEqual(["JR東海道本線"]);
+    expect(second?.lines).toEqual(["JR東海道本線"]);
+  });
+
+  test("異なるstationIdはそれぞれ独立して再照会する(メモ化がstationId単位であることの確認)", async () => {
+    const SHIN_YOKOHAMA = { ...NAGOYA, stationId: "hr_test_shin_yokohama", lines: ["東海道新幹線"] };
+    decodeHeartRailsStationId.mockImplementation((stationId: string) => ({
+      stationId,
+      stationName: "テスト駅",
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: NAGOYA.latitude,
+      longitude: NAGOYA.longitude,
+    }));
+    fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA, SHIN_YOKOHAMA]);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getStation(NAGOYA.stationId);
+    await adapter.getStation(SHIN_YOKOHAMA.stationId);
+
+    expect(fetchNearestStationsFromHeartRails).toHaveBeenCalledTimes(2);
+  });
+
   test("HeartRailsが失敗(null)してもfixtureの検索結果は返す", async () => {
     searchStationsFromHeartRails.mockResolvedValue(null);
     const adapter = new CompositeStationAdapter("test-key");
