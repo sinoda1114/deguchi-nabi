@@ -33,4 +33,20 @@ describe("scheduleLangfuseFlush", () => {
 
     expect(() => scheduleLangfuseFlush()).not.toThrow();
   });
+
+  test("forceFlush()自体が失敗(reject)しても未処理のPromise拒否にならない(after()は非同期にコールバックを実行するため、外側の同期try/catchでは捕捉できない。ネットワーク障害・認証エラー等)", async () => {
+    let scheduledTask: (() => Promise<void>) | null = null;
+    afterMock.mockImplementation((task: () => Promise<void>) => {
+      scheduledTask = task;
+    });
+    forceFlushMock.mockRejectedValue(new Error("Langfuseへの送信に失敗(ネットワーク障害)"));
+    const { scheduleLangfuseFlush } = await import("../langfuse-flush");
+
+    scheduleLangfuseFlush();
+    expect(scheduledTask).not.toBeNull();
+
+    // after()に渡したコールバック自体がrejectしないことを確認する
+    // (rejectすればテストランナーがunhandled rejectionとして検出する)。
+    await expect(scheduledTask!()).resolves.toBeUndefined();
+  });
 });
