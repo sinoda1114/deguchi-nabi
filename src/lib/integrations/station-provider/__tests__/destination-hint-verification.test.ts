@@ -21,9 +21,14 @@ import type { StationFacility } from "@/lib/domain/station";
  * 実API課金が発生する(4ペア×2条件×検索+抽出の2段呼び出し=16リクエスト/回)。
  * Gemini出力は非決定的なため、境界的な結果になった場合は2回実行して
  * 安定側を採用する運用を推奨する。
+ *
+ * 全ペアを1つのtest内で直列実行するため、タイムアウトは
+ * 4ペア×2条件×最大70秒(検索55秒+抽出15秒)=最大560秒を
+ * 余裕を持って超える値にする必要がある(1ペア分の想定で300秒にしていたのは
+ * 実装ミス。実行前のレビューで発覚)。
  */
 
-const VERIFICATION_TIMEOUT_MS = 300_000;
+const VERIFICATION_TIMEOUT_MS = 900_000;
 
 interface VerificationPair {
   label: string;
