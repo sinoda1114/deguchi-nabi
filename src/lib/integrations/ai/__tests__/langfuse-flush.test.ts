@@ -1,0 +1,52 @@
+import { afterEach, describe, expect, test, vi } from "vitest";
+
+const afterMock = vi.fn();
+vi.mock("next/server", () => ({
+  after: (...args: unknown[]) => afterMock(...args),
+}));
+
+const forceFlushMock = vi.fn();
+vi.mock("@/instrumentation", () => ({
+  langfuseSpanProcessor: { forceFlush: (...args: unknown[]) => forceFlushMock(...args) },
+}));
+
+describe("scheduleLangfuseFlush", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test("next/serverのafter()でlangfuseSpanProcessor.forceFlush()をスケジュールする", async () => {
+    afterMock.mockImplementation((task: () => Promise<void>) => task());
+    const { scheduleLangfuseFlush } = await import("../langfuse-flush");
+
+    scheduleLangfuseFlush();
+
+    expect(afterMock).toHaveBeenCalledTimes(1);
+    expect(forceFlushMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("after()がリクエストコンテキスト外で例外を投げても呼び出し元に伝播しない(テスト実行時等、telemetry失敗でAI生成本体を落とさない)", async () => {
+    afterMock.mockImplementation(() => {
+      throw new Error("after() was called outside a request scope");
+    });
+    const { scheduleLangfuseFlush } = await import("../langfuse-flush");
+
+    expect(() => scheduleLangfuseFlush()).not.toThrow();
+  });
+
+  test("forceFlush()自体が失敗(reject)しても未処理のPromise拒否にならない(after()は非同期にコールバックを実行するため、外側の同期try/catchでは捕捉できない。ネットワーク障害・認証エラー等)", async () => {
+    let scheduledTask: (() => Promise<void>) | null = null;
+    afterMock.mockImplementation((task: () => Promise<void>) => {
+      scheduledTask = task;
+    });
+    forceFlushMock.mockRejectedValue(new Error("Langfuseへの送信に失敗(ネットワーク障害)"));
+    const { scheduleLangfuseFlush } = await import("../langfuse-flush");
+
+    scheduleLangfuseFlush();
+    expect(scheduledTask).not.toBeNull();
+
+    // after()に渡したコールバック自体がrejectしないことを確認する
+    // (rejectすればテストランナーがunhandled rejectionとして検出する)。
+    await expect(scheduledTask!()).resolves.toBeUndefined();
+  });
+});
