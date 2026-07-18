@@ -12,8 +12,15 @@ import type { RouteMode } from "@/lib/domain/route";
 // よう排他制御しているため、1リクエストで両方のAI呼び出しが同時に走ることはない
 // (未認証・レート制限の無いこのエンドポイントで、1リクエストあたりの課金対象API
 // 呼び出し数が積み重なるコスト濫用/DoSリスクを避けるための設計。セキュリティ
-// レビュー指摘に基づく)。よって上限はこれまで通り単一呼び出し分で足りる。
-export const maxDuration = 90;
+// レビュー指摘に基づく)。
+//
+// ただし到着駅がfixture未収録の場合、経路自体のAI生成(resolveRouteCandidate、
+// 最大70秒)と、到着駅の改札・出口AI生成(buildTransferAndExitSegments内の
+// getFacilities、最大70秒)は上記の排他制御の対象外で直列実行されるため、
+// 合算で最大140秒かかりうる。90秒では不足し実機でFUNCTION_INVOCATION_TIMEOUTを
+// 確認した(Issue #68)。当面の緩和策として安全マージンを見て180秒に引き上げる。
+// 根本対応(経路生成とfacilities生成の並列化)はIssue #68で追跡する。
+export const maxDuration = 180;
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
