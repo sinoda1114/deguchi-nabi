@@ -9,8 +9,6 @@ import {
   searchStationsFromHeartRails,
 } from "./heartrails";
 import { getKvCacheStore } from "@/lib/store/kv-cache-store";
-import type { KvCacheStore } from "@/lib/store/kv-cache-store";
-import { isCacheEntryExpired, scheduleStaleRefresh } from "@/lib/store/swr-refresh";
 import { FIXTURE_PLATFORMS } from "@/lib/fixtures/stations";
 import type {
   BoardingPosition,
@@ -21,92 +19,43 @@ import type {
 } from "@/lib/domain/station";
 import type { GuideStep } from "@/lib/domain/route";
 
-const FACILITIES_CACHE = "ai-station-facilities";
-const BOARDING_CACHE = "ai-boarding-positions";
 const NEARBY_STATION_CACHE = "nearby-stations";
-const ARRIVAL_GUIDE_CACHE = "ai-arrival-guide-steps";
 
-/** facilities/boarding/arrival-guide キャッシュのTTL(日数)。 */
-const AI_CACHE_TTL_DAYS = 90;
-
-/**
- * 改札後導線AI生成のキャッシュキー。同じ駅の同じ改札→出口の組み合わせで
- * 再生成(検索グラウンディングは最大55秒かかる)を避けるため。
- * stationIdが先頭にあるため、将来の駅単位無効化はこのprefix(`${stationId}__`)
- * で一発にできる。
- */
-function arrivalGuideCacheKey(stationId: string, gateName: string, exitName: string): string {
-  return `${stationId}__${gateName}__${exitName}`;
-}
 // 短い部分一致クエリ(例: "中央")で全国から大量ヒットしうるため、
-// レスポンス・キャッシュ肥大化を防ぐ上限。1文字駅名も存在するため
+// レスポンス肥大化を防ぐ上限。1文字駅名も存在するため
 // 文字数制限ではなく件数制限で絞る。
 const MAX_SEARCH_RESULTS = 20;
-/**
- * 同一駅に対して保持するdestinationHint付きFacilitiesCacheEntryの上限件数。
- * 未認証・レート制限なしの/api/routes/searchから、同一駅周辺の異なる実在施設名を
- * 目的地に指定し続けられれば、destinationHintをキャッシュキーに含めたことで
- * 新規キャッシュキー(=課金対象のAI呼び出し)が際限なく生成されうる懸念への緩和策
- * (/ai-review指摘、High)。上限を超えたら作成順で最も古いエントリを削除する。
- */
-const MAX_DESTINATION_HINT_ENTRIES_PER_STATION = 5;
-/**
- * destinationHint付きの新規AI生成(課金対象)を許容する時間窓とその上限回数。
- * LRU上限(保存件数)だけでは、攻撃者が毎回異なる実在施設名を巡回指定する
- * ことで呼び出し頻度自体は無制限のままになる懸念に対応する
- * (/security-review指摘: 「保存件数の上限であって呼び出し頻度の上限では
- * ない」)。サーバーレス環境ではインスタンスがプロセス間で共有されないため
- * 完全な防御にはならないが、単一インスタンスが温まっている間の連続呼び出し
- * は抑制できる(真のレート制限=IP/セッション単位の呼び出し回数制限は
- * 別途必要、issue化して追跡)。
- */
-const DESTINATION_HINT_RATE_LIMIT_WINDOW_MS = 60_000;
-const MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW = 10;
 
 /**
- * facilities キャッシュのキー。destinationHint 無し(駅そのものが目的地)は
- * stationId単独、destinationHint 有りは `${stationId}::h::` を接頭辞に持つ。
- * stationId が常に先頭にあるため、駅単位の件数カウント・LRU削除は
- * このprefixに対する countByKeyPrefix/deleteOldestByKeyPrefix で行える。
- */
-function facilitiesCacheKey(stationId: string, destinationHint: string | null): string {
-  return destinationHint === null
-    ? stationId
-    : `${facilitiesHintPrefix(stationId)}${encodeURIComponent(destinationHint)}`;
-}
-
-function facilitiesHintPrefix(stationId: string): string {
-  return `${stationId}::h::`;
-}
-
-/**
- * fixture platform に一致する区間(実在の platformId)向けの boarding キャッシュキー。
+ * fixture platform に一致する区間(実在の platformId)向けのBoardingPosition.platformId値。
  * stationId を先頭に付けることで、実在の platformId(pf_...)自体が別駅の
  * ものと衝突しても駅単位で区別できる。
  */
-function fixtureBoardingCacheKey(stationId: string, platformId: string): string {
+function fixtureBoardingPlatformId(stationId: string, platformId: string): string {
   return `${stationId}::pf::${platformId}`;
 }
 
 /**
  * fixture platform に一致しない区間(fixture未収録駅を含むAI生成ルート等)向けの
- * キャッシュキー。実在の platformId(pf_...)と衝突しないよう区切り文字で分離する。
+ * BoardingPosition.platformId値。実在の platformId(pf_...)と衝突しないよう
+ * 区切り文字で分離する。
  */
-function lineBoardingCacheKey(stationId: string, line: string, direction: string): string {
+function lineBoardingPlatformId(stationId: string, line: string, direction: string): string {
   return `${stationId}::line::${line}::${direction}`;
 }
 
 /**
  * FixtureStationAdapter を優先しつつ、fixture に無い駅の改札・出口・号車情報は
  * Gemini で下書き生成して confidence: low として補う複合アダプター。
- * 生成結果は KvCacheStore(Turso本番・ローカルJSONフォールバック)にキャッシュし、
- * 同じ駅への再生成を避ける。
  *
- * キャッシュの読み書きが失敗しても(例: 読み取り専用ファイルシステムの本番環境)、
- * KvCacheStore自身が例外を握りつぶし生成結果を返せる設計になっているため、
- * このクラス側でtry/catchする必要はない。キャッシュは最適化であり必須要件ではない
- * という方針は変わらない。生成に失敗した(空/null)結果はキャッシュしない —
- * 一時的なAPI障害を恒久的な「情報なし」として固定してしまうのを防ぐため。
+ * AI生成結果(facilities/boarding/arrival-guide)は永続キャッシュしない
+ * (council議論2026-07-20: 検索を伴うAI生成は実行ごとに号車・改札名の
+ * 表現が揺れうる性質であり、初回生成結果を90日間固定するTTLキャッシュの
+ * 設計自体がこの揺れと相性が悪いと判断。IPレートリミット(PR4)が既に
+ * 未認証課金エンドポイントの濫用を防いでいるため、駅単位のキャッシュ・
+ * LRU・レート制限機構は撤去し、毎回アドホックに生成する)。
+ * nearby-stations(HeartRails検索結果)はAI生成ではなく外部API結果の
+ * キャッシュのため、対象外として維持する。
  */
 export class CompositeStationAdapter implements StationProviderPort {
   private readonly fixture = new FixtureStationAdapter();
@@ -120,11 +69,6 @@ export class CompositeStationAdapter implements StationProviderPort {
    * 機能しない問題)の恒久対応(DB化)までの緩和策。
    */
   private readonly heartRailsStationCache = new Map<string, Promise<Station | null>>();
-  /**
-   * destinationHint付きの新規AI生成の発生タイムスタンプ(プロセス内簡易
-   * レートリミッタ)。getFacilities参照。
-   */
-  private recentDestinationHintGenerationTimestamps: number[] = [];
 
   constructor(private readonly geminiApiKey: string) {}
 
@@ -237,88 +181,13 @@ export class CompositeStationAdapter implements StationProviderPort {
 
   async getFacilities(
     stationId: string,
-    rawDestinationHint: string | null = null
+    destinationHint: string | null = null
   ): Promise<StationFacility[]> {
     const fixtureFacilities = await this.fixture.getFacilities(stationId);
     if (fixtureFacilities.length > 0) return fixtureFacilities;
 
-    const store = getKvCacheStore();
-    const facilitiesKey = facilitiesCacheKey(stationId, rawDestinationHint);
-    const cached = await store.get<StationFacility[]>(FACILITIES_CACHE, facilitiesKey);
-    if (cached) {
-      // 期限切れでも古い値を即返しつつ、裏で再生成して上書きする
-      // (stale-while-revalidate、PR3)。裏再生成は既存キーの冪等な更新であり
-      // 新規destinationHintの生成ではないため、evict/レート制限の対象外とする。
-      if (isCacheEntryExpired(cached.expiresAt)) {
-        scheduleStaleRefresh(`${FACILITIES_CACHE}:${facilitiesKey}`, () =>
-          this.regenerateFacilities(store, stationId, rawDestinationHint)
-        );
-      }
-      return cached.value;
-    }
-
     const station = await this.getStation(stationId);
     if (!station) return [];
-
-    // 未認証・レート制限なしの/api/routes/searchから呼ばれうるが、getFacilities自体は
-    // 駅+目的地の組み合わせごとに初回のみ課金が発生する設計(このFACILITIES_CACHEに
-    // ヒットすれば以降はAI呼び出し自体を行わない)。ただしdestinationHintを
-    // キャッシュキーに含めたことで、同一駅でも異なる実在施設名を指定し続けられれば
-    // 新規キャッシュキーが際限なく生成されうる(/ai-review指摘、High)。
-    // MAX_DESTINATION_HINT_ENTRIES_PER_STATIONで駅ごとのdestinationHint付き
-    // エントリ数に上限を設け、古いものから削除することで無制限の肥大化・課金誘発を
-    // 緩和する(destinationHint無し=駅自体が目的地のエントリは対象外。1駅につき
-    // 高々1件で、目的地情報を伴う攻撃面ではないため)。
-    //
-    // ただしエントリ数の上限だけでは「呼び出し頻度」自体は制限できない
-    // (異なる実在施設名を巡回指定されれば毎回キャッシュミス→新規AI呼び出しが
-    // 発生しうる。/security-review指摘)。直近の時間窓内で新規生成回数が
-    // 上限に達している場合、destinationHintを無視して駅全体検索(従来の
-    // 挙動)にフォールバックすることで、destinationHint付きの(=より高コストな)
-    // 生成が再開されるタイミングを遅らせる。フォールバック後のnull生成も
-    // カウント対象に含める(下記rawDestinationHint判定)のは、そうしないと
-    // destinationHint付きで呼び続けるだけでレート制限カウンタが時間経過とともに
-    // 空になり、destinationHint付き生成がすぐ復活してしまうため(/ai-review指摘、High)。
-    //
-    // 正直な限界: このレートリミッタはdestinationHint付き生成の頻度しか
-    // 制限しない。フォールバック後の駅全体検索(destinationHint=null)自体は
-    // 依然として毎回呼び出される(ここでは止めていない)。本番ではIssue #59
-    // (ファイルキャッシュが読み取り専用ファイルシステムで機能しない)が
-    // 未解決のため、nullキャッシュも定着せず、フォールバック生成の総呼び出し
-    // 回数には現状上限がない。IP/セッション単位の真のレート制限機構は
-    // 別途Issue化して追跡する。
-    const destinationHint =
-      rawDestinationHint !== null && this.isDestinationHintRateLimited()
-        ? null
-        : rawDestinationHint;
-
-    if (destinationHint !== rawDestinationHint) {
-      const fallbackCached = await store.get<StationFacility[]>(
-        FACILITIES_CACHE,
-        facilitiesCacheKey(stationId, destinationHint)
-      );
-      if (fallbackCached) return fallbackCached.value;
-    }
-
-    // rawDestinationHintがnull以外なら(フォールバックでnullに正規化された
-    // 場合を含め)必ずカウントする。フォールバック生成を対象外にすると、
-    // destinationHint付きで呼び続けるだけでレート制限カウンタがすぐ空になり、
-    // destinationHint付き生成がすぐ復活してしまう(/ai-review指摘、High)。
-    // 配列サイズは直近MAX件だけ保持すれば判定に十分なため、上限を超えた分は
-    // 古い方から捨てる(高頻度フラッド時に配列が無制限に肥大化するのを防ぐ。
-    // /ai-review指摘、Medium)。
-    if (rawDestinationHint !== null) {
-      this.recentDestinationHintGenerationTimestamps.push(Date.now());
-      if (
-        this.recentDestinationHintGenerationTimestamps.length >
-        MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
-      ) {
-        this.recentDestinationHintGenerationTimestamps =
-          this.recentDestinationHintGenerationTimestamps.slice(
-            -MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
-          );
-      }
-    }
 
     const generated = await generateStationFacilitiesDispatch(
       this.geminiApiKey,
@@ -330,117 +199,7 @@ export class CompositeStationAdapter implements StationProviderPort {
     );
     if (generated.length === 0) return [];
 
-    const withStationId = generated.map((f) => ({ ...f, stationId }));
-
-    await this.evictOldestDestinationHintEntryIfNeeded(store, stationId, destinationHint);
-    await store.set(
-      FACILITIES_CACHE,
-      facilitiesCacheKey(stationId, destinationHint),
-      withStationId,
-      { ttlDays: AI_CACHE_TTL_DAYS }
-    );
-
-    return withStationId;
-  }
-
-  /**
-   * facilitiesキャッシュの期限切れエントリを裏で再生成する
-   * (stale-while-revalidate、PR3。scheduleStaleRefresh経由で呼ばれる)。
-   * 呼び出し時点で既にキャッシュキーが確定している(destinationHintは
-   * 正規化・レート制限判定を経た値)ため、getFacilities本体にある
-   * destinationHintフォールバック・レート制限カウント・LRU evictionは
-   * 再実行しない — これらは「新規キーを作るかどうか」の判断であり、
-   * 裏再生成は既存キーの値を最新化するだけの冪等な操作だから。
-   * 生成に失敗(空配列)した場合は上書きしない(既存の古い値を保持する方が、
-   * 一時的なAPI障害で情報が消えるより安全なため)。
-   */
-  private async regenerateFacilities(
-    store: KvCacheStore,
-    stationId: string,
-    destinationHint: string | null
-  ): Promise<void> {
-    const station = await this.getStation(stationId);
-    if (!station) return;
-
-    const generated = await generateStationFacilitiesDispatch(
-      this.geminiApiKey,
-      station.stationName,
-      station.operator,
-      station.lines,
-      { lat: station.latitude, lng: station.longitude },
-      destinationHint
-    );
-    if (generated.length === 0) return;
-
-    const withStationId = generated.map((f) => ({ ...f, stationId }));
-    await store.set(FACILITIES_CACHE, facilitiesCacheKey(stationId, destinationHint), withStationId, {
-      ttlDays: AI_CACHE_TTL_DAYS,
-    });
-  }
-
-  /**
-   * 直近の時間窓内でdestinationHint付きの新規AI生成が上限回数に達しているか
-   * 判定する(プロセス内簡易レートリミッタ)。判定と同時に時間窓外の古い
-   * タイムスタンプを掃除する。
-   */
-  private isDestinationHintRateLimited(): boolean {
-    const now = Date.now();
-    this.recentDestinationHintGenerationTimestamps =
-      this.recentDestinationHintGenerationTimestamps.filter(
-        (t) => now - t < DESTINATION_HINT_RATE_LIMIT_WINDOW_MS
-      );
-    return (
-      this.recentDestinationHintGenerationTimestamps.length >=
-      MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW
-    );
-  }
-
-  /**
-   * 同一駅のdestinationHint付きエントリが上限に達している場合、作成順で最も
-   * 古い1件をKvCacheStoreから削除する(evict)。上限未満の場合やdestinationHint
-   * がnull(駅自体が目的地)の場合は何もしない。destinationHint付きエントリは
-   * すべて`${stationId}::h::`を接頭辞に持つため、countByKeyPrefix/
-   * deleteOldestByKeyPrefixで駅単位に絞り込める。
-   *
-   * 正直な限界: count→deleteOldest→setは3つの別個の非同期操作で、原子的
-   * (トランザクション)ではない(/ai-review指摘、Medium)。同一駅への異なる
-   * destinationHintを持つリクエストが同時に到達すると、両者が同じ件数を
-   * 読んで削除判断するため、上限を若干超過することがありうる(旧実装の
-   * 同期I/Oでは原理上起きなかった競合が、非同期化により理論上可能になった)。
-   * これはベストエフォートの緩和策であり、KvCacheStore側にトランザクション
-   * 操作を追加しない限り解消できない。実害は「上限が5件を若干超える」程度
-   * (無制限の肥大化ではない)なので、現時点では許容する。
-   *
-   * 追加の正直な限界: countByKeyPrefixはストア読み取りエラー時も例外を
-   * 投げず0を返す設計(PR1で確定、KvCacheStore全実装共通の方針)。そのため
-   * 「真に0件」と「エラーでたまたま0が返った」を呼び出し元は区別できない
-   * (Cursor Bugbotの自動生成PRでの指摘)。下の条件はentryCount===0でも
-   * deleteOldestByKeyPrefixを試みる(0を除外しない)ことでこれを緩和する:
-   * 対象行が実際に無ければdeleteOldestByKeyPrefixのサブクエリが該当なしで
-   * 安全にno-opになり(turso-kv-store.ts参照)、新規駅への初回
-   * destinationHint登録という正常系への実害は「無駄なDELETEクエリ1回」の
-   * みで、かつこのケースはeviction後は件数が0に戻らない設計上、駅ごとに
-   * 生涯で最大1回しか発生しない。一方、読み取りが一時的なエラーで0を返し
-   * 実際は上限に達していた場合、この呼び出しが最古の1件を削除でき上限
-   * 超過を緩和できる可能性がある(読み取りと書き込みは別クエリのため、
-   * 読み取り失敗が書き込み失敗を必ずしも意味しない)。読み取りと削除の
-   * 両方が同じ原因で失敗する場合は緩和されないが、それでも「0を除外して
-   * 常にスキップする」よりは安全側に倒れる。根本解決(エラーと真の0件を
-   * 区別できるAPIへの変更)はKvCacheStoreインターフェースの見直しを伴う
-   * ためこのPRのスコープを超え、現状はこのベストエフォート緩和で許容する。
-   */
-  private async evictOldestDestinationHintEntryIfNeeded(
-    store: KvCacheStore,
-    stationId: string,
-    destinationHint: string | null
-  ): Promise<void> {
-    if (destinationHint === null) return;
-
-    const prefix = facilitiesHintPrefix(stationId);
-    const entryCount = await store.countByKeyPrefix(FACILITIES_CACHE, prefix);
-    if (entryCount > 0 && entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION) return;
-
-    await store.deleteOldestByKeyPrefix(FACILITIES_CACHE, prefix);
+    return generated.map((f) => ({ ...f, stationId }));
   }
 
   async getBoardingPosition(
@@ -471,151 +230,46 @@ export class CompositeStationAdapter implements StationProviderPort {
     const effectiveDirection = verifiedFixturePlatform
       ? verifiedFixturePlatform.direction
       : direction;
-    const cacheKey = verifiedFixturePlatform
-      ? fixtureBoardingCacheKey(stationId, platformId)
-      : lineBoardingCacheKey(stationId, line, direction);
+    const boardingPlatformId = verifiedFixturePlatform
+      ? fixtureBoardingPlatformId(stationId, platformId)
+      : lineBoardingPlatformId(stationId, line, direction);
 
     // 到着番線が判明していれば号車推定へ引き渡す。fixture platformが検証済みなら
     // その正規のplatformNumberを使い(最も確実)、そうでない場合はgenerateRailRoute
     // (ai-route-generation.ts)が検索で確認できた到着番線ラベルをplatformId経由で
     // 引き継ぐ。ただし"pf_"接頭辞のfixture platformId文字列(別駅のplatformIdが
     // 誤って渡された場合等)は番線ラベルとして扱わない(isPlainArrivalPlatformLabel参照)。
-    // 取れない場合はnullのまま(無理に埋めない原則を維持)。cache hit判定より前に
-    // 算出するのは、期限切れ時の裏再生成(regenerateBoardingPosition)でも同じ値が
-    // 必要なため。
+    // 取れない場合はnullのまま(無理に埋めない原則を維持)。
     const arrivalPlatformNumber = verifiedFixturePlatform
       ? verifiedFixturePlatform.platformNumber
       : isPlainArrivalPlatformLabel(platformId)
         ? platformId
         : null;
 
-    const store = getKvCacheStore();
-    const cached = await store.get<BoardingPosition>(BOARDING_CACHE, cacheKey);
-    if (cached) {
-      // 期限切れでも古い値を即返しつつ、裏で再生成して上書きする(PR3)。
-      if (isCacheEntryExpired(cached.expiresAt)) {
-        scheduleStaleRefresh(`${BOARDING_CACHE}:${cacheKey}`, () =>
-          this.regenerateBoardingPosition(
-            store,
-            stationName,
-            effectiveLine,
-            effectiveDirection,
-            cacheKey,
-            arrivalPlatformNumber
-          )
-        );
-      }
-      return cached.value;
-    }
-
-    const generated = await generateBoardingPosition(
+    return generateBoardingPosition(
       this.geminiApiKey,
       stationName,
       effectiveLine,
       effectiveDirection,
-      cacheKey,
+      boardingPlatformId,
       arrivalPlatformNumber
     );
-    if (!generated) return null;
-
-    await store.set(BOARDING_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
-
-    return generated;
-  }
-
-  /**
-   * boardingキャッシュの期限切れエントリを裏で再生成する
-   * (stale-while-revalidate、PR3。scheduleStaleRefresh経由で呼ばれる)。
-   * 生成に失敗(null)した場合は上書きしない(既存の古い値を保持)。
-   */
-  private async regenerateBoardingPosition(
-    store: KvCacheStore,
-    stationName: string,
-    effectiveLine: string,
-    effectiveDirection: string,
-    cacheKey: string,
-    arrivalPlatformNumber: string | null
-  ): Promise<void> {
-    const generated = await generateBoardingPosition(
-      this.geminiApiKey,
-      stationName,
-      effectiveLine,
-      effectiveDirection,
-      cacheKey,
-      arrivalPlatformNumber
-    );
-    if (!generated) return;
-
-    await store.set(BOARDING_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
   }
 
   async getArrivalGuideNarrativeSteps(
-    stationId: string,
+    _stationId: string,
     stationName: string,
     gateName: string,
     exitName: string,
     arrivalStationCoordinates: Coordinates | null = null
   ): Promise<GuideStep[]> {
-    const cacheKey = arrivalGuideCacheKey(stationId, gateName, exitName);
-    const store = getKvCacheStore();
-    const cached = await store.get<GuideStep[]>(ARRIVAL_GUIDE_CACHE, cacheKey);
-    if (cached) {
-      // 期限切れでも古い値を即返しつつ、裏で再生成して上書きする(PR3)。
-      if (isCacheEntryExpired(cached.expiresAt)) {
-        scheduleStaleRefresh(`${ARRIVAL_GUIDE_CACHE}:${cacheKey}`, () =>
-          this.regenerateArrivalGuideNarrativeSteps(
-            store,
-            cacheKey,
-            stationName,
-            gateName,
-            exitName,
-            arrivalStationCoordinates
-          )
-        );
-      }
-      return cached.value;
-    }
-
-    const generated = await generateArrivalNarrativeSteps(
+    return generateArrivalNarrativeSteps(
       this.geminiApiKey,
       stationName,
       gateName,
       exitName,
       arrivalStationCoordinates
     );
-    // 生成結果が空の場合はキャッシュしない(一時的なAPI障害を恒久的な
-    // 「情報なし」として固定してしまうのを防ぐ。既存のfacilities/boarding
-    // キャッシュと同じ方針)。
-    if (generated.length === 0) return [];
-
-    await store.set(ARRIVAL_GUIDE_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
-
-    return generated;
-  }
-
-  /**
-   * arrival-guideキャッシュの期限切れエントリを裏で再生成する
-   * (stale-while-revalidate、PR3。scheduleStaleRefresh経由で呼ばれる)。
-   * 生成結果が空の場合は上書きしない(既存の古い値を保持)。
-   */
-  private async regenerateArrivalGuideNarrativeSteps(
-    store: KvCacheStore,
-    cacheKey: string,
-    stationName: string,
-    gateName: string,
-    exitName: string,
-    arrivalStationCoordinates: Coordinates | null
-  ): Promise<void> {
-    const generated = await generateArrivalNarrativeSteps(
-      this.geminiApiKey,
-      stationName,
-      gateName,
-      exitName,
-      arrivalStationCoordinates
-    );
-    if (generated.length === 0) return;
-
-    await store.set(ARRIVAL_GUIDE_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
   }
 
   private findPlatform(platformId: string): Platform | null {
