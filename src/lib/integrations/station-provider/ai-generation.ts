@@ -34,7 +34,7 @@ const VALID_CONFIDENCE_LEVELS: ConfidenceLevel[] = ["high", "medium", "low"];
  * Confidenceオブジェクトを組み立てる。arrival-guide-ai-generation.tsと同じ方針
  * (モデルの自己申告をそのまま採用しない。docs/04 §Phase 2.5)。
  */
-function groundedAiConfidence(selfReportedLevel: ConfidenceLevel): Confidence {
+export function groundedAiConfidence(selfReportedLevel: ConfidenceLevel): Confidence {
   return {
     level: capConfidenceForProvenance(selfReportedLevel, "ai_inferred"),
     reasons: [AI_GENERATED_REASON],
@@ -49,7 +49,7 @@ function groundedAiConfidence(selfReportedLevel: ConfidenceLevel): Confidence {
  * してしまわないよう、概算座標を併記して曖昧性を解消するヒントを作る
  * (arrival-guide-ai-generation.ts / ai-route-generation.ts と同じ狙い)。
  */
-function locationHint(coordinates: Coordinates | null): string {
+export function locationHint(coordinates: Coordinates | null): string {
   if (!coordinates) return "";
   return `(緯度${coordinates.lat.toFixed(4)}・経度${coordinates.lng.toFixed(4)}付近)`;
 }

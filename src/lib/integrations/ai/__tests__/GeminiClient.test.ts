@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { generateStructuredContent, searchAndGenerateStructuredContent } from "../GeminiClient";
+import {
+  generateStructuredContent,
+  searchAndGenerateStructuredContent,
+  searchAndGenerateStructuredContentWithImage,
+} from "../GeminiClient";
 
 function jsonResponse(body: unknown) {
   return {
@@ -62,5 +66,87 @@ describe("callGemini のタイムアウト設定", () => {
     // 検索フェーズ単体が35.1秒かかったため、それを上回る猶予(55秒)が検索フェーズのみに
     // 適用され、抽出フェーズは従来の短いタイムアウト(15秒)のままであることを検証する。
     expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
+  });
+
+  test("画像付きSearch Groundingも検索フェーズのみ長いタイムアウトを使う", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [
+            {
+              content: { parts: [{ text: "検索+画像結果テキスト" }] },
+              groundingMetadata: { webSearchQueries: ["q1"] },
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: '{"facilities":[]}' }] } }],
+        })
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await searchAndGenerateStructuredContentWithImage(
+      "key",
+      "search prompt",
+      "extract",
+      {},
+      { data: "base64imagedata", mimeType: "image/png" }
+    );
+
+    expect(result).toEqual({ facilities: [] });
+    expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
+  });
+
+  test("画像パートが検索フェーズのリクエストボディに含まれる", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [
+            {
+              content: { parts: [{ text: "テキスト" }] },
+              groundingMetadata: { webSearchQueries: ["q1"] },
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ candidates: [{ content: { parts: [{ text: "{}" }] } }] })
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await searchAndGenerateStructuredContentWithImage(
+      "key",
+      "search prompt",
+      "extract",
+      {},
+      { data: "base64imagedata", mimeType: "image/png" }
+    );
+
+    const firstCallBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(firstCallBody.contents[0].parts).toContainEqual({
+      inline_data: { mime_type: "image/png", data: "base64imagedata" },
+    });
+    expect(firstCallBody.tools).toEqual([{ google_search: {} }]);
+  });
+
+  test("検索が実行されなかった(groundingMetadataが無い)場合はnullを返す", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse({ candidates: [{ content: { parts: [{ text: "テキスト" }] } }] })
+    ) as unknown as typeof fetch;
+
+    const result = await searchAndGenerateStructuredContentWithImage(
+      "key",
+      "search prompt",
+      "extract",
+      {},
+      { data: "base64imagedata", mimeType: "image/png" }
+    );
+
+    expect(result).toBeNull();
   });
 });

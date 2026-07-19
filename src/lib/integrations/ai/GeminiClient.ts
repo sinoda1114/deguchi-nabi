@@ -102,6 +102,66 @@ export async function searchAndGenerateStructuredContent<T>(
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
   if (!searchText || !searchExecuted) return null;
 
+  return extractStructuredContent<T>(apiKey, extractionInstruction, searchText, responseSchema);
+}
+
+export interface InlineImage {
+  data: string;
+  mimeType: string;
+}
+
+/**
+ * Google Search Grounding + 画像入力 + 構造化出力の2段階呼び出し。
+ * searchAndGenerateStructuredContent と同じ2段階パターンだが、1回目の検索
+ * フェーズに画像パート(inline_data)を追加する。Gemini API は google_search
+ * ツールと画像入力を同一リクエストで併用できる(検証済み)ため、モデルは
+ * 画像の内容とWeb検索結果の両方を踏まえてテキスト回答を生成する。
+ *
+ * どの画像を使うかは呼び出し側が能動的に選定・取得する(Groundingの検索
+ * 過程自体はブラックボックスで、モデルが「見た」画像を外部から制御できない
+ * ため。facilities-image-search.ts参照)。
+ */
+export async function searchAndGenerateStructuredContentWithImage<T>(
+  apiKey: string,
+  searchPrompt: string,
+  extractionInstruction: string,
+  responseSchema: object,
+  image: InlineImage
+): Promise<T | null> {
+  const searchCandidate = await callGemini(
+    apiKey,
+    {
+      contents: [
+        {
+          parts: [
+            { text: searchPrompt },
+            { inline_data: { mime_type: image.mimeType, data: image.data } },
+          ],
+        },
+      ],
+      tools: [{ google_search: {} }],
+    },
+    SEARCH_REQUEST_TIMEOUT_MS
+  );
+
+  const searchText = searchCandidate?.content?.parts?.[0]?.text;
+  const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
+  if (!searchText || !searchExecuted) return null;
+
+  return extractStructuredContent<T>(apiKey, extractionInstruction, searchText, responseSchema);
+}
+
+/**
+ * 検索/画像フェーズで得たテキストをJSON構造化データへ変換する共有ヘルパー。
+ * searchAndGenerateStructuredContent と searchAndGenerateStructuredContentWithImage
+ * の両方から使い、抽出ロジックの二重管理を防ぐ。
+ */
+async function extractStructuredContent<T>(
+  apiKey: string,
+  extractionInstruction: string,
+  searchText: string,
+  responseSchema: object
+): Promise<T | null> {
   const extractionCandidate = await callGemini(apiKey, {
     contents: [{ parts: [{ text: `${extractionInstruction}\n\n${searchText}` }] }],
     generationConfig: {
