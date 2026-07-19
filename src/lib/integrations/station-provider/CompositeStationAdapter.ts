@@ -8,7 +8,8 @@ import {
   fetchNearestStationsFromHeartRails,
   searchStationsFromHeartRails,
 } from "./heartrails";
-import { readCollection, writeCollection } from "@/lib/store/json-file-store";
+import { getKvCacheStore } from "@/lib/store/kv-cache-store";
+import type { KvCacheStore } from "@/lib/store/kv-cache-store";
 import { FIXTURE_PLATFORMS } from "@/lib/fixtures/stations";
 import type {
   BoardingPosition,
@@ -24,14 +25,14 @@ const BOARDING_CACHE = "ai-boarding-positions";
 const NEARBY_STATION_CACHE = "nearby-stations";
 const ARRIVAL_GUIDE_CACHE = "ai-arrival-guide-steps";
 
-interface ArrivalGuideCacheEntry {
-  key: string;
-  steps: GuideStep[];
-}
+/** facilities/boarding/arrival-guide キャッシュのTTL(日数)。 */
+const AI_CACHE_TTL_DAYS = 90;
 
 /**
  * 改札後導線AI生成のキャッシュキー。同じ駅の同じ改札→出口の組み合わせで
  * 再生成(検索グラウンディングは最大55秒かかる)を避けるため。
+ * stationIdが先頭にあるため、将来の駅単位無効化はこのprefix(`${stationId}__`)
+ * で一発にできる。
  */
 function arrivalGuideCacheKey(stationId: string, gateName: string, exitName: string): string {
   return `${stationId}__${gateName}__${exitName}`;
@@ -61,23 +62,29 @@ const MAX_DESTINATION_HINT_ENTRIES_PER_STATION = 5;
 const DESTINATION_HINT_RATE_LIMIT_WINDOW_MS = 60_000;
 const MAX_DESTINATION_HINT_GENERATIONS_PER_WINDOW = 10;
 
-interface FacilitiesCacheEntry {
-  stationId: string;
-  /**
-   * 目的地施設名(place由来の目的地のみ、駅そのものが目的地の場合はnull)。
-   * 同じ駅でも目的地によって推奨される改札・出口が変わりうるため、
-   * stationIdとの複合キーでキャッシュを分ける。既存のキャッシュエントリ
-   * (このフィールド追加前に書き込まれたもの)にはこのフィールドが存在しない
-   * が、読み込み時に`?? null`で補完するため後方互換性は保たれる
-   * (destinationHintを指定しない=駅目的地の検索には引き続きヒットする)。
-   */
-  destinationHint: string | null;
-  facilities: StationFacility[];
+/**
+ * facilities キャッシュのキー。destinationHint 無し(駅そのものが目的地)は
+ * stationId単独、destinationHint 有りは `${stationId}::h::` を接頭辞に持つ。
+ * stationId が常に先頭にあるため、駅単位の件数カウント・LRU削除は
+ * このprefixに対する countByKeyPrefix/deleteOldestByKeyPrefix で行える。
+ */
+function facilitiesCacheKey(stationId: string, destinationHint: string | null): string {
+  return destinationHint === null
+    ? stationId
+    : `${facilitiesHintPrefix(stationId)}${encodeURIComponent(destinationHint)}`;
 }
 
-interface BoardingCacheEntry {
-  key: string;
-  boardingPosition: BoardingPosition;
+function facilitiesHintPrefix(stationId: string): string {
+  return `${stationId}::h::`;
+}
+
+/**
+ * fixture platform に一致する区間(実在の platformId)向けの boarding キャッシュキー。
+ * stationId を先頭に付けることで、実在の platformId(pf_...)自体が別駅の
+ * ものと衝突しても駅単位で区別できる。
+ */
+function fixtureBoardingCacheKey(stationId: string, platformId: string): string {
+  return `${stationId}::pf::${platformId}`;
 }
 
 /**
@@ -85,22 +92,20 @@ interface BoardingCacheEntry {
  * キャッシュキー。実在の platformId(pf_...)と衝突しないよう区切り文字で分離する。
  */
 function lineBoardingCacheKey(stationId: string, line: string, direction: string): string {
-  return `line__${stationId}__${line}__${direction}`;
-}
-
-interface NearbyStationCacheEntry {
-  station: Station;
+  return `${stationId}::line::${line}::${direction}`;
 }
 
 /**
  * FixtureStationAdapter を優先しつつ、fixture に無い駅の改札・出口・号車情報は
  * Gemini で下書き生成して confidence: low として補う複合アダプター。
- * 生成結果はローカルJSONにキャッシュし、同じ駅への再生成を避ける。
+ * 生成結果は KvCacheStore(Turso本番・ローカルJSONフォールバック)にキャッシュし、
+ * 同じ駅への再生成を避ける。
  *
- * キャッシュ書き込みが失敗しても(例: 読み取り専用ファイルシステムの本番環境)、
- * 生成結果自体は返す。キャッシュは最適化であり必須要件ではないため。
- * 生成に失敗した(空/null)結果はキャッシュしない — 一時的なAPI障害を
- * 恒久的な「情報なし」として固定してしまうのを防ぐため。
+ * キャッシュの読み書きが失敗しても(例: 読み取り専用ファイルシステムの本番環境)、
+ * KvCacheStore自身が例外を握りつぶし生成結果を返せる設計になっているため、
+ * このクラス側でtry/catchする必要はない。キャッシュは最適化であり必須要件ではない
+ * という方針は変わらない。生成に失敗した(空/null)結果はキャッシュしない —
+ * 一時的なAPI障害を恒久的な「情報なし」として固定してしまうのを防ぐため。
  */
 export class CompositeStationAdapter implements StationProviderPort {
   private readonly fixture = new FixtureStationAdapter();
@@ -138,7 +143,7 @@ export class CompositeStationAdapter implements StationProviderPort {
       .filter((s) => !fixtureIds.has(s.stationId))
       .slice(0, MAX_SEARCH_RESULTS);
 
-    this.cacheNearbyStations(additional);
+    await this.cacheNearbyStations(additional);
 
     return [...fixtureMatches, ...additional];
   }
@@ -147,9 +152,8 @@ export class CompositeStationAdapter implements StationProviderPort {
     const fixtureStation = await this.fixture.getStation(stationId);
     if (fixtureStation) return fixtureStation;
 
-    const cache = readCollection<NearbyStationCacheEntry>(NEARBY_STATION_CACHE);
-    const cached = cache.find((c) => c.station.stationId === stationId)?.station;
-    if (cached) return cached;
+    const cachedEntry = await getKvCacheStore().get<Station>(NEARBY_STATION_CACHE, stationId);
+    if (cachedEntry) return cachedEntry.value;
 
     // キャッシュ書き込みが失敗していても(読み取り専用ファイルシステム等)、
     // HeartRails由来のstationIdには駅名・座標が自己完結的に埋め込まれているため
@@ -205,33 +209,29 @@ export class CompositeStationAdapter implements StationProviderPort {
     }
 
     const limited = fromApi.slice(0, limit);
-    this.cacheNearbyStations(limited);
+    await this.cacheNearbyStations(limited);
 
     return limited;
   }
 
   /**
-   * HeartRails由来の駅を後から getStation() で解決できるようローカルJSONに
-   * キャッシュする(nearestStations・searchStations共通)。
-   * readCollection/writeCollection は同期I/Oのため呼び出し中は検索結果の
-   * 返却をブロックする(既存のnearestStationsと同じ設計を踏襲)。
-   * 書き込みが失敗しても(読み取り専用ファイルシステム等)例外は握りつぶし、
-   * 検索結果自体は返す — キャッシュは最適化であり必須要件ではないため。
+   * HeartRails由来の駅を後から getStation() で解決できるようKvCacheStoreに
+   * キャッシュする(nearestStations・searchStations共通)。stationId自体を
+   * キーにするため、同一駅の再キャッシュは自然に上書き(重複排除)される。
+   * 書き込みが失敗しても(読み取り専用ファイルシステム等)、KvCacheStore自身が
+   * 例外を握りつぶすため検索結果自体は返せる — キャッシュは最適化であり
+   * 必須要件ではないため。呼び出し元(searchStations/nearestStations)は
+   * これをawaitすることで、直後のgetStation()呼び出しが確実にキャッシュを
+   * 参照できるようにする。
    */
-  private cacheNearbyStations(stations: Station[]): void {
+  private async cacheNearbyStations(stations: Station[]): Promise<void> {
     if (stations.length === 0) return;
-    try {
-      const cache = readCollection<NearbyStationCacheEntry>(NEARBY_STATION_CACHE);
-      const existingIds = new Set(cache.map((c) => c.station.stationId));
-      const toAdd = stations
-        .filter((s) => !existingIds.has(s.stationId))
-        .map((station) => ({ station }));
-      if (toAdd.length > 0) {
-        writeCollection(NEARBY_STATION_CACHE, [...cache, ...toAdd]);
-      }
-    } catch {
-      // キャッシュ保存は最適化にすぎないため、失敗しても検索結果自体は返す。
-    }
+    const store = getKvCacheStore();
+    await Promise.all(
+      stations.map((station) =>
+        store.set(NEARBY_STATION_CACHE, station.stationId, station, { ttlDays: null })
+      )
+    );
   }
 
   async getFacilities(
@@ -241,11 +241,12 @@ export class CompositeStationAdapter implements StationProviderPort {
     const fixtureFacilities = await this.fixture.getFacilities(stationId);
     if (fixtureFacilities.length > 0) return fixtureFacilities;
 
-    const cache = readCollection<FacilitiesCacheEntry>(FACILITIES_CACHE);
-    const cached = cache.find(
-      (c) => c.stationId === stationId && (c.destinationHint ?? null) === rawDestinationHint
+    const store = getKvCacheStore();
+    const cached = await store.get<StationFacility[]>(
+      FACILITIES_CACHE,
+      facilitiesCacheKey(stationId, rawDestinationHint)
     );
-    if (cached) return cached.facilities;
+    if (cached) return cached.value;
 
     const station = await this.getStation(stationId);
     if (!station) return [];
@@ -283,10 +284,11 @@ export class CompositeStationAdapter implements StationProviderPort {
         : rawDestinationHint;
 
     if (destinationHint !== rawDestinationHint) {
-      const fallbackCached = cache.find(
-        (c) => c.stationId === stationId && (c.destinationHint ?? null) === destinationHint
+      const fallbackCached = await store.get<StationFacility[]>(
+        FACILITIES_CACHE,
+        facilitiesCacheKey(stationId, destinationHint)
       );
-      if (fallbackCached) return fallbackCached.facilities;
+      if (fallbackCached) return fallbackCached.value;
     }
 
     // rawDestinationHintがnull以外なら(フォールバックでnullに正規化された
@@ -321,19 +323,13 @@ export class CompositeStationAdapter implements StationProviderPort {
 
     const withStationId = generated.map((f) => ({ ...f, stationId }));
 
-    try {
-      const cacheAfterEviction = this.evictOldestDestinationHintEntryIfNeeded(
-        cache,
-        stationId,
-        destinationHint
-      );
-      writeCollection(FACILITIES_CACHE, [
-        ...cacheAfterEviction,
-        { stationId, destinationHint, facilities: withStationId },
-      ]);
-    } catch {
-      // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。
-    }
+    await this.evictOldestDestinationHintEntryIfNeeded(store, stationId, destinationHint);
+    await store.set(
+      FACILITIES_CACHE,
+      facilitiesCacheKey(stationId, destinationHint),
+      withStationId,
+      { ttlDays: AI_CACHE_TTL_DAYS }
+    );
 
     return withStationId;
   }
@@ -357,27 +353,32 @@ export class CompositeStationAdapter implements StationProviderPort {
 
   /**
    * 同一駅のdestinationHint付きエントリが上限に達している場合、作成順で最も
-   * 古い1件を除いたキャッシュ配列を返す(evict)。上限未満の場合やdestinationHint
-   * がnull(駅自体が目的地)の場合はそのまま返す。
+   * 古い1件をKvCacheStoreから削除する(evict)。上限未満の場合やdestinationHint
+   * がnull(駅自体が目的地)の場合は何もしない。destinationHint付きエントリは
+   * すべて`${stationId}::h::`を接頭辞に持つため、countByKeyPrefix/
+   * deleteOldestByKeyPrefixで駅単位に絞り込める。
+   *
+   * 正直な限界: count→deleteOldest→setは3つの別個の非同期操作で、原子的
+   * (トランザクション)ではない(/ai-review指摘、Medium)。同一駅への異なる
+   * destinationHintを持つリクエストが同時に到達すると、両者が同じ件数を
+   * 読んで削除判断するため、上限を若干超過することがありうる(旧実装の
+   * 同期I/Oでは原理上起きなかった競合が、非同期化により理論上可能になった)。
+   * これはベストエフォートの緩和策であり、KvCacheStore側にトランザクション
+   * 操作を追加しない限り解消できない。実害は「上限が5件を若干超える」程度
+   * (無制限の肥大化ではない)なので、現時点では許容する。
    */
-  private evictOldestDestinationHintEntryIfNeeded(
-    cache: FacilitiesCacheEntry[],
+  private async evictOldestDestinationHintEntryIfNeeded(
+    store: KvCacheStore,
     stationId: string,
     destinationHint: string | null
-  ): FacilitiesCacheEntry[] {
-    if (destinationHint === null) return cache;
+  ): Promise<void> {
+    if (destinationHint === null) return;
 
-    const oldestIndex = cache.findIndex(
-      (c) => c.stationId === stationId && c.destinationHint !== null
-    );
-    const entryCount = cache.filter(
-      (c) => c.stationId === stationId && c.destinationHint !== null
-    ).length;
-    if (entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION || oldestIndex === -1) {
-      return cache;
-    }
+    const prefix = facilitiesHintPrefix(stationId);
+    const entryCount = await store.countByKeyPrefix(FACILITIES_CACHE, prefix);
+    if (entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION) return;
 
-    return cache.filter((_, i) => i !== oldestIndex);
+    await store.deleteOldestByKeyPrefix(FACILITIES_CACHE, prefix);
   }
 
   async getBoardingPosition(
@@ -409,12 +410,12 @@ export class CompositeStationAdapter implements StationProviderPort {
       ? verifiedFixturePlatform.direction
       : direction;
     const cacheKey = verifiedFixturePlatform
-      ? platformId
+      ? fixtureBoardingCacheKey(stationId, platformId)
       : lineBoardingCacheKey(stationId, line, direction);
 
-    const cache = readCollection<BoardingCacheEntry>(BOARDING_CACHE);
-    const cached = cache.find((c) => c.key === cacheKey);
-    if (cached) return cached.boardingPosition;
+    const store = getKvCacheStore();
+    const cached = await store.get<BoardingPosition>(BOARDING_CACHE, cacheKey);
+    if (cached) return cached.value;
 
     // 到着番線が判明していれば号車推定へ引き渡す。fixture platformが検証済みなら
     // その正規のplatformNumberを使い(最も確実)、そうでない場合はgenerateRailRoute
@@ -438,11 +439,7 @@ export class CompositeStationAdapter implements StationProviderPort {
     );
     if (!generated) return null;
 
-    try {
-      writeCollection(BOARDING_CACHE, [...cache, { key: cacheKey, boardingPosition: generated }]);
-    } catch {
-      // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。
-    }
+    await store.set(BOARDING_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
 
     return generated;
   }
@@ -455,9 +452,9 @@ export class CompositeStationAdapter implements StationProviderPort {
     arrivalStationCoordinates: Coordinates | null = null
   ): Promise<GuideStep[]> {
     const cacheKey = arrivalGuideCacheKey(stationId, gateName, exitName);
-    const cache = readCollection<ArrivalGuideCacheEntry>(ARRIVAL_GUIDE_CACHE);
-    const cached = cache.find((c) => c.key === cacheKey);
-    if (cached) return cached.steps;
+    const store = getKvCacheStore();
+    const cached = await store.get<GuideStep[]>(ARRIVAL_GUIDE_CACHE, cacheKey);
+    if (cached) return cached.value;
 
     const generated = await generateArrivalNarrativeSteps(
       this.geminiApiKey,
@@ -471,11 +468,7 @@ export class CompositeStationAdapter implements StationProviderPort {
     // キャッシュと同じ方針)。
     if (generated.length === 0) return [];
 
-    try {
-      writeCollection(ARRIVAL_GUIDE_CACHE, [...cache, { key: cacheKey, steps: generated }]);
-    } catch {
-      // キャッシュ保存は最適化にすぎないため、失敗しても生成結果は返す。
-    }
+    await store.set(ARRIVAL_GUIDE_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
 
     return generated;
   }
