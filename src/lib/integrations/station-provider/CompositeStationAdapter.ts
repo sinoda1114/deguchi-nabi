@@ -366,6 +366,24 @@ export class CompositeStationAdapter implements StationProviderPort {
    * これはベストエフォートの緩和策であり、KvCacheStore側にトランザクション
    * 操作を追加しない限り解消できない。実害は「上限が5件を若干超える」程度
    * (無制限の肥大化ではない)なので、現時点では許容する。
+   *
+   * 追加の正直な限界: countByKeyPrefixはストア読み取りエラー時も例外を
+   * 投げず0を返す設計(PR1で確定、KvCacheStore全実装共通の方針)。そのため
+   * 「真に0件」と「エラーでたまたま0が返った」を呼び出し元は区別できない
+   * (Cursor Bugbotの自動生成PRでの指摘)。下の条件はentryCount===0でも
+   * deleteOldestByKeyPrefixを試みる(0を除外しない)ことでこれを緩和する:
+   * 対象行が実際に無ければdeleteOldestByKeyPrefixのサブクエリが該当なしで
+   * 安全にno-opになり(turso-kv-store.ts参照)、新規駅への初回
+   * destinationHint登録という正常系への実害は「無駄なDELETEクエリ1回」の
+   * みで、かつこのケースはeviction後は件数が0に戻らない設計上、駅ごとに
+   * 生涯で最大1回しか発生しない。一方、読み取りが一時的なエラーで0を返し
+   * 実際は上限に達していた場合、この呼び出しが最古の1件を削除でき上限
+   * 超過を緩和できる可能性がある(読み取りと書き込みは別クエリのため、
+   * 読み取り失敗が書き込み失敗を必ずしも意味しない)。読み取りと削除の
+   * 両方が同じ原因で失敗する場合は緩和されないが、それでも「0を除外して
+   * 常にスキップする」よりは安全側に倒れる。根本解決(エラーと真の0件を
+   * 区別できるAPIへの変更)はKvCacheStoreインターフェースの見直しを伴う
+   * ためこのPRのスコープを超え、現状はこのベストエフォート緩和で許容する。
    */
   private async evictOldestDestinationHintEntryIfNeeded(
     store: KvCacheStore,
@@ -376,10 +394,6 @@ export class CompositeStationAdapter implements StationProviderPort {
 
     const prefix = facilitiesHintPrefix(stationId);
     const entryCount = await store.countByKeyPrefix(FACILITIES_CACHE, prefix);
-    // A count of 0 might indicate a store read error rather than truly empty.
-    // Defensively attempt eviction in that case to prevent bypassing the cap
-    // if the store actually contains MAX entries. deleteOldestByKeyPrefix is
-    // safe to call even when no entries exist.
     if (entryCount > 0 && entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION) return;
 
     await store.deleteOldestByKeyPrefix(FACILITIES_CACHE, prefix);
