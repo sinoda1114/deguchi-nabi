@@ -261,7 +261,7 @@ export async function fetchImageAsInlineData(url: string): Promise<FetchedImage 
       await cancelBody(res);
       return null;
     }
-    const declaredMimeType = contentType.split(";")[0]?.trim() ?? contentType;
+    const declaredMimeType = (contentType.split(";")[0]?.trim() ?? contentType).toLowerCase();
     if (!SUPPORTED_IMAGE_MIME_TYPES.has(declaredMimeType)) {
       await cancelBody(res);
       return null;
