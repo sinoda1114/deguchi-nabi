@@ -15,6 +15,7 @@
     "@heroui/styles": "3.2.2",
     "@langfuse/otel": "5.9.1",
     "@langfuse/vercel-ai-sdk": "5.9.1",
+    "@libsql/client": "0.17.4",
     "@opentelemetry/sdk-trace-node": "2.9.0",
     "ai": "7.0.31",
     "lucide-react": "1.24.0",
