@@ -17,6 +17,20 @@
  * 画像が見つからない/取得できない場合は、画像なしの既存Grounding
  * (generateStationFacilities)へフォールバックする — Vision統合前と同じ
  * 挙動を維持し、悪化させないため。
+ *
+ * 正直な限界: 画像はSerperの画像検索結果(外部の非認証情報源、
+ * facilities-image-search.ts)から取得しており、この画像に埋め込まれた
+ * テキストラベルは検索プロンプト内で「最優先の情報源」として扱われる
+ * (/security-review指摘、Medium: プロンプトインジェクション類似のリスク)。
+ * 検索順位を意図的に操作した画像(実在しない改札名・誤った出口情報を
+ * 記載した偽の構内図)が上位候補に選ばれた場合、それがそのまま抽出結果に
+ * 反映されうる。緩和策として`facilities-image-search.ts`の
+ * `prioritizeByTitleMatch`でtitleに駅名を含む候補を優先しているが、
+ * 画像内容自体の真正性検証(公式ドメインへの限定、既存Grounding結果との
+ * クロスチェック等)までは行っていない。この画像入力を伴う生成結果は
+ * 他の`ai_inferred`由来の情報と同様にconfidence: medium上限で扱われ、
+ * 現地未確認の推測情報である旨がUIに明示される設計(既存方針を維持)ため、
+ * 実害は限定的と判断し、根本対策は将来の改善課題として残す。
  */
 
 import type { Coordinates, StationFacility } from "@/lib/domain/station";

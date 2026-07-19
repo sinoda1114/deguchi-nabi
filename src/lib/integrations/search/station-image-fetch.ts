@@ -1,4 +1,6 @@
-import { lookup } from "node:dns/promises";
+import { lookup as dnsLookup } from "node:dns";
+import { isIP } from "node:net";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 
 /**
  * 画像URLを検証つきで取得し、Gemini Vision の inline_data 形式(base64)へ
@@ -8,11 +10,19 @@ import { lookup } from "node:dns/promises";
  * 返しうるため、取得前後で以下を検証する(/ai-review指摘、Codexのセカンド
  * オピニオンを踏まえて強化):
  * - http/https以外のスキームは拒否(file://等へのSSRF対策)
- * - ホスト名をDNS解決し、loopback/link-local(クラウドメタデータ169.254.169.254
- *   含む)/プライベートIP(v4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16、
- *   v6: ::1, fc00::/7, fe80::/10)へ解決される場合はfetchしない(SSRF対策、
- *   High指摘)。複数アドレスに解決される場合は1件でも該当すれば拒否する
- *   安全側の判定。DNS解決自体の失敗も安全側に倒してfetchしない
+ * - ホスト名解決をundiciのAgentの`connect.lookup`フックで検証する
+ *   (loopback/link-local(クラウドメタデータ169.254.169.254含む)/
+ *   プライベートIP(v4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16、
+ *   v6: ::1, fc00::/7, fe80::/10)を拒否)。
+ *
+ *   重要: 事前に別途DNS解決してチェックしてから通常のfetchを呼ぶ実装では、
+ *   検証時の名前解決と実際の接続時の名前解決が別々のタイミングで行われ、
+ *   攻撃者が権威DNSを制御し極端に短いTTLを設定すれば、検証時はパブリック
+ *   IPを、接続時はプライベートIP(DNS rebinding)を返すことでSSRF対策を
+ *   バイパスできてしまう(TOCTOU、/security-review指摘、High)。この
+ *   Agentの`connect.lookup`フックは実際のTCP接続に使われる名前解決その
+ *   ものをフックするため、検証と接続が同一の解決結果を使うことが保証され
+ *   TOCTOUが構造的に発生しない
  * - Content-Typeが対応画像形式であることを事前確認し、かつ取得したbodyの
  *   マジックバイトが宣言された形式と一致することを検証する(Medium指摘:
  *   宣言だけでは任意コンテンツをimage/pngと偽装して渡せてしまうため)
@@ -112,17 +122,59 @@ function isPrivateOrReservedIp(address: string, family: number): boolean {
 }
 
 /**
- * ホスト名をDNS解決し、全ての解決先がパブリックIPであることを確認する。
- * 解決失敗・1件でもプライベート/予約範囲が含まれる場合は安全側に倒しfalseを返す。
+ * URLのホスト名がIPリテラル(例: `http://127.0.0.1/`, `http://[::1]/`)で、
+ * かつプライベート/予約範囲であればtrueを返す(/security-review再指摘、
+ * High)。IPリテラルのURLはTCP接続時に名前解決自体が発生しないため、
+ * undiciのAgentの`connect.lookup`フックが呼ばれない(=SSRF対策が素通り
+ * する)経路になりうる。ホスト名が既にIPアドレスの場合はDNS解決を待たず
+ * ここで直接判定する。
  */
-async function isSafeHostname(hostname: string): Promise<boolean> {
-  try {
-    const addresses = await lookup(hostname, { all: true });
-    if (addresses.length === 0) return false;
-    return addresses.every((addr) => !isPrivateOrReservedIp(addr.address, addr.family));
-  } catch {
-    return false;
-  }
+function isBlockedIpLiteralUrl(url: string): boolean {
+  // URL.hostnameはIPv6リテラルを"[::1]"のようにブラケット付きで返すため、
+  // net.isIP()に渡す前に取り除く(ブラケット付きのままだとIPと認識されない)。
+  const hostname = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(hostname);
+  if (family === 0) return false; // IPリテラルではない(通常のホスト名)
+  return isPrivateOrReservedIp(hostname, family);
+}
+
+type NodeLookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: string,
+  family: number
+) => void;
+
+/**
+ * undiciのAgentの`connect.lookup`へ渡すカスタム名前解決関数を作る。
+ * 実際のTCP接続に使われる名前解決そのものをフックするため、検証と接続が
+ * 別タイミングの解決結果を使うことによるTOCTOU(DNS rebinding)を構造的に
+ * 防げる(/security-review指摘、High)。全解決先を確認し、1件でもプライベート
+ * /予約範囲が含まれれば接続自体をエラーにする安全側の判定。
+ */
+export function createSsrfSafeLookup() {
+  return (hostname: string, _options: unknown, callback: NodeLookupCallback): void => {
+    dnsLookup(hostname, { all: true }, (err, addresses) => {
+      if (err) {
+        callback(err, "", 4);
+        return;
+      }
+      if (!addresses || addresses.length === 0) {
+        callback(new Error(`SSRF guard: ${hostname} が名前解決できませんでした`), "", 4);
+        return;
+      }
+      const unsafe = addresses.find((addr) => isPrivateOrReservedIp(addr.address, addr.family));
+      if (unsafe) {
+        callback(
+          new Error(`SSRF guard: ${hostname} はプライベート/予約IPへ解決されたためブロックしました`),
+          "",
+          4
+        );
+        return;
+      }
+      const chosen = addresses[0];
+      callback(null, chosen.address, chosen.family);
+    });
+  };
 }
 
 /** 宣言されたContent-Typeとマジックバイトから検出した実体の画像形式が一致するか確認する。 */
@@ -138,7 +190,10 @@ function detectMimeTypeFromMagicBytes(bytes: Uint8Array): string | null {
  * 読み取りを打ち切る。Content-Lengthが無い/偽装されている場合でも、
  * 実際に読んだバイト数で上限を強制できる(/ai-review指摘、High)。
  */
-async function readBodyWithLimit(res: Response, maxBytes: number): Promise<Uint8Array | null> {
+async function readBodyWithLimit(
+  res: Awaited<ReturnType<typeof undiciFetch>>,
+  maxBytes: number
+): Promise<Uint8Array | null> {
   const reader = res.body?.getReader();
   if (!reader) return null;
 
@@ -167,32 +222,51 @@ async function readBodyWithLimit(res: Response, maxBytes: number): Promise<Uint8
   return combined;
 }
 
+/**
+ * 未消費のレスポンスbodyを破棄する。呼ばずに関数を抜けると、相手サーバーが
+ * ヘッダー送信後にbodyを終端しない場合、直後のAgent.close()が未完了の
+ * コネクションの終了を待って滞留しうる(/security-review再指摘、Medium)。
+ */
+async function cancelBody(res: Awaited<ReturnType<typeof undiciFetch>>): Promise<void> {
+  await res.body?.cancel().catch(() => {});
+}
+
 export async function fetchImageAsInlineData(url: string): Promise<FetchedImage | null> {
   if (!isFetchableUrl(url)) return null;
+  if (isBlockedIpLiteralUrl(url)) return null;
 
-  let hostname: string;
-  try {
-    hostname = new URL(url).hostname;
-  } catch {
-    return null;
-  }
-  if (!(await isSafeHostname(hostname))) return null;
+  // SSRF対策: undiciのAgentごとにconnect.lookupフックを設定し、実際のTCP接続に
+  // 使われる名前解決そのものでプライベートIPを拒否する(TOCTOU対策、上記コメント参照)。
+  const agent = new Agent({ connect: { lookup: createSsrfSafeLookup() } });
 
   try {
-    const res = await fetch(url, {
+    const res = await undiciFetch(url, {
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      dispatcher: agent as unknown as Dispatcher,
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      await cancelBody(res);
+      return null;
+    }
 
     const contentType = res.headers.get("content-type");
-    if (!contentType) return null;
+    if (!contentType) {
+      await cancelBody(res);
+      return null;
+    }
     const declaredMimeType = contentType.split(";")[0]?.trim() ?? contentType;
-    if (!SUPPORTED_IMAGE_MIME_TYPES.has(declaredMimeType)) return null;
+    if (!SUPPORTED_IMAGE_MIME_TYPES.has(declaredMimeType)) {
+      await cancelBody(res);
+      return null;
+    }
 
     const contentLength = res.headers.get("content-length");
-    if (contentLength && Number(contentLength) > MAX_IMAGE_BYTES) return null;
+    if (contentLength && Number(contentLength) > MAX_IMAGE_BYTES) {
+      await cancelBody(res);
+      return null;
+    }
 
     const bytes = await readBodyWithLimit(res, MAX_IMAGE_BYTES);
     if (!bytes) return null;
@@ -206,5 +280,7 @@ export async function fetchImageAsInlineData(url: string): Promise<FetchedImage 
     };
   } catch {
     return null;
+  } finally {
+    await agent.close().catch(() => {});
   }
 }
