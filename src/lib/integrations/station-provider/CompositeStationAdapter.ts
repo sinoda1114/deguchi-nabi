@@ -3,6 +3,8 @@ import { FixtureStationAdapter } from "./FixtureStationAdapter";
 import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-generation";
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
+import { generateUnifiedArrivalGuide } from "./unified-arrival-guide-generation";
+import { groundedAiConfidence } from "./ai-generation";
 import {
   decodeHeartRailsStationId,
   fetchNearestStationsFromHeartRails,
@@ -17,7 +19,7 @@ import type {
   Station,
   StationFacility,
 } from "@/lib/domain/station";
-import type { GuideStep } from "@/lib/domain/route";
+import type { GuideStep, UnifiedArrivalGuide } from "@/lib/domain/route";
 
 const NEARBY_STATION_CACHE = "nearby-stations";
 
@@ -270,6 +272,50 @@ export class CompositeStationAdapter implements StationProviderPort {
       exitName,
       arrivalStationCoordinates
     );
+  }
+
+  async getUnifiedArrivalGuide(
+    _stationId: string,
+    stationName: string,
+    operator: string,
+    lines: string[],
+    originStationName: string,
+    destinationHint: string | null,
+    stationCoordinates: Coordinates | null,
+    destinationPlaceCoordinates: Coordinates | null
+  ): Promise<UnifiedArrivalGuide | null> {
+    const result = await generateUnifiedArrivalGuide(
+      this.geminiApiKey,
+      originStationName,
+      stationName,
+      operator,
+      lines,
+      destinationHint,
+      stationCoordinates,
+      destinationPlaceCoordinates
+    );
+    if (!result) return null;
+
+    return {
+      gate: result.gate
+        ? { name: result.gate.name, confidence: groundedAiConfidence(result.gate.confidenceLevel) }
+        : null,
+      exit: result.exit
+        ? { name: result.exit.name, confidence: groundedAiConfidence(result.exit.confidenceLevel) }
+        : null,
+      walkingSteps: result.walkingSteps.map((step) => ({
+        type: "public_passage",
+        title: step.title,
+        instruction: step.instruction,
+        landmarks: [],
+        confidence: groundedAiConfidence(step.confidenceLevel),
+        provenance: "ai_inferred",
+      })),
+    };
+  }
+
+  async getFixtureFacilities(stationId: string): Promise<StationFacility[]> {
+    return this.fixture.getFacilities(stationId);
   }
 
   private findPlatform(platformId: string): Platform | null {

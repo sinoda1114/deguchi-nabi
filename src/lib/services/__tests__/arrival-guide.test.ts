@@ -285,4 +285,68 @@ describe("buildArrivalGuide", () => {
 
     expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit"]);
   });
+
+  test("unifiedWalkingStepsが渡された場合はそれをそのまま中間ステップとして使い、getArrivalGuideNarrativeStepsは呼ばない(council議論2026-07-20: 同一検索セッションで一貫生成された結果のため、別セッションでの推測重ねを避ける)", async () => {
+    const getArrivalGuideNarrativeSteps = vi.fn().mockResolvedValue([]);
+    const unifiedStep = guideStep({ type: "public_passage", title: "統合生成ステップ" });
+
+    const guide = await buildArrivalGuide(
+      baseResult({
+        gate: facility({ facilityType: "gate", name: "統合改札", provenance: "ai_inferred" }),
+        exit: facility({ facilityType: "exit", name: "統合出口", provenance: "ai_inferred" }),
+      }),
+      "st_1",
+      "テスト駅",
+      null,
+      "easy",
+      false,
+      { getArrivalGuideNarrativeSteps },
+      [unifiedStep]
+    );
+
+    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "public_passage", "street_exit"]);
+    expect(guide.steps[1].title).toBe("統合生成ステップ");
+    expect(getArrivalGuideNarrativeSteps).not.toHaveBeenCalled();
+  });
+
+  test("unifiedWalkingStepsが空配列でもナラティブ生成は呼ばない(nullとの区別。統合生成成功で徒歩ルートが無かった場合を正しく扱う)", async () => {
+    const getArrivalGuideNarrativeSteps = vi.fn().mockResolvedValue([]);
+
+    const guide = await buildArrivalGuide(
+      baseResult({
+        gate: facility({ facilityType: "gate", name: "統合改札", provenance: "ai_inferred" }),
+        exit: facility({ facilityType: "exit", name: "統合出口", provenance: "ai_inferred" }),
+      }),
+      "st_1",
+      "テスト駅",
+      null,
+      "easy",
+      false,
+      { getArrivalGuideNarrativeSteps },
+      []
+    );
+
+    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit"]);
+    expect(getArrivalGuideNarrativeSteps).not.toHaveBeenCalled();
+  });
+
+  test("unifiedWalkingStepsを省略(未指定)した場合は従来通りcanGenerateNarrative経由の判定になる", async () => {
+    const getArrivalGuideNarrativeSteps = vi.fn().mockResolvedValue([]);
+
+    await buildArrivalGuide(
+      baseResult({
+        gate: facility({ facilityType: "gate", name: "南改札", provenance: "ai_inferred" }),
+        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "ai_inferred" }),
+      }),
+      "st_1",
+      "テスト駅",
+      null,
+      "easy",
+      false,
+      { getArrivalGuideNarrativeSteps }
+    );
+
+    // gate/exitがai_inferredのため、従来ロジックならナラティブ生成は呼ばれない。
+    expect(getArrivalGuideNarrativeSteps).not.toHaveBeenCalled();
+  });
 });

@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import type {
   AccessibilityCondition,
   ArrivalGuide,
+  GuideStep,
   KeyInstruction,
   RouteConfidenceSummary,
   RouteGuide,
   RouteMode,
   RouteSegment,
+  UnifiedArrivalGuide,
 } from "@/lib/domain/route";
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
 import { unavailableConfidence } from "@/lib/domain/confidence";
@@ -134,6 +137,32 @@ function pickGateForExit(
     if (linkedGate) return linkedGate;
   }
   return pickFacility(facilities, "gate");
+}
+
+/**
+ * 統合生成(unified-arrival-guide-generation.ts)が返すgate/exitを、既存の
+ * StationFacility型へ変換する。座標を持たない(coordinates: null)ため、
+ * この関数の戻り値を既存のresolveExitRecommendation(座標ベース選定)には
+ * 通さず、直接transferSegment/exitSegmentの構築に使う。
+ */
+function toUnifiedStationFacility(
+  facilityType: "gate" | "exit",
+  stationId: string,
+  facility: { name: string; confidence: StationFacility["confidence"] }
+): StationFacility {
+  return {
+    facilityId: randomUUID(),
+    stationId,
+    facilityType,
+    name: facility.name,
+    level: "",
+    accessible: false,
+    coordinates: null,
+    connectedGateId: null,
+    confidence: facility.confidence,
+    verifiedAt: null,
+    provenance: "ai_inferred",
+  };
 }
 
 export type ExitRecommendationTier = "exact" | "approximate" | "unavailable";
@@ -445,30 +474,103 @@ export async function buildTransferAndExitSegments(
     process.env.DESTINATION_HINT_ENABLED === "1" && input.destinationCoordinates
       ? input.destinationLabel
       : null;
-  const arrivalFacilities = await deps.stationProvider.getFacilities(
-    input.destinationStationId,
-    destinationHint
-  );
 
-  // 出口→改札の順で選ぶ(逆算)。目的地座標に最も近い出口を選び、その出口の
-  // connectedGateId から対応する改札を逆引きする(docs/04_EXIT_SELECTION_DESIGN.md)。
-  // 候補集合が不完全(閉世界仮定の誤り)な場合は具体的な出口を名指しせず
-  // 方角のみの案内に格下げする(resolveExitRecommendation参照)。到着駅の
-  // 中心座標は resolveRouteCandidate で取得済みの candidate から再利用し、
-  // ここでの再フェッチは行わない(Promise共有時の重複取得を防ぐため)。
-  // exitが確定しなかった場合、gateも「未確定の出口に紐づく改札」を
-  // 確信度高く名指しできないため、出口が無ければgateも無しとする。
-  // エレベーター・エスカレーターは「存在するかどうか」が重要で方向の影響は
-  // 小さいため、引き続き先頭一致で選ぶ(Phase 1のスコープ外)。
-  const recommendation = resolveExitRecommendation(
-    arrivalFacilities,
-    input.destinationCoordinates,
-    candidate.arrivalStationCoordinates
-  );
-  const exit = recommendation.exit;
-  const gate = exit ? pickGateForExit(arrivalFacilities, exit) : null;
-  const elevator = pickFacility(arrivalFacilities, "elevator");
-  const escalator = pickFacility(arrivalFacilities, "escalator");
+  // fixtureに出口が無い駅は、AI生成facilities一覧が座標を持たないため
+  // resolveExitRecommendationの座標ベース選定の対象外になり、常に
+  // hasApproximateGuidance(方角のみ)以下に落ちる構造的な限界があった
+  // (council議論2026-07-20)。座標マッチングを経由せず改札・出口・徒歩ルートを
+  // 直接AIに回答させる統合生成(unified-arrival-guide-generation.ts)を、
+  // accessibleモード以外かつ経路自体がAI生成でない場合(canGenerateNarrativeと
+  // 同じコスト濫用対策の考え方)に限って試す。
+  //
+  // fixtureのfacility一覧はgetFixtureFacilities(AI呼び出しを含まない)で先に
+  // 取得する。旧方式(getFacilities、fixtureに無ければAI生成へフォールバック
+  // する)を先に呼んでしまうと、統合生成が使われる状況では1リクエストでAI呼び出し
+  // が二重に発生してしまう(/ai-review指摘、Medium)。統合生成が使えない・出口を
+  // 確認できなかった場合のみ、フォールバックとしてgetFacilities(旧方式)を呼ぶ。
+  //
+  // 判定はexitの有無のみで行う(gateの有無では判定しない): fixtureにexitが
+  // 既にあれば、統合生成の部分結果(gateだけ、または両方null)でその既知データを
+  // 上書き・喪失させてはならない(/ai-review再指摘、Medium)。gateはexitから
+  // 逆引きする既存の設計(pickGateForExit)のため、exit基準の判定で一貫する。
+  //
+  // elevator/escalatorは統合生成が取得しない情報のため、fixtureにあれば常に
+  // それを使う(統合生成使用時に既知の設備情報を失わないため。/ai-review
+  // 再指摘、Medium: 改札・出口はfixtureに無いがエレベーター・エスカレーターは
+  // fixtureに収録済み、という駅が将来追加されても、その設備情報は
+  // 統合生成の対象になっても失われるべきではない)。
+  const fixtureFacilities = deps.stationProvider.getFixtureFacilities
+    ? await deps.stationProvider.getFixtureFacilities(input.destinationStationId)
+    : [];
+  const hasFixtureExit = fixtureFacilities.some((f) => f.facilityType === "exit");
+  let elevator = pickFacility(fixtureFacilities, "elevator");
+  let escalator = pickFacility(fixtureFacilities, "escalator");
+
+  const canTryUnified =
+    !hasFixtureExit &&
+    input.mode !== "accessible" &&
+    !candidate.chosen.isAiGenerated &&
+    Boolean(deps.stationProvider.getUnifiedArrivalGuide);
+
+  let unified: UnifiedArrivalGuide | null = null;
+  if (canTryUnified) {
+    const [originStation, destinationStation] = await Promise.all([
+      deps.stationProvider.getStation(input.originStationId),
+      deps.stationProvider.getStation(input.destinationStationId),
+    ]);
+    if (originStation && destinationStation) {
+      unified = await deps.stationProvider.getUnifiedArrivalGuide!(
+        input.destinationStationId,
+        destinationStation.stationName,
+        destinationStation.operator,
+        destinationStation.lines,
+        originStation.stationName,
+        destinationHint,
+        candidate.arrivalStationCoordinates,
+        input.destinationCoordinates
+      );
+    }
+  }
+
+  let exit: StationFacility | null;
+  let gate: StationFacility | null;
+  let unifiedWalkingSteps: GuideStep[] | null = null;
+  let recommendation: ExitRecommendation;
+
+  if (unified && unified.exit) {
+    // 統合生成が出口を確認できた場合のみ採用する(/ai-review再指摘、Medium:
+    // 出口を確認できなかった部分結果を「確認済み(exact)」として扱ってしまうと、
+    // UI・後続処理の確度表示を誤らせる)。
+    exit = toUnifiedStationFacility("exit", input.destinationStationId, unified.exit);
+    gate = unified.gate
+      ? toUnifiedStationFacility("gate", input.destinationStationId, unified.gate)
+      : null;
+    unifiedWalkingSteps = unified.walkingSteps;
+    recommendation = { tier: "exact", exit, destinationDirectionLabel: null };
+  } else {
+    const arrivalFacilities = await deps.stationProvider.getFacilities(
+      input.destinationStationId,
+      destinationHint
+    );
+    // 出口→改札の順で選ぶ(逆算)。目的地座標に最も近い出口を選び、その出口の
+    // connectedGateId から対応する改札を逆引きする(docs/04_EXIT_SELECTION_DESIGN.md)。
+    // 候補集合が不完全(閉世界仮定の誤り)な場合は具体的な出口を名指しせず
+    // 方角のみの案内に格下げする(resolveExitRecommendation参照)。到着駅の
+    // 中心座標は resolveRouteCandidate で取得済みの candidate から再利用し、
+    // ここでの再フェッチは行わない(Promise共有時の重複取得を防ぐため)。
+    // exitが確定しなかった場合、gateも「未確定の出口に紐づく改札」を
+    // 確信度高く名指しできないため、出口が無ければgateも無しとする。
+    recommendation = resolveExitRecommendation(
+      arrivalFacilities,
+      input.destinationCoordinates,
+      candidate.arrivalStationCoordinates
+    );
+    exit = recommendation.exit;
+    gate = exit ? pickGateForExit(arrivalFacilities, exit) : null;
+    // fixtureから既に取得済みなら維持し、無ければ旧方式(AI生成含む)の結果で補う。
+    elevator = elevator ?? pickFacility(arrivalFacilities, "elevator");
+    escalator = escalator ?? pickFacility(arrivalFacilities, "escalator");
+  }
 
   if (input.mode === "accessible" && !elevator) {
     return {
@@ -546,6 +648,10 @@ export async function buildTransferAndExitSegments(
   // 「確認できません」と明示する。
   const recommendedExit = exit?.name ?? "確認できません";
 
+  // 統合生成使用時はrecommendationを常にtier: "exact"として組み立てているため
+  // (上記参照)、この判定は自動的にfalseになる。
+  const hasApproximateGuidance = recommendation.tier === "approximate";
+
   const resultWithoutArrivalGuide: Omit<FacilitiesBuildSuccess, "arrivalGuide"> = {
     transferSegment,
     exitSegment,
@@ -553,9 +659,8 @@ export async function buildTransferAndExitSegments(
     gate,
     exit,
     elevator,
-    hasApproximateGuidance: recommendation.tier === "approximate",
-    approximateDirectionLabel:
-      recommendation.tier === "approximate" ? recommendation.destinationDirectionLabel : null,
+    hasApproximateGuidance,
+    approximateDirectionLabel: hasApproximateGuidance ? recommendation.destinationDirectionLabel : null,
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
@@ -568,7 +673,8 @@ export async function buildTransferAndExitSegments(
     candidate.arrivalStationCoordinates,
     input.mode,
     Boolean(candidate.chosen.isAiGenerated),
-    deps.stationProvider
+    deps.stationProvider,
+    unifiedWalkingSteps
   );
 
   return {

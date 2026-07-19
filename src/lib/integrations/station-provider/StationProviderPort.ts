@@ -5,7 +5,7 @@ import type {
   Station,
   StationFacility,
 } from "@/lib/domain/station";
-import type { GuideStep } from "@/lib/domain/route";
+import type { GuideStep, UnifiedArrivalGuide } from "@/lib/domain/route";
 
 export interface StationProviderPort {
   searchStations(query: string): Promise<Station[]>;
@@ -49,4 +49,34 @@ export interface StationProviderPort {
     exitName: string,
     arrivalStationCoordinates?: Coordinates | null
   ): Promise<GuideStep[]>;
+  /**
+   * 改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成する任意メソッド
+   * (council議論2026-07-20)。fixtureに改札・出口が無い駅のeasy/fastestモード向け。
+   * 未実装のアダプターは単に呼ばれない(既存のgetArrivalGuideNarrativeStepsと
+   * 同方針、必須メソッドにはしていない)。
+   */
+  getUnifiedArrivalGuide?(
+    stationId: string,
+    stationName: string,
+    operator: string,
+    lines: string[],
+    originStationName: string,
+    destinationHint: string | null,
+    stationCoordinates: Coordinates | null,
+    destinationPlaceCoordinates: Coordinates | null
+  ): Promise<UnifiedArrivalGuide | null>;
+  /**
+   * 指定駅のfixture収録済みfacility一覧を、AI生成を一切呼ばずに返す任意メソッド
+   * (council議論2026-07-20)。呼び出し元(route-search.ts)がgetUnifiedArrivalGuide
+   * を試すべきかを、既存のgetFacilities(fixtureに無ければAI生成へフォールバック
+   * する設計)を呼ばずに判定するために使う — でなければ統合生成を試す前提の分岐
+   * でも旧方式のAI生成が先に走ってしまい、1リクエストでAI呼び出しが二重になって
+   * しまう(/ai-review指摘、Medium)。fixtureにexitが無い駅かどうかの判定に加え、
+   * fixtureにelevator/escalatorだけ収録されている駅(西谷駅等)でその情報を
+   * 失わないためにも使う(統合生成はelevator/escalatorを取得しないため。
+   * /ai-review再指摘、Medium)。未実装のアダプターの場合、呼び出し元は
+   * 空配列(fixture無し)として扱い、安全側(既存のgetFacilities/AI生成に委ねる)
+   * に倒す想定。
+   */
+  getFixtureFacilities?(stationId: string): Promise<StationFacility[]>;
 }

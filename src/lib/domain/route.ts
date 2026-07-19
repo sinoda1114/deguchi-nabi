@@ -112,6 +112,19 @@ export interface ArrivalGuide {
   destinationDirection: string | null;
 }
 
+/**
+ * 改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成した結果
+ * (unified-arrival-guide-generation.ts参照)。fixtureに改札・出口が無い駅の
+ * easy/fastestモード向け(council議論2026-07-20)。gate/exitは座標を持たない
+ * ため、route-search.tsの座標ベース選定(resolveExitRecommendation)を経由せず
+ * 直接採用する。
+ */
+export interface UnifiedArrivalGuide {
+  gate: { name: string; confidence: Confidence } | null;
+  exit: { name: string; confidence: Confidence } | null;
+  walkingSteps: GuideStep[];
+}
+
 export interface RouteGuide {
   routeId: string;
   mode: RouteMode;

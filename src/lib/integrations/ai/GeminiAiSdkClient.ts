@@ -136,14 +136,15 @@ export async function searchAndGenerateStructuredContent<T>(
   searchPrompt: string,
   extractionInstruction: string,
   responseSchema: object,
-  callerId: string = "gemini-ai-sdk.searchAndGenerateStructuredContent"
+  callerId: string = "gemini-ai-sdk.searchAndGenerateStructuredContent",
+  searchModel: string = MODEL_ID
 ): Promise<T | null> {
   diagLogAiModuleIdentity();
   try {
     const google = googleProvider(apiKey);
 
     const searchResult = await generateText({
-      model: google(MODEL_ID),
+      model: google(searchModel),
       tools: { google_search: google.tools.googleSearch({}) },
       prompt: searchPrompt,
       abortSignal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
@@ -159,6 +160,9 @@ export async function searchAndGenerateStructuredContent<T>(
     const searchExecuted = (groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
     if (!searchResult.text || !searchExecuted) return null;
 
+    // 抽出フェーズ(構造化データへの変換のみ)は検索能力を要求しないため、
+    // searchModelに関わらず常にデフォルトモデルを使う(GeminiClient.tsの
+    // extractStructuredContentと同方針)。
     const { object } = await generateObject({
       model: google(MODEL_ID),
       schema: toObjectSchema(responseSchema),

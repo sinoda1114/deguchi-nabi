@@ -61,9 +61,14 @@ function canGenerateNarrative(
  * GuideStep[]を組み立てる。確認できていないgate/exitについては推測で埋めず
  * ステップ自体を生成しない(根拠のない具体性を排除する設計。docs/04 §Phase 2.5)。
  *
- * canGenerateNarrative()の条件を満たす場合のみ、改札後方向・自由通路・
- * 地下街等の中間ステップをAI生成で補う(stationProvider.getArrivalGuideNarrativeSteps、
- * 任意メソッド)。
+ * unifiedWalkingStepsが渡された場合(統合生成、council議論2026-07-20)は、
+ * 既にgate・exitと同一の検索セッションで一貫して生成された徒歩ルートのため、
+ * それをそのまま中間ステップとして使い、canGenerateNarrative()の判定・
+ * getArrivalGuideNarrativeStepsの別呼び出しは行わない(「不確かな情報の上に
+ * 不確かな情報を重ねる」問題は、同一セッションで一括生成した場合は発生しない)。
+ * unifiedWalkingStepsがnull(統合生成未使用/失敗)の場合のみ、従来通り
+ * canGenerateNarrative()の条件を満たす場合に限り改札後方向・自由通路・
+ * 地下街等の中間ステップをAI生成で補う。
  *
  * 最終的な steps は isGuideStepVisible でフィルタしてから返す。fixture由来
  * (ticket_gate/street_exit)・AI生成由来のどちらであっても、表示可否の判定は
@@ -76,7 +81,8 @@ export async function buildArrivalGuide(
   arrivalStationCoordinates: Coordinates | null,
   mode: RouteMode,
   isRouteAiGenerated: boolean,
-  stationProvider: Pick<StationProviderPort, "getArrivalGuideNarrativeSteps">
+  stationProvider: Pick<StationProviderPort, "getArrivalGuideNarrativeSteps">,
+  unifiedWalkingSteps: GuideStep[] | null = null
 ): Promise<ArrivalGuide> {
   const steps: GuideStep[] = [];
 
@@ -84,7 +90,9 @@ export async function buildArrivalGuide(
     steps.push(facilityStep("ticket_gate", result.gate, `${result.gate.name}を利用してください。`));
   }
 
-  if (
+  if (unifiedWalkingSteps !== null) {
+    steps.push(...unifiedWalkingSteps);
+  } else if (
     canGenerateNarrative(result, mode, isRouteAiGenerated) &&
     stationProvider.getArrivalGuideNarrativeSteps
   ) {
