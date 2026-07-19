@@ -110,10 +110,13 @@ PRIVATE_BLOCK_LIST.addSubnet("127.0.0.0", 8, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("169.254.0.0", 16, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("172.16.0.0", 12, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("192.168.0.0", 16, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("224.0.0.0", 4, "ipv4"); // multicast
+PRIVATE_BLOCK_LIST.addSubnet("240.0.0.0", 4, "ipv4"); // reserved + broadcast
 PRIVATE_BLOCK_LIST.addAddress("::1", "ipv6");
 PRIVATE_BLOCK_LIST.addAddress("::", "ipv6");
 PRIVATE_BLOCK_LIST.addSubnet("fc00::", 7, "ipv6"); // unique-local
 PRIVATE_BLOCK_LIST.addSubnet("fe80::", 10, "ipv6"); // link-local
+PRIVATE_BLOCK_LIST.addSubnet("ff00::", 8, "ipv6"); // multicast
 
 function isPrivateOrReservedIp(address: string, family: number): boolean {
   try {
