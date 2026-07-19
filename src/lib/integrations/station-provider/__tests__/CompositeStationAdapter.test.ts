@@ -1,12 +1,85 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const storeState: Record<string, unknown[]> = {};
+/**
+ * KvCacheStore(@/lib/store/kv-cache-store の getKvCacheStore)のインメモリ・
+ * フェイク。collection -> key -> { value, seq } の入れ子Mapで状態を持つ。
+ * seq はJsonKvStore/TursoKvStoreのcreatedAtに相当する挿入順の代理指標
+ * (Date.now()だと同一ミリ秒内の連続awaitで順序が不定になりうるため、
+ * テストの決定性のためグローバルなカウンタを使う)。既存の
+ * CompositeStationAdapter.test.tsが検証していた「LRU上限・レートリミッタ・
+ * フォールバック・空はキャッシュしない」等の挙動は、モック対象を
+ * json-file-store から kv-cache-store に差し替えても同じように検証できる
+ * よう、このフェイクは KvCacheStore インターフェースを忠実に実装する。
+ */
+interface KvRow {
+  value: unknown;
+  seq: number;
+}
 
-vi.mock("@/lib/store/json-file-store", () => ({
-  readCollection: vi.fn((name: string) => storeState[name] ?? []),
-  writeCollection: vi.fn((name: string, items: unknown[]) => {
-    storeState[name] = items;
+let kvSequence = 0;
+const kvState = new Map<string, Map<string, KvRow>>();
+
+function collectionMap(collection: string): Map<string, KvRow> {
+  let m = kvState.get(collection);
+  if (!m) {
+    m = new Map();
+    kvState.set(collection, m);
+  }
+  return m;
+}
+
+function clearKvState(): void {
+  kvState.clear();
+  kvSequence = 0;
+}
+
+const kvStoreMock = {
+  get: vi.fn(async (collection: string, key: string) => {
+    const row = kvState.get(collection)?.get(key);
+    if (!row) return null;
+    return { value: row.value, verifiedAt: new Date(row.seq).toISOString(), expiresAt: null };
   }),
+  set: vi.fn(async (collection: string, key: string, value: unknown) => {
+    const m = collectionMap(collection);
+    const existing = m.get(key);
+    m.set(key, { value, seq: existing?.seq ?? kvSequence++ });
+  }),
+  deleteByKeyPrefix: vi.fn(async (collection: string, prefix: string) => {
+    const m = kvState.get(collection);
+    if (!m) return 0;
+    let deleted = 0;
+    for (const key of Array.from(m.keys())) {
+      if (key.startsWith(prefix)) {
+        m.delete(key);
+        deleted++;
+      }
+    }
+    return deleted;
+  }),
+  countByKeyPrefix: vi.fn(async (collection: string, prefix: string) => {
+    const m = kvState.get(collection);
+    if (!m) return 0;
+    let count = 0;
+    for (const key of m.keys()) if (key.startsWith(prefix)) count++;
+    return count;
+  }),
+  deleteOldestByKeyPrefix: vi.fn(async (collection: string, prefix: string) => {
+    const m = kvState.get(collection);
+    if (!m) return;
+    let oldestKey: string | null = null;
+    let oldestSeq = Infinity;
+    for (const [key, row] of m.entries()) {
+      if (key.startsWith(prefix) && row.seq < oldestSeq) {
+        oldestSeq = row.seq;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) m.delete(oldestKey);
+  }),
+};
+
+vi.mock("@/lib/store/kv-cache-store", () => ({
+  getKvCacheStore: () => kvStoreMock,
 }));
 
 const generateBoardingPosition = vi.fn();
@@ -42,7 +115,7 @@ const { CompositeStationAdapter } = await import("../CompositeStationAdapter");
 
 const AI_POSITION = {
   boardingPositionId: "bp_ai",
-  platformId: "line__st_unknown__テスト線__到着方面",
+  platformId: "st_unknown::line::テスト線::到着方面",
   trainFormation: 0,
   carNumber: 4,
   doorPosition: "前方" as const,
@@ -60,7 +133,7 @@ const AI_POSITION = {
 
 describe("CompositeStationAdapter.getBoardingPosition", () => {
   beforeEach(() => {
-    for (const key of Object.keys(storeState)) delete storeState[key];
+    clearKvState();
     generateBoardingPosition.mockReset();
     searchStationsFromHeartRails.mockReset().mockResolvedValue(null);
   });
@@ -99,7 +172,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "新宿駅",
       "JR山手線",
       "渋谷方面",
-      "pf_shinjuku_jr_yamanote",
+      "st_shinjuku::pf::pf_shinjuku_jr_yamanote",
       "14"
     );
   });
@@ -120,7 +193,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "未知駅",
       "テスト線",
       "到着方面",
-      "line__st_unknown__テスト線__到着方面",
+      "st_unknown::line::テスト線::到着方面",
       null
     );
   });
@@ -134,7 +207,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "未知駅",
       "テスト線",
       "到着方面",
-      "line__st_unknown__テスト線__到着方面",
+      "st_unknown::line::テスト線::到着方面",
       "3"
     );
   });
@@ -152,6 +225,36 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
     );
     expect(result?.carNumber).toBe(4);
     expect(generateBoardingPosition).toHaveBeenCalledTimes(1);
+  });
+
+  test("fixture platform経由の生成結果は`${stationId}::pf::${platformId}`キーでKvCacheStoreに保存される(キー設計の回帰確認)", async () => {
+    generateBoardingPosition.mockResolvedValue(AI_POSITION);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.getBoardingPosition(
+      "st_shinjuku",
+      "新宿駅",
+      "pf_shinjuku_jr_yamanote",
+      "JR山手線",
+      "渋谷方面"
+    );
+    expect(kvStoreMock.set).toHaveBeenCalledWith(
+      "ai-boarding-positions",
+      "st_shinjuku::pf::pf_shinjuku_jr_yamanote",
+      AI_POSITION,
+      { ttlDays: 90 }
+    );
+  });
+
+  test("line経由(fixture platform無し)の生成結果は`${stationId}::line::${line}::${direction}`キーでKvCacheStoreに保存される(キー設計の回帰確認)", async () => {
+    generateBoardingPosition.mockResolvedValue(AI_POSITION);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.getBoardingPosition("st_unknown", "未知駅", "", "テスト線", "到着方面");
+    expect(kvStoreMock.set).toHaveBeenCalledWith(
+      "ai-boarding-positions",
+      "st_unknown::line::テスト線::到着方面",
+      AI_POSITION,
+      { ttlDays: 90 }
+    );
   });
 
   test("platformIdが別駅のものと一致してしまっても、その駅の号車情報は使わずAIにフォールバックする", async () => {
@@ -174,7 +277,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "渋谷駅",
       "相鉄新横浜線",
       "渋谷方面",
-      "line__st_shibuya__相鉄新横浜線__渋谷方面",
+      "st_shibuya::line::相鉄新横浜線::渋谷方面",
       null
     );
   });
@@ -194,7 +297,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
       "新宿駅",
       "JR山手線",
       "渋谷方面",
-      "pf_shinjuku_jr_yamanote",
+      "st_shinjuku::pf::pf_shinjuku_jr_yamanote",
       "14"
     );
   });
@@ -215,7 +318,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
 
 describe("CompositeStationAdapter.searchStations", () => {
   beforeEach(() => {
-    for (const key of Object.keys(storeState)) delete storeState[key];
+    clearKvState();
     searchStationsFromHeartRails.mockReset();
     fetchNearestStationsFromHeartRails.mockReset().mockResolvedValue(null);
     decodeHeartRailsStationId.mockReset().mockReturnValue(null);
@@ -441,7 +544,7 @@ const AI_FACILITY = {
 
 describe("CompositeStationAdapter.getFacilities", () => {
   beforeEach(() => {
-    for (const key of Object.keys(storeState)) delete storeState[key];
+    clearKvState();
     generateStationFacilities.mockReset().mockResolvedValue([]);
     searchStationsFromHeartRails.mockReset().mockResolvedValue(null);
   });
@@ -540,6 +643,58 @@ describe("CompositeStationAdapter.getFacilities", () => {
       ["テスト線"],
       { lat: 35.1, lng: 136.2 },
       "テストカフェ"
+    );
+  });
+
+  test("destinationHint付きfacilitiesは`${stationId}::h::${encodeURIComponent(destinationHint)}`キーでKvCacheStoreに保存される(キー設計の回帰確認)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test", "テストカフェ");
+
+    expect(kvStoreMock.set).toHaveBeenCalledWith(
+      "ai-station-facilities",
+      `hr_test::h::${encodeURIComponent("テストカフェ")}`,
+      [{ ...AI_FACILITY, stationId: "hr_test" }],
+      { ttlDays: 90 }
+    );
+  });
+
+  test("destinationHint無しのfacilitiesはstationId単独キーでKvCacheStoreに保存される(キー設計の回帰確認)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    await adapter.getFacilities("hr_test");
+
+    expect(kvStoreMock.set).toHaveBeenCalledWith(
+      "ai-station-facilities",
+      "hr_test",
+      [{ ...AI_FACILITY, stationId: "hr_test" }],
+      { ttlDays: 90 }
     );
   });
 
@@ -642,6 +797,36 @@ describe("CompositeStationAdapter.getFacilities", () => {
     expect(generateStationFacilities).not.toHaveBeenCalled();
   });
 
+  test("LRU上限のcountByKeyPrefix/deleteOldestByKeyPrefixは駅ごとのdestinationHint接頭辞(`${stationId}::h::`)で呼ばれる(キー設計の回帰確認)", async () => {
+    generateStationFacilities.mockResolvedValue([AI_FACILITY]);
+    searchStationsFromHeartRails.mockResolvedValue([
+      {
+        stationId: "hr_test",
+        stationName: "テスト駅",
+        operator: "テスト鉄道",
+        lines: ["テスト線"],
+        prefecture: "テスト県",
+        latitude: 35.1,
+        longitude: 136.2,
+      },
+    ]);
+    const adapter = new CompositeStationAdapter("test-key");
+    await adapter.searchStations("テスト");
+
+    for (let i = 0; i < 6; i++) {
+      await adapter.getFacilities("hr_test", `テスト施設${i}`);
+    }
+
+    expect(kvStoreMock.countByKeyPrefix).toHaveBeenCalledWith(
+      "ai-station-facilities",
+      "hr_test::h::"
+    );
+    expect(kvStoreMock.deleteOldestByKeyPrefix).toHaveBeenCalledWith(
+      "ai-station-facilities",
+      "hr_test::h::"
+    );
+  });
+
   test("destinationHint無し(駅目的地)のキャッシュはdestinationHint付きエントリ数の上限の対象外", async () => {
     generateStationFacilities.mockResolvedValue([AI_FACILITY]);
     searchStationsFromHeartRails.mockResolvedValue([
@@ -738,7 +923,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
       // 解決できなくなり生成に到達しないため、そちらは残す)。
       vi.advanceTimersByTime(30_000);
       for (let i = 10; i < 20; i++) {
-        delete storeState["ai-station-facilities"];
+        kvState.delete("ai-station-facilities");
         await adapter.getFacilities("hr_test", `施設${i}`);
       }
 
@@ -746,7 +931,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
       // まだ時間窓内(35秒経過)。フォールバック生成がカウントされていれば、
       // まだレート制限中のままのはず。
       vi.advanceTimersByTime(35_000);
-      delete storeState["ai-station-facilities"];
+      kvState.delete("ai-station-facilities");
       generateStationFacilities.mockClear();
       await adapter.getFacilities("hr_test", "施設new");
       expect(generateStationFacilities).toHaveBeenCalledWith(
@@ -804,7 +989,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
 
 describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
   beforeEach(() => {
-    for (const key of Object.keys(storeState)) delete storeState[key];
+    clearKvState();
     generateArrivalNarrativeSteps.mockReset();
   });
 
