@@ -56,13 +56,15 @@ const MAGIC_BYTE_CHECKERS: [string, (bytes: Uint8Array) => boolean][] = [
   [
     "image/png",
     (b) =>
+      b.length >= 6 &&
       b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a,
   ],
-  ["image/jpeg", (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff],
-  ["image/gif", (b) => b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38],
+  ["image/jpeg", (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff],
+  ["image/gif", (b) => b.length >= 4 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38],
   [
     "image/webp",
     (b) =>
+      b.length >= 12 &&
       b[0] === 0x52 &&
       b[1] === 0x49 &&
       b[2] === 0x46 &&
@@ -108,10 +110,13 @@ PRIVATE_BLOCK_LIST.addSubnet("127.0.0.0", 8, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("169.254.0.0", 16, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("172.16.0.0", 12, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("192.168.0.0", 16, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("224.0.0.0", 4, "ipv4"); // multicast
+PRIVATE_BLOCK_LIST.addSubnet("240.0.0.0", 4, "ipv4"); // reserved + broadcast
 PRIVATE_BLOCK_LIST.addAddress("::1", "ipv6");
 PRIVATE_BLOCK_LIST.addAddress("::", "ipv6");
 PRIVATE_BLOCK_LIST.addSubnet("fc00::", 7, "ipv6"); // unique-local
 PRIVATE_BLOCK_LIST.addSubnet("fe80::", 10, "ipv6"); // link-local
+PRIVATE_BLOCK_LIST.addSubnet("ff00::", 8, "ipv6"); // multicast
 
 function isPrivateOrReservedIp(address: string, family: number): boolean {
   try {
@@ -138,10 +143,17 @@ function isBlockedIpLiteralUrl(url: string): boolean {
   return isPrivateOrReservedIp(hostname, family);
 }
 
+interface LookupAddress {
+  address: string;
+  family: number;
+}
+
+type NodeLookupOptions = { all?: boolean };
+
 type NodeLookupCallback = (
   err: NodeJS.ErrnoException | null,
-  address: string,
-  family: number
+  address: string | LookupAddress[],
+  family?: number
 ) => void;
 
 /**
@@ -150,25 +162,37 @@ type NodeLookupCallback = (
  * 別タイミングの解決結果を使うことによるTOCTOU(DNS rebinding)を構造的に
  * 防げる(/security-review指摘、High)。全解決先を確認し、1件でもプライベート
  * /予約範囲が含まれれば接続自体をエラーにする安全側の判定。
+ *
+ * undiciはNode標準のnet.LookupFunction契約に従い、`options.all`が真の場合は
+ * コールバックへ`(err, addresses[])`(配列)を、偽の場合は`(err, address, family)`
+ * (単一値)を渡すことを期待する。実機確認で`options.all: true`固定で呼ばれる
+ * ことを確認済みだが、契約上どちらの形も呼ばれうるため両対応する(修正前は
+ * 単一値のみ返しており、Node内部の`net`モジュールが配列を期待して
+ * `ERR_INVALID_IP_ADDRESS: Invalid IP address: undefined`で全fetchが失敗し、
+ * 画像取得が常にnullになる=Vision統合が常にフォールバックする実機不具合が
+ * あった)。
  */
 export function createSsrfSafeLookup() {
-  return (hostname: string, _options: unknown, callback: NodeLookupCallback): void => {
+  return (hostname: string, options: NodeLookupOptions, callback: NodeLookupCallback): void => {
+    const wantsAll = Boolean(options?.all);
+    const fail = (err: Error) => callback(err, wantsAll ? [] : "", wantsAll ? undefined : 4);
+
     dnsLookup(hostname, { all: true }, (err, addresses) => {
       if (err) {
-        callback(err, "", 4);
+        fail(err);
         return;
       }
       if (!addresses || addresses.length === 0) {
-        callback(new Error(`SSRF guard: ${hostname} が名前解決できませんでした`), "", 4);
+        fail(new Error(`SSRF guard: ${hostname} が名前解決できませんでした`));
         return;
       }
       const unsafe = addresses.find((addr) => isPrivateOrReservedIp(addr.address, addr.family));
       if (unsafe) {
-        callback(
-          new Error(`SSRF guard: ${hostname} はプライベート/予約IPへ解決されたためブロックしました`),
-          "",
-          4
-        );
+        fail(new Error(`SSRF guard: ${hostname} はプライベート/予約IPへ解決されたためブロックしました`));
+        return;
+      }
+      if (wantsAll) {
+        callback(null, addresses);
         return;
       }
       const chosen = addresses[0];
@@ -256,7 +280,7 @@ export async function fetchImageAsInlineData(url: string): Promise<FetchedImage 
       await cancelBody(res);
       return null;
     }
-    const declaredMimeType = contentType.split(";")[0]?.trim() ?? contentType;
+    const declaredMimeType = (contentType.split(";")[0]?.trim() ?? contentType).toLowerCase();
     if (!SUPPORTED_IMAGE_MIME_TYPES.has(declaredMimeType)) {
       await cancelBody(res);
       return null;
