@@ -143,10 +143,17 @@ function isBlockedIpLiteralUrl(url: string): boolean {
   return isPrivateOrReservedIp(hostname, family);
 }
 
+interface LookupAddress {
+  address: string;
+  family: number;
+}
+
+type NodeLookupOptions = { all?: boolean };
+
 type NodeLookupCallback = (
   err: NodeJS.ErrnoException | null,
-  address: string,
-  family: number
+  address: string | LookupAddress[],
+  family?: number
 ) => void;
 
 /**
@@ -155,25 +162,37 @@ type NodeLookupCallback = (
  * 別タイミングの解決結果を使うことによるTOCTOU(DNS rebinding)を構造的に
  * 防げる(/security-review指摘、High)。全解決先を確認し、1件でもプライベート
  * /予約範囲が含まれれば接続自体をエラーにする安全側の判定。
+ *
+ * undiciはNode標準のnet.LookupFunction契約に従い、`options.all`が真の場合は
+ * コールバックへ`(err, addresses[])`(配列)を、偽の場合は`(err, address, family)`
+ * (単一値)を渡すことを期待する。実機確認で`options.all: true`固定で呼ばれる
+ * ことを確認済みだが、契約上どちらの形も呼ばれうるため両対応する(修正前は
+ * 単一値のみ返しており、Node内部の`net`モジュールが配列を期待して
+ * `ERR_INVALID_IP_ADDRESS: Invalid IP address: undefined`で全fetchが失敗し、
+ * 画像取得が常にnullになる=Vision統合が常にフォールバックする実機不具合が
+ * あった)。
  */
 export function createSsrfSafeLookup() {
-  return (hostname: string, _options: unknown, callback: NodeLookupCallback): void => {
+  return (hostname: string, options: NodeLookupOptions, callback: NodeLookupCallback): void => {
+    const wantsAll = Boolean(options?.all);
+    const fail = (err: Error) => callback(err, wantsAll ? [] : "", wantsAll ? undefined : 4);
+
     dnsLookup(hostname, { all: true }, (err, addresses) => {
       if (err) {
-        callback(err, "", 4);
+        fail(err);
         return;
       }
       if (!addresses || addresses.length === 0) {
-        callback(new Error(`SSRF guard: ${hostname} が名前解決できませんでした`), "", 4);
+        fail(new Error(`SSRF guard: ${hostname} が名前解決できませんでした`));
         return;
       }
       const unsafe = addresses.find((addr) => isPrivateOrReservedIp(addr.address, addr.family));
       if (unsafe) {
-        callback(
-          new Error(`SSRF guard: ${hostname} はプライベート/予約IPへ解決されたためブロックしました`),
-          "",
-          4
-        );
+        fail(new Error(`SSRF guard: ${hostname} はプライベート/予約IPへ解決されたためブロックしました`));
+        return;
+      }
+      if (wantsAll) {
+        callback(null, addresses);
         return;
       }
       const chosen = addresses[0];
