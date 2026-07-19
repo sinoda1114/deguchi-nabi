@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth/session";
 import { addHistoryEntry } from "@/lib/store/history-repository";
 import { resolveAndSearchRoute } from "@/lib/services/route-search-orchestrator";
 import type { RouteMode } from "@/lib/domain/route";
+import { checkRoutesSearchRateLimit, extractClientIp } from "@/lib/rate-limit/ip-rate-limit";
 
 // fixture未収録駅間はGemini Search Groundingで検索(検索55秒+抽出15秒を直列実行)するため、
 // プラットフォームのデフォルト実行時間上限より長くかかりうる。明示的に確保する。
@@ -25,6 +26,21 @@ export const maxDuration = 180;
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
 export async function POST(req: NextRequest) {
+  // 未認証かつAI課金が発生するエンドポイントのため、bodyパースの前に
+  // IPベースのレートリミットを判定する(Serperクレジット枯渇=アプリ全体停止
+  // という懸念に対する防壁。PR4)。
+  const ip = extractClientIp(req.headers);
+  const rateLimitResult = await checkRoutesSearchRateLimit(ip);
+  if (!rateLimitResult.allowed) {
+    return NextResponse.json(
+      { error: "アクセスが集中しています。しばらく待ってから再度お試しください。" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimitResult.retryAfterSeconds ?? 60) },
+      }
+    );
+  }
+
   const body = await req.json().catch(() => null);
 
   const mode: RouteMode = VALID_MODES.includes(body?.mode) ? body.mode : "easy";

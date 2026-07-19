@@ -1,10 +1,12 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 import { getSessionUser } from "@/lib/auth/session";
 import type { RouteMode } from "@/lib/domain/route";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { ResultErrorMessage } from "@/components/result/ResultErrorMessage";
 import { RouteResultBody } from "@/components/result/RouteResultBody";
 import { RouteResultBodySkeleton } from "@/components/result/RouteResultBodySkeleton";
+import { checkRoutesSearchRateLimit, extractClientIp } from "@/lib/rate-limit/ip-rate-limit";
 
 // buildTrainSegments/buildTransferAndExitSegments(RouteResultBody内)は
 // /api/routes/search と同じGemini Search Groundingパターン(検索55秒+抽出15秒、
@@ -55,6 +57,21 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
     // このチェックはstationProvider等への問い合わせを伴わず同期的に完結するため、
     // Suspense化せずページ全体のエラー画面をそのまま返してよい。
     return <ErrorScreen user={user} message="検索条件が不足しています。" />;
+  }
+
+  // 未認証かつAI課金が発生しうるRSC(RouteResultBody内のAI補完)へ進む前に、
+  // IPベースのレートリミットを判定する(/api/routes/search と同じ防壁。PR4)。
+  // Suspense配下(RouteResultBody)ではなくここでチェックすることで、
+  // 制限超過時はAI呼び出しへ進まずページ全体のエラー画面を返せる。
+  const ip = extractClientIp(await headers());
+  const rateLimitResult = await checkRoutesSearchRateLimit(ip);
+  if (!rateLimitResult.allowed) {
+    return (
+      <ErrorScreen
+        user={user}
+        message="アクセスが集中しています。しばらく待ってから再度お試しください。"
+      />
+    );
   }
 
   const origin =
