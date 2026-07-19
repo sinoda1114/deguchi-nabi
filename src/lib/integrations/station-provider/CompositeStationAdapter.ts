@@ -376,7 +376,11 @@ export class CompositeStationAdapter implements StationProviderPort {
 
     const prefix = facilitiesHintPrefix(stationId);
     const entryCount = await store.countByKeyPrefix(FACILITIES_CACHE, prefix);
-    if (entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION) return;
+    // A count of 0 might indicate a store read error rather than truly empty.
+    // Defensively attempt eviction in that case to prevent bypassing the cap
+    // if the store actually contains MAX entries. deleteOldestByKeyPrefix is
+    // safe to call even when no entries exist.
+    if (entryCount > 0 && entryCount < MAX_DESTINATION_HINT_ENTRIES_PER_STATION) return;
 
     await store.deleteOldestByKeyPrefix(FACILITIES_CACHE, prefix);
   }
