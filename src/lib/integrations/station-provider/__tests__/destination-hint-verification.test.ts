@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { generateStationFacilities } from "../ai-generation";
-import type { StationFacility } from "@/lib/domain/station";
+import { scoreFacilities } from "@/lib/eval/facilities-score";
 
 /**
  * destinationHint機能の検証ゲート(/plans/sunny-munching-lovelace.md参照)。
@@ -85,19 +85,9 @@ const VERIFICATION_PAIRS: VerificationPair[] = [
   },
 ];
 
-/**
- * ペアスコア = S1(有効facility総数) + S2(gate≧1かつexit≧1なら10点) +
- * S3(medium confidenceの件数)。乗換案内の中核であるgate/exitの両方確認を
- * 最も重く評価する。
- */
-function scoreFacilities(facilities: StationFacility[]): number {
-  const s1 = facilities.length;
-  const hasGate = facilities.some((f) => f.facilityType === "gate");
-  const hasExit = facilities.some((f) => f.facilityType === "exit");
-  const s2 = hasGate && hasExit ? 10 : 0;
-  const s3 = facilities.filter((f) => f.confidence.level === "medium").length;
-  return s1 + s2 + s3;
-}
+// scoreFacilities(ペアスコア = S1(有効facility総数) + S2(gate≧1かつexit≧1なら10点) +
+// S3(medium confidenceの件数))は、facilities-backend-eval.test.tsと共通利用する
+// ため src/lib/eval/facilities-score.ts へ切り出した(ロジックの二重管理防止)。
 
 // CI環境変数にRUN_HINT_VERIFICATION/GEMINI_API_KEYが将来的に設定されて
 // しまった場合でも、CI上では絶対に実API呼び出しを走らせない多層防御
