@@ -547,6 +547,20 @@ export async function buildTransferAndExitSegments(
       : null;
     unifiedWalkingSteps = unified.walkingSteps;
     recommendation = { tier: "exact", exit, destinationDirectionLabel: null };
+  } else if (canTryUnified) {
+    // 統合生成を試みたが出口を確認できなかった場合、旧方式(getFacilities、
+    // AI生成2回)へはフォールバックせず「確認できません」のまま返す
+    // (/security-review指摘、Medium: フォールバックすると1リクエストで
+    // 統合生成+旧方式の計4回の課金対象AI呼び出しが発生しうる。IPレートリミット
+    // はリクエスト数のみをカウントしAIコストを見ていないため、同じ日次予算内で
+    // 達成可能なコスト消費が実質倍増してしまう。canGenerateNarrativeと同じ
+    // 「1リクエストで2系統のAI呼び出しを重ねない」というコスト濫用対策の
+    // 考え方を踏襲する。旧方式にフォールバックしても、座標を持たないAI生成
+    // facilityでは同じ理由でほぼ確実に「確認できません」に落ちるため、
+    // 追加コストに見合うだけの効果も期待しにくい)。
+    exit = null;
+    gate = null;
+    recommendation = { tier: "unavailable", exit: null, destinationDirectionLabel: null };
   } else {
     const arrivalFacilities = await deps.stationProvider.getFacilities(
       input.destinationStationId,

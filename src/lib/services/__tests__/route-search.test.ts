@@ -839,11 +839,13 @@ describe("buildTransferAndExitSegments", () => {
     expect(getUnifiedArrivalGuide).not.toHaveBeenCalled();
   });
 
-  test("統合生成がnullを返した場合は既存の座標ベース選定にフォールバックする(exit未確定のまま)", async () => {
+  test("統合生成がnullを返した場合は旧方式(getFacilities)へフォールバックせず確認不能のまま返す(/security-review指摘、Medium: フォールバックすると1リクエストで統合生成+旧方式の計4回の課金AI呼び出しが発生しレートリミットの実効性が下がるため)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => null);
+    const getFacilities = vi.fn(async () => []);
     const stationProvider: StationProviderPort = {
       ...buildStationProvider([]),
       getUnifiedArrivalGuide,
+      getFacilities,
       getFixtureFacilities: async () => [],
     };
     const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
@@ -858,17 +860,20 @@ describe("buildTransferAndExitSegments", () => {
 
     expect(outcome.result.exit).toBeNull();
     expect(outcome.result.gate).toBeNull();
+    expect(getFacilities).not.toHaveBeenCalled();
   });
 
-  test("統合生成が出口を確認できなかった場合(gateのみ、または両方null)は、部分結果を「確認済み」扱いせず既存の座標ベース選定にフォールバックする(/ai-review再指摘、Medium: exit未確認をexact tierとして誤判定しない)", async () => {
+  test("統合生成が出口を確認できなかった場合(gateのみ、または両方null)は、部分結果を「確認済み」扱いせず、かつ旧方式(getFacilities)へもフォールバックしない(/ai-review再指摘、Medium: exit未確認をexact tierとして誤判定しない。/security-review指摘、Medium: 課金AI呼び出しの二重発生を避ける)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       gate: { name: "統合生成改札", confidence: highConfidence },
       exit: null,
       walkingSteps: [],
     }));
+    const getFacilities = vi.fn(async () => []);
     const stationProvider: StationProviderPort = {
       ...buildStationProvider([]),
       getUnifiedArrivalGuide,
+      getFacilities,
       getFixtureFacilities: async () => [],
     };
     const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
@@ -881,11 +886,12 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    // 統合生成のgateだけの部分結果は採用しない(旧方式へフォールバックするため
-    // generateStationFacilitiesがAI呼ばれ空配列を返す既存モックの結果、exit/gate
-    // ともnullになる)。
+    // 統合生成のgateだけの部分結果は採用しない。旧方式(getFacilities)へも
+    // フォールバックしないため確認不能のままになる。
     expect(outcome.result.exit).toBeNull();
+    expect(outcome.result.gate).toBeNull();
     expect(outcome.result.hasApproximateGuidance).toBe(false);
+    expect(getFacilities).not.toHaveBeenCalled();
   });
 
   test("easy モードではエスカレーターがあればエレベーターより優先して transfer の facilities に使う", async () => {
