@@ -47,6 +47,11 @@ vi.mock("../arrival-guide-ai-generation", () => ({
   generateArrivalNarrativeSteps: (...args: unknown[]) => generateArrivalNarrativeSteps(...args),
 }));
 
+const generateUnifiedArrivalGuide = vi.fn();
+vi.mock("../unified-arrival-guide-generation", () => ({
+  generateUnifiedArrivalGuide: (...args: unknown[]) => generateUnifiedArrivalGuide(...args),
+}));
+
 const searchStationsFromHeartRails = vi.fn(async (_query: string) => null as unknown);
 const fetchNearestStationsFromHeartRails = vi.fn(async (_lat: number, _lng: number) => null as unknown);
 const decodeHeartRailsStationId = vi.fn((_stationId: string) => null as unknown);
@@ -693,3 +698,149 @@ describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
   });
 });
 
+describe("CompositeStationAdapter.getUnifiedArrivalGuide", () => {
+  beforeEach(() => {
+    generateUnifiedArrivalGuide.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test("出発駅名・到着駅名・operator・lines・destinationHint・座標をそのまま生成関数へ引き継ぐ", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue({
+      gate: { name: "1F改札", confidenceLevel: "medium" },
+      exit: { name: "五番街口", confidenceLevel: "medium" },
+      walkingSteps: [],
+    });
+    const adapter = new CompositeStationAdapter("test-key");
+
+    await adapter.getUnifiedArrivalGuide(
+      "st_yokohama",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "西谷駅",
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4662, lng: 139.6227 },
+      { lat: 35.4657, lng: 139.622 }
+    );
+
+    expect(generateUnifiedArrivalGuide).toHaveBeenCalledWith(
+      "test-key",
+      "西谷駅",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4662, lng: 139.6227 },
+      { lat: 35.4657, lng: 139.622 }
+    );
+  });
+
+  test("gate/exitのconfidenceLevelをai_inferredの上限(medium)にキャップしたConfidenceへ変換する", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue({
+      gate: { name: "1F改札", confidenceLevel: "high" },
+      exit: { name: "五番街口", confidenceLevel: "high" },
+      walkingSteps: [],
+    });
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.getUnifiedArrivalGuide(
+      "st_yokohama",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "西谷駅",
+      null,
+      null,
+      null
+    );
+
+    expect(result?.gate?.name).toBe("1F改札");
+    expect(result?.gate?.confidence.level).toBe("medium");
+    expect(result?.exit?.name).toBe("五番街口");
+    expect(result?.exit?.confidence.level).toBe("medium");
+  });
+
+  test("walkingStepsをGuideStep[](type: public_passage、provenance: ai_inferred)へ変換する", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue({
+      gate: null,
+      exit: null,
+      walkingSteps: [
+        { title: "見出し", instruction: "改札を出て直進してください。", confidenceLevel: "high" },
+      ],
+    });
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.getUnifiedArrivalGuide(
+      "st_yokohama",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "西谷駅",
+      null,
+      null,
+      null
+    );
+
+    expect(result?.walkingSteps).toEqual([
+      {
+        type: "public_passage",
+        title: "見出し",
+        instruction: "改札を出て直進してください。",
+        landmarks: [],
+        confidence: {
+          level: "medium",
+          reasons: ["AIによる推測情報(検索結果に基づく)。現地未確認のため参考程度に扱ってください。"],
+          verifiedAt: null,
+          expiresAt: null,
+          sourceCount: 0,
+        },
+        provenance: "ai_inferred",
+      },
+    ]);
+  });
+
+  test("生成に失敗(null)した場合はnullを返す", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue(null);
+    const adapter = new CompositeStationAdapter("test-key");
+
+    const result = await adapter.getUnifiedArrivalGuide(
+      "st_yokohama",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "西谷駅",
+      null,
+      null,
+      null
+    );
+
+    expect(result).toBeNull();
+  });
+});
+
+
+describe("CompositeStationAdapter.getFixtureFacilities", () => {
+  test("fixtureのfacility一覧をAI呼び出しなしで返す(渋谷駅、gate・exit両方収録)", async () => {
+    const adapter = new CompositeStationAdapter("test-key");
+    const result = await adapter.getFixtureFacilities("st_shibuya");
+    expect(result.some((f) => f.facilityType === "gate")).toBe(true);
+    expect(result.some((f) => f.facilityType === "exit")).toBe(true);
+    expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+
+  test("fixtureにfacility自体が無い駅(西谷駅)は空配列を返す", async () => {
+    const adapter = new CompositeStationAdapter("test-key");
+    const result = await adapter.getFixtureFacilities("st_nishiya");
+    expect(result).toEqual([]);
+  });
+
+  test("fixture未収録駅は空配列を返す(AIは呼ばない)", async () => {
+    const adapter = new CompositeStationAdapter("test-key");
+    const result = await adapter.getFixtureFacilities("st_unknown_no_fixture");
+    expect(result).toEqual([]);
+    expect(generateStationFacilities).not.toHaveBeenCalled();
+  });
+});

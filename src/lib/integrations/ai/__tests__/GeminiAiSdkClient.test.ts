@@ -217,5 +217,45 @@ describe("GeminiAiSdkClient", () => {
 
       expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
+
+    test("searchModelを指定すると検索フェーズにそのモデルが使われ、抽出フェーズはデフォルトモデルのまま", async () => {
+      generateTextMock.mockResolvedValue({
+        text: "検索結果テキスト",
+        providerMetadata: {
+          google: { groundingMetadata: { webSearchQueries: ["q1"] } },
+        },
+      });
+      generateObjectMock.mockResolvedValue({ object: { steps: [] } });
+
+      const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
+      await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        { type: "object" },
+        "unified-arrival-guide",
+        "gemini-3.5-flash"
+      );
+
+      expect(generateTextMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-3.5-flash" });
+      expect(generateObjectMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-flash-latest" });
+    });
+
+    test("searchModelを省略すると検索フェーズもデフォルトモデル(gemini-flash-latest)を使う", async () => {
+      generateTextMock.mockResolvedValue({
+        text: "検索結果テキスト",
+        providerMetadata: {
+          google: { groundingMetadata: { webSearchQueries: ["q1"] } },
+        },
+      });
+      generateObjectMock.mockResolvedValue({ object: {} });
+
+      const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
+      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
+        type: "object",
+      });
+
+      expect(generateTextMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-flash-latest" });
+    });
   });
 });
