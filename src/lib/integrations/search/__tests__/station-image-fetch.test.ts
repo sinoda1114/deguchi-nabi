@@ -325,7 +325,15 @@ describe("createSsrfSafeLookup", () => {
   function runLookup(hostname: string): Promise<[Error | null, string, number]> {
     return new Promise((resolve) => {
       createSsrfSafeLookup()(hostname, {}, (err, address, family) => {
-        resolve([err, address, family]);
+        resolve([err, address as string, family as number]);
+      });
+    });
+  }
+
+  function runLookupAll(hostname: string): Promise<[Error | null, unknown]> {
+    return new Promise((resolve) => {
+      createSsrfSafeLookup()(hostname, { all: true }, (err, address) => {
+        resolve([err, address]);
       });
     });
   }
@@ -425,5 +433,49 @@ describe("createSsrfSafeLookup", () => {
     const [err] = await runLookup("empty.example.com");
 
     expect(err).not.toBeNull();
+  });
+
+  test("options.all=trueで呼ばれた場合はcallbackへ全解決先を配列で渡す(実機不具合の回帰テスト: undiciはNode標準のnet.LookupFunction契約に従い options.all=true 時は(err, addresses[])形式を期待するが、単一値(err, address, family)で応答するとNode内部のnetモジュールがERR_INVALID_IP_ADDRESSで例外を投げ、全ての画像取得が失敗していた)", async () => {
+    dnsLookup.mockImplementation((_hostname, _opts, cb) => {
+      cb(null, [
+        { address: "93.184.216.34", family: 4 },
+        { address: "93.184.216.35", family: 4 },
+      ]);
+    });
+
+    const [err, address] = await runLookupAll("multi.example.com");
+
+    expect(err).toBeNull();
+    expect(Array.isArray(address)).toBe(true);
+    expect(address).toEqual([
+      { address: "93.184.216.34", family: 4 },
+      { address: "93.184.216.35", family: 4 },
+    ]);
+  });
+
+  test("options.all=trueでプライベートIPが混在する場合もエラーをcallbackへ渡す", async () => {
+    dnsLookup.mockImplementation((_hostname, _opts, cb) => {
+      cb(null, [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.1", family: 4 },
+      ]);
+    });
+
+    const [err, address] = await runLookupAll("mixed.example.com");
+
+    expect(err).not.toBeNull();
+    expect(address).toEqual([]);
+  });
+
+  test("options.all=trueでDNS解決自体が失敗した場合もエラーをそのままcallbackへ渡す", async () => {
+    const dnsError = new Error("DNS resolution failed");
+    dnsLookup.mockImplementation((_hostname, _opts, cb) => {
+      cb(dnsError);
+    });
+
+    const [err, address] = await runLookupAll("nonexistent.example.com");
+
+    expect(err).toBe(dnsError);
+    expect(address).toEqual([]);
   });
 });
