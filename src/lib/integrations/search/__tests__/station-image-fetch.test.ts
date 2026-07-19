@@ -233,6 +233,16 @@ describe("fetchImageAsInlineData", () => {
     expect(undiciFetchMock).not.toHaveBeenCalled();
   });
 
+  test("ホスト名がIPv4-mapped IPv6リテラル(hex表記)でloopback/クラウドメタデータの場合はfetchせずnullを返す(/security-review再指摘、High)", async () => {
+    // WHATWG URLパーサーはIPv6リテラルをhex表記に正規化するため、
+    // http://[::ffff:127.0.0.1]/ のように書いても hostname は [::ffff:7f00:1] になる
+    for (const literal of ["[::ffff:7f00:1]", "[::ffff:a9fe:a9fe]"]) {
+      const result = await fetchImageAsInlineData(`http://${literal}/a.png`);
+      expect(result).toBeNull();
+    }
+    expect(undiciFetchMock).not.toHaveBeenCalled();
+  });
+
   test("ホスト名がパブリックIPリテラルの場合は許可してfetchする", async () => {
     undiciFetchMock.mockResolvedValue(
       fakeImageResponse({
@@ -364,6 +374,17 @@ describe("createSsrfSafeLookup", () => {
 
   test("IPv6のloopback(::1)・unique-local(fc00::/7)・link-local(fe80::/10)はエラーをcallbackへ渡す(SSRF対策)", async () => {
     for (const ip of ["::1", "fc00::1", "fd12:3456:789a::1", "fe80::1"]) {
+      dnsLookup.mockImplementation((_hostname, _opts, cb) => {
+        cb(null, [{ address: ip, family: 6 }]);
+      });
+      const [err] = await runLookup("internal.example.com");
+      expect(err).not.toBeNull();
+    }
+  });
+
+  test("IPv4-mapped IPv6アドレスがhex表記(::ffff:7f00:1等)でもブロックする(/security-review再指摘、High: ドット十進表記のみを見る正規表現ではWHATWG URLパーサーが正規化するhex表記をすり抜けていた)", async () => {
+    // ::ffff:7f00:1 = ::ffff:127.0.0.1(loopback)、::ffff:a9fe:a9fe = ::ffff:169.254.169.254(クラウドメタデータ)
+    for (const ip of ["::ffff:7f00:1", "::ffff:a9fe:a9fe", "::ffff:127.0.0.1"]) {
       dnsLookup.mockImplementation((_hostname, _opts, cb) => {
         cb(null, [{ address: ip, family: 6 }]);
       });

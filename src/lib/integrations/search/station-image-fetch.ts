@@ -1,5 +1,5 @@
 import { lookup as dnsLookup } from "node:dns";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 
 /**
@@ -90,35 +90,35 @@ function isFetchableUrl(url: string): boolean {
   }
 }
 
-/** IPv4アドレスがloopback/link-local(クラウドメタデータ含む)/プライベート範囲かどうか判定する。 */
-function isPrivateOrReservedIPv4(ip: string): boolean {
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return true; // 不正な形式は安全側に倒す
-  const [a, b] = parts;
-  if (a === 127) return true; // loopback
-  if (a === 10) return true; // 10.0.0.0/8
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16
-  if (a === 169 && b === 254) return true; // link-local(169.254.169.254 クラウドメタデータ含む)
-  if (a === 0) return true; // 0.0.0.0/8
-  return false;
-}
-
-/** IPv6アドレスがloopback/link-local/unique-localかどうか判定する。 */
-function isPrivateOrReservedIPv6(ip: string): boolean {
-  const normalized = ip.toLowerCase();
-  if (normalized === "::1" || normalized === "::") return true; // loopback / unspecified
-  if (normalized.startsWith("fe80:") || normalized.startsWith("fe8") || normalized.startsWith("fe9")) {
-    return true; // fe80::/10 link-local(緩めの前方一致で確実側に倒す)
-  }
-  if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true; // fc00::/7 unique-local
-  const v4Mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (v4Mapped) return isPrivateOrReservedIPv4(v4Mapped[1]);
-  return false;
-}
+/**
+ * loopback/link-local(クラウドメタデータ169.254.169.254含む)/プライベート
+ * IP範囲のブロックリスト。手動の文字列プレフィックス比較(旧実装)は、
+ * IPv4-mapped IPv6アドレスがhex表記(`::ffff:7f00:1`)で来た場合に
+ * ドット十進表記(`::ffff:127.0.0.1`)しか見ていない正規表現をすり抜けて
+ * しまうバグがあった(/security-review再指摘、High。WHATWG URLパーサーは
+ * IPv6リテラルをhex表記に正規化するため、URL経由の攻撃はほぼ確実にこの
+ * バグを突ける)。Node標準の`net.BlockList`はアドレスをバイト単位で解釈し、
+ * IPv4-mapped IPv6の正規化も内部で行うため、表記ゆれによるバイパスが
+ * 構造的に発生しない。
+ */
+const PRIVATE_BLOCK_LIST = new BlockList();
+PRIVATE_BLOCK_LIST.addSubnet("0.0.0.0", 8, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("10.0.0.0", 8, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("127.0.0.0", 8, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("169.254.0.0", 16, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("172.16.0.0", 12, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("192.168.0.0", 16, "ipv4");
+PRIVATE_BLOCK_LIST.addAddress("::1", "ipv6");
+PRIVATE_BLOCK_LIST.addAddress("::", "ipv6");
+PRIVATE_BLOCK_LIST.addSubnet("fc00::", 7, "ipv6"); // unique-local
+PRIVATE_BLOCK_LIST.addSubnet("fe80::", 10, "ipv6"); // link-local
 
 function isPrivateOrReservedIp(address: string, family: number): boolean {
-  return family === 6 ? isPrivateOrReservedIPv6(address) : isPrivateOrReservedIPv4(address);
+  try {
+    return PRIVATE_BLOCK_LIST.check(address, family === 6 ? "ipv6" : "ipv4");
+  } catch {
+    return true; // 不正な形式は安全側に倒す
+  }
 }
 
 /**
