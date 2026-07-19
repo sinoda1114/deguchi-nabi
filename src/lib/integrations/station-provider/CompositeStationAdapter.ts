@@ -10,6 +10,7 @@ import {
 } from "./heartrails";
 import { getKvCacheStore } from "@/lib/store/kv-cache-store";
 import type { KvCacheStore } from "@/lib/store/kv-cache-store";
+import { isCacheEntryExpired, scheduleStaleRefresh } from "@/lib/store/swr-refresh";
 import { FIXTURE_PLATFORMS } from "@/lib/fixtures/stations";
 import type {
   BoardingPosition,
@@ -242,11 +243,19 @@ export class CompositeStationAdapter implements StationProviderPort {
     if (fixtureFacilities.length > 0) return fixtureFacilities;
 
     const store = getKvCacheStore();
-    const cached = await store.get<StationFacility[]>(
-      FACILITIES_CACHE,
-      facilitiesCacheKey(stationId, rawDestinationHint)
-    );
-    if (cached) return cached.value;
+    const facilitiesKey = facilitiesCacheKey(stationId, rawDestinationHint);
+    const cached = await store.get<StationFacility[]>(FACILITIES_CACHE, facilitiesKey);
+    if (cached) {
+      // 期限切れでも古い値を即返しつつ、裏で再生成して上書きする
+      // (stale-while-revalidate、PR3)。裏再生成は既存キーの冪等な更新であり
+      // 新規destinationHintの生成ではないため、evict/レート制限の対象外とする。
+      if (isCacheEntryExpired(cached.expiresAt)) {
+        scheduleStaleRefresh(`${FACILITIES_CACHE}:${facilitiesKey}`, () =>
+          this.regenerateFacilities(store, stationId, rawDestinationHint)
+        );
+      }
+      return cached.value;
+    }
 
     const station = await this.getStation(stationId);
     if (!station) return [];
@@ -332,6 +341,41 @@ export class CompositeStationAdapter implements StationProviderPort {
     );
 
     return withStationId;
+  }
+
+  /**
+   * facilitiesキャッシュの期限切れエントリを裏で再生成する
+   * (stale-while-revalidate、PR3。scheduleStaleRefresh経由で呼ばれる)。
+   * 呼び出し時点で既にキャッシュキーが確定している(destinationHintは
+   * 正規化・レート制限判定を経た値)ため、getFacilities本体にある
+   * destinationHintフォールバック・レート制限カウント・LRU evictionは
+   * 再実行しない — これらは「新規キーを作るかどうか」の判断であり、
+   * 裏再生成は既存キーの値を最新化するだけの冪等な操作だから。
+   * 生成に失敗(空配列)した場合は上書きしない(既存の古い値を保持する方が、
+   * 一時的なAPI障害で情報が消えるより安全なため)。
+   */
+  private async regenerateFacilities(
+    store: KvCacheStore,
+    stationId: string,
+    destinationHint: string | null
+  ): Promise<void> {
+    const station = await this.getStation(stationId);
+    if (!station) return;
+
+    const generated = await generateStationFacilitiesDispatch(
+      this.geminiApiKey,
+      station.stationName,
+      station.operator,
+      station.lines,
+      { lat: station.latitude, lng: station.longitude },
+      destinationHint
+    );
+    if (generated.length === 0) return;
+
+    const withStationId = generated.map((f) => ({ ...f, stationId }));
+    await store.set(FACILITIES_CACHE, facilitiesCacheKey(stationId, destinationHint), withStationId, {
+      ttlDays: AI_CACHE_TTL_DAYS,
+    });
   }
 
   /**
@@ -431,21 +475,38 @@ export class CompositeStationAdapter implements StationProviderPort {
       ? fixtureBoardingCacheKey(stationId, platformId)
       : lineBoardingCacheKey(stationId, line, direction);
 
-    const store = getKvCacheStore();
-    const cached = await store.get<BoardingPosition>(BOARDING_CACHE, cacheKey);
-    if (cached) return cached.value;
-
     // 到着番線が判明していれば号車推定へ引き渡す。fixture platformが検証済みなら
     // その正規のplatformNumberを使い(最も確実)、そうでない場合はgenerateRailRoute
     // (ai-route-generation.ts)が検索で確認できた到着番線ラベルをplatformId経由で
     // 引き継ぐ。ただし"pf_"接頭辞のfixture platformId文字列(別駅のplatformIdが
     // 誤って渡された場合等)は番線ラベルとして扱わない(isPlainArrivalPlatformLabel参照)。
-    // 取れない場合はnullのまま(無理に埋めない原則を維持)。
+    // 取れない場合はnullのまま(無理に埋めない原則を維持)。cache hit判定より前に
+    // 算出するのは、期限切れ時の裏再生成(regenerateBoardingPosition)でも同じ値が
+    // 必要なため。
     const arrivalPlatformNumber = verifiedFixturePlatform
       ? verifiedFixturePlatform.platformNumber
       : isPlainArrivalPlatformLabel(platformId)
         ? platformId
         : null;
+
+    const store = getKvCacheStore();
+    const cached = await store.get<BoardingPosition>(BOARDING_CACHE, cacheKey);
+    if (cached) {
+      // 期限切れでも古い値を即返しつつ、裏で再生成して上書きする(PR3)。
+      if (isCacheEntryExpired(cached.expiresAt)) {
+        scheduleStaleRefresh(`${BOARDING_CACHE}:${cacheKey}`, () =>
+          this.regenerateBoardingPosition(
+            store,
+            stationName,
+            effectiveLine,
+            effectiveDirection,
+            cacheKey,
+            arrivalPlatformNumber
+          )
+        );
+      }
+      return cached.value;
+    }
 
     const generated = await generateBoardingPosition(
       this.geminiApiKey,
@@ -462,6 +523,32 @@ export class CompositeStationAdapter implements StationProviderPort {
     return generated;
   }
 
+  /**
+   * boardingキャッシュの期限切れエントリを裏で再生成する
+   * (stale-while-revalidate、PR3。scheduleStaleRefresh経由で呼ばれる)。
+   * 生成に失敗(null)した場合は上書きしない(既存の古い値を保持)。
+   */
+  private async regenerateBoardingPosition(
+    store: KvCacheStore,
+    stationName: string,
+    effectiveLine: string,
+    effectiveDirection: string,
+    cacheKey: string,
+    arrivalPlatformNumber: string | null
+  ): Promise<void> {
+    const generated = await generateBoardingPosition(
+      this.geminiApiKey,
+      stationName,
+      effectiveLine,
+      effectiveDirection,
+      cacheKey,
+      arrivalPlatformNumber
+    );
+    if (!generated) return;
+
+    await store.set(BOARDING_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
+  }
+
   async getArrivalGuideNarrativeSteps(
     stationId: string,
     stationName: string,
@@ -472,7 +559,22 @@ export class CompositeStationAdapter implements StationProviderPort {
     const cacheKey = arrivalGuideCacheKey(stationId, gateName, exitName);
     const store = getKvCacheStore();
     const cached = await store.get<GuideStep[]>(ARRIVAL_GUIDE_CACHE, cacheKey);
-    if (cached) return cached.value;
+    if (cached) {
+      // 期限切れでも古い値を即返しつつ、裏で再生成して上書きする(PR3)。
+      if (isCacheEntryExpired(cached.expiresAt)) {
+        scheduleStaleRefresh(`${ARRIVAL_GUIDE_CACHE}:${cacheKey}`, () =>
+          this.regenerateArrivalGuideNarrativeSteps(
+            store,
+            cacheKey,
+            stationName,
+            gateName,
+            exitName,
+            arrivalStationCoordinates
+          )
+        );
+      }
+      return cached.value;
+    }
 
     const generated = await generateArrivalNarrativeSteps(
       this.geminiApiKey,
@@ -489,6 +591,31 @@ export class CompositeStationAdapter implements StationProviderPort {
     await store.set(ARRIVAL_GUIDE_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
 
     return generated;
+  }
+
+  /**
+   * arrival-guideキャッシュの期限切れエントリを裏で再生成する
+   * (stale-while-revalidate、PR3。scheduleStaleRefresh経由で呼ばれる)。
+   * 生成結果が空の場合は上書きしない(既存の古い値を保持)。
+   */
+  private async regenerateArrivalGuideNarrativeSteps(
+    store: KvCacheStore,
+    cacheKey: string,
+    stationName: string,
+    gateName: string,
+    exitName: string,
+    arrivalStationCoordinates: Coordinates | null
+  ): Promise<void> {
+    const generated = await generateArrivalNarrativeSteps(
+      this.geminiApiKey,
+      stationName,
+      gateName,
+      exitName,
+      arrivalStationCoordinates
+    );
+    if (generated.length === 0) return;
+
+    await store.set(ARRIVAL_GUIDE_CACHE, cacheKey, generated, { ttlDays: AI_CACHE_TTL_DAYS });
   }
 
   private findPlatform(platformId: string): Platform | null {

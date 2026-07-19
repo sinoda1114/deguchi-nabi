@@ -2,6 +2,8 @@ import type { RailRouteCandidate, RouteProviderPort } from "./RouteProviderPort"
 import { FixtureRouteAdapter } from "./FixtureRouteAdapter";
 import { generateRailRoute } from "./ai-route-generation";
 import { getKvCacheStore } from "@/lib/store/kv-cache-store";
+import type { KvCacheStore } from "@/lib/store/kv-cache-store";
+import { isCacheEntryExpired, scheduleStaleRefresh } from "@/lib/store/swr-refresh";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 
 const ROUTE_CACHE = "ai-rail-routes";
@@ -44,7 +46,15 @@ export class CompositeRouteAdapter implements RouteProviderPort {
     const key = cacheKey(originStationId, destinationStationId);
     const store = getKvCacheStore();
     const cached = await store.get<RailRouteCandidate>(ROUTE_CACHE, key);
-    if (cached) return [cached.value];
+    if (cached) {
+      // 期限切れでも古い値を即返しつつ、裏で再生成して上書きする(PR3)。
+      if (isCacheEntryExpired(cached.expiresAt)) {
+        scheduleStaleRefresh(`${ROUTE_CACHE}:${key}`, () =>
+          this.regenerateRailRoute(store, key, originStationId, destinationStationId)
+        );
+      }
+      return [cached.value];
+    }
 
     const [originStation, destinationStation] = await Promise.all([
       this.stationProvider.getStation(originStationId),
@@ -58,5 +68,28 @@ export class CompositeRouteAdapter implements RouteProviderPort {
     await store.set(ROUTE_CACHE, key, generated, { ttlDays: ROUTE_CACHE_TTL_DAYS });
 
     return [generated];
+  }
+
+  /**
+   * rail-routesキャッシュの期限切れエントリを裏で再生成する
+   * (stale-while-revalidate、PR3。scheduleStaleRefresh経由で呼ばれる)。
+   * 生成に失敗(駅解決不可・生成null)した場合は上書きしない。
+   */
+  private async regenerateRailRoute(
+    store: KvCacheStore,
+    key: string,
+    originStationId: string,
+    destinationStationId: string
+  ): Promise<void> {
+    const [originStation, destinationStation] = await Promise.all([
+      this.stationProvider.getStation(originStationId),
+      this.stationProvider.getStation(destinationStationId),
+    ]);
+    if (!originStation || !destinationStation) return;
+
+    const generated = await generateRailRoute(this.geminiApiKey, originStation, destinationStation);
+    if (!generated) return;
+
+    await store.set(ROUTE_CACHE, key, generated, { ttlDays: ROUTE_CACHE_TTL_DAYS });
   }
 }
