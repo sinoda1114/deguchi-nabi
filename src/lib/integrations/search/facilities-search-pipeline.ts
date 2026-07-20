@@ -181,7 +181,8 @@ export async function searchStationFacilitiesViaPipeline(
   const extracted = await generateStructuredContent<{ facilities: GeneratedFacility[] }>(
     keys.geminiApiKey,
     prompt,
-    FACILITIES_SCHEMA
+    FACILITIES_SCHEMA,
+    "gemini-3.5-flash"
   );
 
   if (!Array.isArray(extracted?.facilities)) return [];

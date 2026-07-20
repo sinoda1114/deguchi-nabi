@@ -234,6 +234,7 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     UNIFIED_ARRIVAL_GUIDE_SCHEMA,
     "unified-arrival-guide-generation",
     MODEL,
+    MODEL,
     SEARCH_TIMEOUT_MS
   );
 
