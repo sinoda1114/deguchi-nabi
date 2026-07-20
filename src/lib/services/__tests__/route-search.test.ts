@@ -799,11 +799,16 @@ describe("buildTransferAndExitSegments", () => {
     expect(getUnifiedArrivalGuide).not.toHaveBeenCalled();
   });
 
-  test("経路自体がAI生成の場合は統合生成を呼ばない(コスト濫用対策、canGenerateNarrativeと同方針)", async () => {
-    const getUnifiedArrivalGuide = vi.fn();
+  test("経路自体がAI生成の場合でも統合生成を呼ぶ(fixture外ルートは経路自体がAI生成になるため、ここを止めると常に「確認できません」に落ちる。IPレートリミットで総リクエスト数は上限があるため、1リクエストあたりのAI呼び出しが最大2系統になるコスト増は許容する)", async () => {
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      gate: { name: "統合生成改札", confidence: highConfidence },
+      exit: { name: "統合生成出口", confidence: highConfidence },
+      walkingSteps: [],
+    }));
     const stationProvider: StationProviderPort = {
       ...buildStationProvider([]),
       getUnifiedArrivalGuide,
+      getFixtureFacilities: async () => [],
     };
     const routeProvider: RouteProviderPort = {
       async findRailRoutes() {
@@ -834,9 +839,12 @@ describe("buildTransferAndExitSegments", () => {
     expect(candidate.ok).toBe(true);
     if (!candidate.ok) return;
 
-    await buildTransferAndExitSegments(candidate, input, deps);
+    const outcome = await buildTransferAndExitSegments(candidate, input, deps);
 
-    expect(getUnifiedArrivalGuide).not.toHaveBeenCalled();
+    expect(getUnifiedArrivalGuide).toHaveBeenCalled();
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.exit?.name).toBe("統合生成出口");
   });
 
   test("統合生成がnullを返した場合は旧方式(getFacilities)へフォールバックせず確認不能のまま返す(/security-review指摘、Medium: フォールバックすると1リクエストで統合生成+旧方式の計4回の課金AI呼び出しが発生しレートリミットの実効性が下がるため)", async () => {

@@ -480,8 +480,17 @@ export async function buildTransferAndExitSegments(
   // hasApproximateGuidance(方角のみ)以下に落ちる構造的な限界があった
   // (council議論2026-07-20)。座標マッチングを経由せず改札・出口・徒歩ルートを
   // 直接AIに回答させる統合生成(unified-arrival-guide-generation.ts)を、
-  // accessibleモード以外かつ経路自体がAI生成でない場合(canGenerateNarrativeと
-  // 同じコスト濫用対策の考え方)に限って試す。
+  // accessibleモード以外に限って試す。
+  //
+  // 経路自体がAI生成(fixture外区間)の場合も統合生成を試す(2026-07-20
+  // fix/unified-guide-allow-ai-route)。当初はarrival-guide.tsの
+  // canGenerateNarrativeに倣い経路AI生成時は止めていたが、fixture収録は
+  // 西谷→渋谷・新宿→渋谷の2区間のみのため、fixture外ルート(=経路自体が
+  // ほぼ常にAI生成)では統合生成が実質一度も発動せず、本来この機能が救うはずの
+  // ケースが救えていなかった。1リクエストで経路生成+統合生成の計2系統の
+  // 課金AI呼び出しが発生しうるコスト増は残るが、`/api/routes/search`には
+  // commit #76でIPベースレートリミットが導入済みで総リクエスト数は上限が
+  // あるため、許容する判断とした(ユーザー承認済み)。
   //
   // fixtureのfacility一覧はgetFixtureFacilities(AI呼び出しを含まない)で先に
   // 取得する。旧方式(getFacilities、fixtureに無ければAI生成へフォールバック
@@ -509,7 +518,6 @@ export async function buildTransferAndExitSegments(
   const canTryUnified =
     !hasFixtureExit &&
     input.mode !== "accessible" &&
-    !candidate.chosen.isAiGenerated &&
     Boolean(deps.stationProvider.getUnifiedArrivalGuide);
 
   let unified: UnifiedArrivalGuide | null = null;
