@@ -74,6 +74,13 @@ import { locationHint } from "./ai-generation";
  */
 
 const MODEL = "gemini-3.5-flash";
+// GeminiAiSdkClientのデフォルト検索タイムアウト(55秒)を上書きする。出口→改札→
+// 徒歩→乗車位置の依存関係を明示する指示を追加した結果プロンプトが長くなり、
+// 実機検証(Preview環境)で55秒ではTimeoutErrorが発生することを確認したため
+// (2026-07-20 fix/unified-guide-exit-first-derivation)。他のsearchAndGenerate
+// StructuredContent呼び出し元(経路生成・facilities生成・乗車位置独立生成)は
+// この統合生成ほど複雑な指示を持たないため、デフォルト値のままでよい。
+const SEARCH_TIMEOUT_MS = 90000;
 const MAX_TEXT_LENGTH = 200;
 const MAX_REASON_LENGTH = 150;
 const MAX_WALKING_STEPS = 6;
@@ -226,7 +233,8 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     extractionInstruction,
     UNIFIED_ARRIVAL_GUIDE_SCHEMA,
     "unified-arrival-guide-generation",
-    MODEL
+    MODEL,
+    SEARCH_TIMEOUT_MS
   );
 
   if (!result) return null;

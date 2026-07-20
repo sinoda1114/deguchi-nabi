@@ -257,5 +257,47 @@ describe("GeminiAiSdkClient", () => {
 
       expect(generateTextMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-flash-latest" });
     });
+
+    test("searchTimeoutMsを指定すると検索フェーズのタイムアウトが上書きされる(2026-07-20 fix/unified-guide-exit-first-derivation: 長いプロンプトを持つ呼び出し元が個別に検索タイムアウトを延長できるようにするため)", async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+      generateTextMock.mockResolvedValue({
+        text: "検索結果テキスト",
+        providerMetadata: {
+          google: { groundingMetadata: { webSearchQueries: ["q1"] } },
+        },
+      });
+      generateObjectMock.mockResolvedValue({ object: {} });
+
+      const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
+      await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        { type: "object" },
+        "unified-arrival-guide",
+        "gemini-3.5-flash",
+        90_000
+      );
+
+      expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([90_000, 15_000]);
+    });
+
+    test("searchTimeoutMsを省略すると検索フェーズはデフォルトの55秒のまま", async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+      generateTextMock.mockResolvedValue({
+        text: "検索結果テキスト",
+        providerMetadata: {
+          google: { groundingMetadata: { webSearchQueries: ["q1"] } },
+        },
+      });
+      generateObjectMock.mockResolvedValue({ object: {} });
+
+      const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
+      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
+        type: "object",
+      });
+
+      expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
+    });
   });
 });
