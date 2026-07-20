@@ -59,9 +59,33 @@ import { locationHint } from "./ai-generation";
  * 空文字になり、これを条件にした注意書きは実質発火しない不具合だった。
  * originLine(経路生成AIが検索で確認した乗車路線)は必ず存在し、「この路線に
  * 乗車した時点で到着事業者は一意に確定する」という事実で代替できる。
+ *
+ * 回答項目の順序を「改札→出口」から「出口→改札→徒歩→号車」へ組み替えた
+ * (2026-07-20 fix/unified-guide-exit-first-derivation)。旧fixture時代の
+ * 座標ベース選定(resolveExitRecommendation→pickGateForExit、目的地に最も
+ * 近い出口を先に選び、その出口のconnectedGateIdから改札を逆引きする設計)と
+ * 同じ「目的地から逆算する」依存関係にプロンプトの指示も揃える。旧順序
+ * (改札を先に単独で決め、出口をその従属物として聞く)では、改札が目的地への
+ * 近さという直接の根拠なく決まってしまい、実機検証で号車の理由文が実際に
+ * 選んだ改札と異なる階の改札(例: 「1階改札」を選んだのに理由文は「2階改札」
+ * 基準)を参照する不整合が3回中2回の頻度で再現した。出口を先に(目的地への
+ * 近さで)決め、改札をその出口から逆引きさせることで、後続の号車判断も
+ * 曖昧さの少ない改札を基準にできる。
  */
 
 const MODEL = "gemini-3.5-flash";
+// 抽出フェーズ(検索で得たテキストを構造化データに変換するのみ、検索能力は
+// 要求しない)はsearch phaseより軽量なモデルで足りるかをA/B評価する対象
+// (chore/pin-models-pattern-a: 検索を伴わない純粋な構造化抽出はコストの
+// 低いモデルでも精度が落ちないという仮説の検証)。
+const EXTRACTION_MODEL = "gemini-3.1-flash-lite";
+// GeminiAiSdkClientのデフォルト検索タイムアウト(55秒)を上書きする。出口→改札→
+// 徒歩→乗車位置の依存関係を明示する指示を追加した結果プロンプトが長くなり、
+// 実機検証(Preview環境)で55秒ではTimeoutErrorが発生することを確認したため
+// (2026-07-20 fix/unified-guide-exit-first-derivation)。他のsearchAndGenerate
+// StructuredContent呼び出し元(経路生成・facilities生成・乗車位置独立生成)は
+// この統合生成ほど複雑な指示を持たないため、デフォルト値のままでよい。
+const SEARCH_TIMEOUT_MS = 90000;
 const MAX_TEXT_LENGTH = 200;
 const MAX_REASON_LENGTH = 150;
 const MAX_WALKING_STEPS = 6;
@@ -156,7 +180,8 @@ export async function generateUnifiedArrivalGuide(
   destinationLines: string[],
   destinationHint: string | null,
   stationCoordinates: Coordinates | null,
-  destinationPlaceCoordinates: Coordinates | null
+  destinationPlaceCoordinates: Coordinates | null,
+  fixedExit: { name: string; confidenceLevel: ConfidenceLevel } | null = null
 ): Promise<UnifiedArrivalGuideResult | null> {
   const stationLabel = destinationOperator
     ? `${destinationStationName}駅(${destinationOperator}、${destinationLines.join("・")})${locationHint(stationCoordinates)}`
@@ -184,22 +209,47 @@ export async function generateUnifiedArrivalGuide(
     ? `\n\n【複数事業者駅の注意】\n${destinationStationName}駅は複数の鉄道会社が乗り入れる駅である可能性があります。今回${originStationName}駅から乗車したのは${originLine}です。直通運転・相互乗り入れが無い区間であれば、到着に使う事業者はこの${originLine}を運行する会社に絞り込めます。ただし直通運転区間では到着時点の運行会社が変わっている場合があるため、路線名だけで事業者を断定せず、到着ホームの案内表示や公式構内図で実際の運行会社を確認したうえで回答してください。回答する乗車位置・改札名・出口名は、その(到着時点で実際に案内に使われている)会社の名称にしてください。他社線専用の連絡改札や、その会社が使わない番号のみの出口案内(例:地下鉄や他社線の「出口5」等)を、確認せずそのまま採用しないでください。`
     : "";
 
+  // 目的地公式サイト優先検索(destinationAccessPriorityNote)・有名性バイアス
+  // 禁止(antiLandmarkBiasNote)というプロンプト指示ベースの対策は、いずれも
+  // 実機検証(fix/destination-first-access-priority)で効果が確認できず撤回した。
+  // 「みなみ西口」「ハチ公口」のような有名な出口への収束自体は、実際に食べログ・
+  // ホットペッパーグルメ等の公開情報が案内している内容と一致していることが
+  // 別途の専用検索(diag-dest-access)で確認できたため、「最短距離」より
+  // 「広く案内されている迷いにくい出口」を優先する方針とし、有名性の排除は
+  // もう試みない。
+  //
+  // 代わりに、呼び出し元(route-search.ts)が別の専用検索で確認した「目的地が
+  // 明言する出口」をfixedExitとして渡せるようにし、渡された場合はこの関数
+  // 自身に出口を選ばせず、その出口を起点に改札を選ばせる設計に変更した。
+  // 改札名まで目的地の公開情報から機械的に固定しないのは、目的地のページが
+  // 「渋谷駅から徒歩3分」のように鉄道会社を意識せず書かれていることが多く、
+  // 今回の乗車路線(originLine)の運行会社と無関係な改札名(例: 東急利用者なのに
+  // 京王井の頭線側の改札)を拾ってしまうリスクがあるため。改札は事業者の
+  // 整合性を保てるこの関数(統合生成)側で、確定した出口を起点に選ばせる。
+  const fixedExitNote = fixedExit
+    ? `\n\n【出口は既に確定済み】\n目的地の公式情報の検索により、出口は既に「${fixedExit.name}」と判明しています。この出口名をそのまま採用してください(別の出口を提案しないでください)。あなたが行うべきなのは、この「${fixedExit.name}」に直接つながる、またはこの出口を利用する際に必ず通る改札名を、今回の乗車事業者(${originLine}を運行する会社)基準で選ぶことです。`
+    : "";
+
   const searchPrompt = `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStationName}駅」から${originLine}(${originDirection})に乗車し、「${destinationLabel}」へ向かうルートを知りたいと考えています。
 回答時には必ずインターネット検索を行い、最新かつ正確な乗車位置・改札・出口・徒歩ルート情報を取得し、出力前にファクトチェックを行います。
 
+【回答の考え方(重要)】
+以下の4項目は目的地から逆算した依存関係にあります。必ずこの順序で考え、後の項目は前の項目の結果を踏まえて決めてください(改札を先に単独で決めて、それに合わせて出口を選ぶという逆の順序にはしないでください)。
+出口(目的地に最も近い/最も直接的にたどり着けるもの) → 改札(その出口に直接つながる、またはその出口を利用する際に必ず通るもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)${fixedExitNote}
+
 【回答すべき情報】
-1. ${stationLabel}で降りるべき改札名(${destinationHint ? "目的地に最も近いもの" : "主要な改札"})
-2. その改札を出て利用すべき出口名
-3. 改札を出てから目的地までの徒歩ルート(目印を含む、簡潔に)
-4. ${originStationName}駅で${originLine}(${originDirection})に乗車する場合、1の改札に到着ホーム上の階段・エスカレーターで最短で向かえる号車・ドア位置(列車の進行方向・編成両数と照合して決めてください。到着番線や編成によって結果が変わる場合はその条件を含めてください)${operatorDisambiguationNote}
+1. ${fixedExit ? `出口名は「${fixedExit.name}」で確定済みです(そのまま回答してください)` : destinationHint ? `${destinationLabel}に最も直接的にたどり着ける出口名(徒歩距離が最短になるものを優先してください)` : `${stationLabel}の主要な出口名`}
+2. 1の出口に直接つながる、またはその出口を利用する際に必ず通る改札名(1で決めた出口を起点に選んでください)
+3. 2の改札を出て1の出口を通り、目的地までの徒歩ルート(目印を含む、簡潔に)
+4. ${originStationName}駅で${originLine}(${originDirection})に乗車する場合、2の改札に到着ホーム上の階段・エスカレーターで最短で向かえる号車・ドア位置(列車の進行方向・編成両数と照合して決めてください。到着番線や編成によって結果が変わる場合はその条件を含めてください)${operatorDisambiguationNote}
 
 【制約】
 - 鉄道会社公式の駅構内図・公式サイトを最優先の情報源としてください。
 - 同じ駅名が他にも存在する場合は、必ず上記の位置に最も近い駅を対象にしてください。
 - 確証がない場合は「確認できません」と明示し、推測による回答は行わない。実在しない乗車位置・改札名・出口名を創作しないでください。`;
 
-  const extractionInstruction = `以下の文章から、乗車位置(号車・ドア位置・理由)・改札名・出口名・徒歩ルートの情報をJSON形式で抽出してください。
-確信が持てない項目は含めないでください(乗車位置が確認できない場合はboardingCarNumber等のプロパティ自体を省略、改札名・出口名が確認できない場合はgateName/exitNameのプロパティ自体を省略してください)。
+  const extractionInstruction = `以下の文章から、出口名・改札名・徒歩ルート・乗車位置(号車・ドア位置・理由)の情報をJSON形式で抽出してください。
+確信が持てない項目は含めないでください(改札名・出口名が確認できない場合はgateName/exitNameのプロパティ自体を省略、乗車位置が確認できない場合はboardingCarNumber等のプロパティ自体を省略してください)。
 boardingReasonには、到着番線や編成によって結果が変わる場合の条件(例:◯番線着の場合は◯号車)を含めてください。ただし150字程度までの簡潔な文章にまとめてください。
 徒歩ルートの各ステップには、短い見出し(title、例:「改札を出て直進」)と詳しい説明(instruction)の両方を含めてください。
 各項目について、あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
@@ -210,7 +260,9 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     extractionInstruction,
     UNIFIED_ARRIVAL_GUIDE_SCHEMA,
     "unified-arrival-guide-generation",
-    MODEL
+    MODEL,
+    EXTRACTION_MODEL,
+    SEARCH_TIMEOUT_MS
   );
 
   if (!result) return null;
@@ -234,8 +286,12 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     isNonEmptyText(result.gateName) && isValidConfidenceLevel(result.gateConfidence)
       ? { name: result.gateName, confidenceLevel: result.gateConfidence }
       : null;
-  const exit =
-    isNonEmptyText(result.exitName) && isValidConfidenceLevel(result.exitConfidence)
+  // fixedExitが渡された場合は、抽出結果のexitNameより優先してそのまま採用する
+  // (モデルが「出口名は確定済み」という指示に従わず別の出口を返した場合の
+  // 揺らぎを吸収するため。改札はfixedExit起点で選ばせた抽出結果をそのまま使う)。
+  const exit = fixedExit
+    ? fixedExit
+    : isNonEmptyText(result.exitName) && isValidConfidenceLevel(result.exitConfidence)
       ? { name: result.exitName, confidenceLevel: result.exitConfidence }
       : null;
   const walkingSteps = Array.isArray(result.walkingSteps)
@@ -251,3 +307,4 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
 
   return { boardingPosition, gate, exit, walkingSteps };
 }
+

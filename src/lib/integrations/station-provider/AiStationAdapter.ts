@@ -3,6 +3,7 @@ import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-gene
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import { generateUnifiedArrivalGuide } from "./unified-arrival-guide-generation";
+import { searchDestinationExitViaSerper } from "@/lib/integrations/search/destination-exit-search-pipeline";
 import { groundedAiConfidence } from "./ai-generation";
 import {
   decodeHeartRailsStationId,
@@ -62,7 +63,11 @@ export class AiStationAdapter implements StationProviderPort {
    */
   private readonly heartRailsStationCache = new Map<string, Promise<Station | null>>();
 
-  constructor(private readonly geminiApiKey: string) {}
+  constructor(
+    private readonly geminiApiKey: string,
+    private readonly serperApiKey: string = "",
+    private readonly jinaApiKey: string | null = null
+  ) {}
 
   async searchStations(query: string): Promise<Station[]> {
     const fromApi = await searchStationsFromHeartRails(query);
@@ -227,6 +232,27 @@ export class AiStationAdapter implements StationProviderPort {
     stationCoordinates: Coordinates | null,
     destinationPlaceCoordinates: Coordinates | null
   ): Promise<UnifiedArrivalGuide | null> {
+    // 目的地公式サイト・食べログ等が明記している出口を、統合生成本体より
+    // 先に専用検索で確認する。Gemini google_search grounding単体
+    // (searchDestinationStatedExit、fix/destination-first-access-priority)は
+    // 実機検証で再現性が低く、Serper検索パイプライン(実在するfacilities-
+    // search-pipeline.tsと同設計: Serper検索→スコアリング→Jina Reader本文
+    // 取得→Gemini構造化抽出)に置き換えた方が高速(実機診断で約19秒、
+    // grounding版は47秒以上)かつ根拠(出典URL・引用元本文)を検証可能で
+    // あることを確認した(experiment/destination-fix-then-vote)。
+    // destinationHintが無い(駅そのものが目的地)場合は対象外。
+    const serperResult = destinationHint
+      ? await searchDestinationExitViaSerper(
+          { serperApiKey: this.serperApiKey, jinaApiKey: this.jinaApiKey, geminiApiKey: this.geminiApiKey },
+          destinationHint,
+          destinationPlaceCoordinates,
+          lines
+        )
+      : null;
+    const fixedExit = serperResult
+      ? { name: serperResult.exit.name, confidenceLevel: serperResult.exit.confidence.level }
+      : null;
+
     const result = await generateUnifiedArrivalGuide(
       this.geminiApiKey,
       originStationName,
@@ -237,7 +263,8 @@ export class AiStationAdapter implements StationProviderPort {
       lines,
       destinationHint,
       stationCoordinates,
-      destinationPlaceCoordinates
+      destinationPlaceCoordinates,
+      fixedExit
     );
     if (!result) return null;
 

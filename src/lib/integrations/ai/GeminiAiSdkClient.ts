@@ -24,11 +24,15 @@ function diagLogAiModuleIdentity(): void {
   );
 }
 
-const MODEL_ID = "gemini-flash-latest";
 const REQUEST_TIMEOUT_MS = 15000;
 // Google Search Grounding は実際にWeb検索を行うため、単発の構造化生成より大幅に時間がかかる
 // (GeminiClient.tsのSEARCH_REQUEST_TIMEOUT_MSと同じ根拠。西谷駅→国際センター駅(名駅)の
 // ような遠距離・同名駅の曖昧性解消が絡む検索で実測35秒超のため55秒を確保する)。
+// searchAndGenerateStructuredContentのデフォルト値として使う。呼び出し元の
+// プロンプトが特に長い/複雑な推論を要求する場合(unified-arrival-guide-
+// generation.ts等)は、searchTimeoutMs引数で個別に上書きできる
+// (2026-07-20 fix/unified-guide-exit-first-derivation: 出口→改札の依存関係
+// 明示によりプロンプトが長くなり、55秒では実機でTimeoutErrorを確認したため)。
 const SEARCH_REQUEST_TIMEOUT_MS = 55000;
 
 interface GoogleGroundingMetadata {
@@ -91,13 +95,14 @@ export async function generateStructuredContent<T>(
   apiKey: string,
   prompt: string,
   responseSchema: object,
+  model: string,
   callerId: string = "gemini-ai-sdk.generateStructuredContent"
 ): Promise<T | null> {
   diagLogAiModuleIdentity();
   try {
     const google = googleProvider(apiKey);
     const { object } = await generateObject({
-      model: google(MODEL_ID),
+      model: google(model),
       // 既存コードは生のJSON Schemaオブジェクトを扱っており(Zodスキーマ化はしていない)、
       // その資産をそのまま流用できるよう jsonSchema() でAI SDK互換の型にラップする。
       schema: toObjectSchema(responseSchema),
@@ -136,8 +141,10 @@ export async function searchAndGenerateStructuredContent<T>(
   searchPrompt: string,
   extractionInstruction: string,
   responseSchema: object,
-  callerId: string = "gemini-ai-sdk.searchAndGenerateStructuredContent",
-  searchModel: string = MODEL_ID
+  callerId: string,
+  searchModel: string,
+  extractionModel: string,
+  searchTimeoutMs: number = SEARCH_REQUEST_TIMEOUT_MS
 ): Promise<T | null> {
   diagLogAiModuleIdentity();
   try {
@@ -147,7 +154,7 @@ export async function searchAndGenerateStructuredContent<T>(
       model: google(searchModel),
       tools: { google_search: google.tools.googleSearch({}) },
       prompt: searchPrompt,
-      abortSignal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
+      abortSignal: AbortSignal.timeout(searchTimeoutMs),
       telemetry: {
         isEnabled: true,
         functionId: `${callerId}.search`,
@@ -161,10 +168,11 @@ export async function searchAndGenerateStructuredContent<T>(
     if (!searchResult.text || !searchExecuted) return null;
 
     // 抽出フェーズ(構造化データへの変換のみ)は検索能力を要求しないため、
-    // searchModelに関わらず常にデフォルトモデルを使う(GeminiClient.tsの
-    // extractStructuredContentと同方針)。
+    // searchModelとは別にextractionModelを呼び出し元が明示指定する
+    // (2026-07-20 model pinning: gemini-flash-latestという未固定エイリアスへの
+    // 暗黙依存を排し、全呼び出し元でバージョンを明示させるための変更)。
     const { object } = await generateObject({
-      model: google(MODEL_ID),
+      model: google(extractionModel),
       schema: toObjectSchema(responseSchema),
       prompt: `${extractionInstruction}\n\n${searchResult.text}`,
       abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
