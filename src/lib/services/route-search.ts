@@ -11,6 +11,7 @@ import type {
   UnifiedArrivalGuide,
 } from "@/lib/domain/route";
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
+import type { Confidence } from "@/lib/domain/confidence";
 import { unavailableConfidence } from "@/lib/domain/confidence";
 import type {
   RailRouteCandidate,
@@ -357,13 +358,29 @@ export async function resolveRouteCandidate(
   };
 }
 
+export interface UnifiedBoardingPosition {
+  carNumber: number;
+  doorPosition: string;
+  reason: string;
+  confidence: Confidence;
+}
+
 /**
  * 選択された経路候補の各鉄道区間について、号車・ドア位置を含む
  * train セグメントを組み立てる(searchRouteGuide の train ループをそのまま抽出)。
+ *
+ * unifiedBoardingPositionは、到着駅直前の区間(toStationIdがchosen.
+ * arrivalStationIdと一致する区間)について、統合生成(buildTransferAndExit
+ * Segments)がgateを基準に既に決定した乗車位置(2026-07-20追加)。これが
+ * 渡された場合、その区間では独立した乗車位置生成(getBoardingPosition)を
+ * 呼ばずそのまま採用する。統合生成とは無関係な改札を基準にした号車を
+ * 独自に返してしまう不整合(西谷駅→横浜駅の実機検証で確認済み。統合生成が
+ * 選んだ改札とは別の改札に近い号車を誤って回答していた)を構造的に防ぐ。
  */
 export async function buildTrainSegments(
   chosen: RailRouteCandidate,
-  deps: Pick<RouteSearchDeps, "stationProvider">
+  deps: Pick<RouteSearchDeps, "stationProvider">,
+  unifiedBoardingPosition: UnifiedBoardingPosition | null = null
 ): Promise<RouteSegment[]> {
   const segments: RouteSegment[] = [];
 
@@ -374,15 +391,19 @@ export async function buildTrainSegments(
       deps.stationProvider.getPlatforms(rail.fromStationId),
     ]);
     const platform = platforms.find((p) => p.platformId === rail.platformId);
-    const boarding = fromStation
-      ? await deps.stationProvider.getBoardingPosition(
-          rail.fromStationId,
-          fromStation.stationName,
-          rail.platformId,
-          rail.line,
-          rail.direction
-        )
-      : null;
+    const isArrivalSegment = rail.toStationId === chosen.arrivalStationId;
+    const unifiedForSegment = isArrivalSegment ? unifiedBoardingPosition : null;
+    const boarding =
+      unifiedForSegment ??
+      (fromStation
+        ? await deps.stationProvider.getBoardingPosition(
+            rail.fromStationId,
+            fromStation.stationName,
+            rail.platformId,
+            rail.line,
+            rail.direction
+          )
+        : null);
 
     segments.push({
       type: "train",
@@ -437,6 +458,13 @@ export interface FacilitiesBuildSuccess {
    * searchRouteGuideはこれを再生成せずそのまま使う。
    */
   arrivalGuide: ArrivalGuide;
+  /**
+   * 統合生成(gateを基準に決定)が返した乗車位置(2026-07-20追加)。統合生成が
+   * 使われなかった/出口を確認できなかった場合はnull。buildTrainSegmentsは
+   * これが非nullの区間では独立した乗車位置生成(getBoardingPosition)を
+   * 呼ばず、この値をそのまま採用する(gateと矛盾しない号車にするため)。
+   */
+  unifiedBoardingPosition: UnifiedBoardingPosition | null;
 }
 
 /**
@@ -496,12 +524,18 @@ export async function buildTransferAndExitSegments(
       deps.stationProvider.getStation(input.destinationStationId),
     ]);
     if (originStation && destinationStation) {
+      // 到着駅に接続する最終区間(乗車位置の決定に必要な線区・方面)。
+      // 現行のAI生成経路は常に単一区間だが、将来複数区間になっても
+      // 到着駅直前の区間を基準にするのが正しいため最後の要素を使う。
+      const arrivalSegment = candidate.chosen.segments[candidate.chosen.segments.length - 1];
       unified = await deps.stationProvider.getUnifiedArrivalGuide!(
         input.destinationStationId,
         destinationStation.stationName,
         destinationStation.operator,
         destinationStation.lines,
         originStation.stationName,
+        arrivalSegment?.line ?? "",
+        arrivalSegment?.direction ?? "",
         destinationHint,
         candidate.arrivalStationCoordinates,
         input.destinationCoordinates
@@ -651,6 +685,10 @@ export async function buildTransferAndExitSegments(
     elevator,
     hasApproximateGuidance,
     approximateDirectionLabel: hasApproximateGuidance ? recommendation.destinationDirectionLabel : null,
+    // 統合生成がgateを基準に決めた乗車位置(2026-07-20追加)。buildTrainSegments
+    // 側の独立した乗車位置生成(getBoardingPosition)と不整合が起きないよう、
+    // これが取れている場合はそちらを優先させる(searchRouteGuide参照)。
+    unifiedBoardingPosition: unified && unified.exit ? unified.boardingPosition : null,
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
@@ -738,18 +776,40 @@ export async function searchRouteGuide(
     return candidateResult;
   }
 
-  // 号車情報(buildTrainSegments)と改札・出口情報(buildTransferAndExitSegments)は
-  // 互いの結果に依存しない(どちらもcandidateResultのみから計算する)ため、
-  // 並列実行する(2026-07-20 fixture廃止に伴うPhase 3対策)。順に await すると
-  // 経路生成AI(最大70秒)に加えてこの2つ(各最大70秒)が直列に積み重なり、
-  // fixture未収録駅への初回アクセスで合計最大210秒かかりFUNCTION_INVOCATION_
-  // TIMEOUT(Issue #68)を再発しうる。並列化により140秒圏に短縮する。ストリーミング
-  // 表示側(RouteResultBody.tsx)は元々この2つを並列のPromiseとして扱っており、
-  // 今回はこのAPI route専用の直列実行のみが残っていた。
-  const [trainSegments, facilitiesOutcome] = await Promise.all([
-    buildTrainSegments(candidateResult.chosen, deps),
-    buildTransferAndExitSegments(candidateResult, input, deps),
-  ]);
+  // accessibleモードは統合生成を使わない(canTryUnified参照)ため、
+  // buildTrainSegmentsがunifiedBoardingPositionに依存することは無く、
+  // Phase 3(2026-07-20 fixture廃止対策)時点の並列実行を維持できる
+  // (経路生成(最大70秒)+ max(号車, 改札出口)(最大70秒)で合算最大140秒)。
+  //
+  // accessible以外のモードは、buildTransferAndExitSegments(改札・出口・
+  // 統合生成)を先に解決し、そのunifiedBoardingPositionをbuildTrainSegments
+  // へ渡す(2026-07-20 fix/unified-guide-boarding-and-operator-
+  // disambiguation)。統合生成がgateを基準に既に決めた乗車位置がある場合、
+  // buildTrainSegments側の独立した乗車位置生成(AI呼び出し)は行わずそのまま
+  // 採用するため、直列にしても追加のAI呼び出しは発生しない(西谷駅→横浜駅の
+  // ケースで、統合生成が選んだ改札とは無関係な号車を独立生成が返してしまう
+  // 不整合を防ぐための変更。実機検証で確認済み)。通常ケース(統合生成成功)
+  // では経路生成(最大70秒)+統合生成(最大70秒)の直列で合算最大140秒に収まる。
+  // 統合生成を試みたが出口を確認できなかった場合のみ、buildTrainSegmentsが
+  // 独立した乗車位置生成を追加で呼び最大210秒かかりうる(/ai-review指摘、
+  // High: maxDurationは対策としてこの想定を含めて延長する)。
+  let facilitiesOutcome: FacilitiesSearchResult;
+  let trainSegments: RouteSegment[];
+  if (input.mode === "accessible") {
+    [trainSegments, facilitiesOutcome] = await Promise.all([
+      buildTrainSegments(candidateResult.chosen, deps),
+      buildTransferAndExitSegments(candidateResult, input, deps),
+    ]);
+  } else {
+    facilitiesOutcome = await buildTransferAndExitSegments(candidateResult, input, deps);
+    trainSegments = facilitiesOutcome.ok
+      ? await buildTrainSegments(
+          candidateResult.chosen,
+          deps,
+          facilitiesOutcome.result.unifiedBoardingPosition
+        )
+      : [];
+  }
   if (!facilitiesOutcome.ok) {
     return facilitiesOutcome;
   }

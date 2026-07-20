@@ -50,6 +50,7 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
       elevator: null,
       hasApproximateGuidance: false,
       approximateDirectionLabel: null,
+      unifiedBoardingPosition: null,
       arrivalGuide: {
         steps: [
           {

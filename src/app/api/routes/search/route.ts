@@ -5,19 +5,29 @@ import { resolveAndSearchRoute } from "@/lib/services/route-search-orchestrator"
 import type { RouteMode } from "@/lib/domain/route";
 import { checkRoutesSearchRateLimit, extractClientIp } from "@/lib/rate-limit/ip-rate-limit";
 
-// 全駅間の経路・改札・出口・号車情報をGemini Search Groundingで検索
-// (検索55秒+抽出15秒を直列実行、最大70秒)するため、プラットフォームの
+// 全駅間の経路・乗車位置・改札・出口・徒歩ルートをGemini Search Groundingで
+// 検索(検索55秒+抽出15秒を直列実行、最大70秒)するため、プラットフォームの
 // デフォルト実行時間上限より長くかかりうる。明示的に確保する。
 //
-// resolveRouteCandidate(経路自体のAI生成、最大70秒)の後、buildTrainSegments
-// (号車情報)とbuildTransferAndExitSegments(改札・出口・統合生成)は互いの
-// 結果に依存しないため searchRouteGuide 内で Promise.all により並列実行する
-// (2026-07-20 fixture廃止Phase 3、根本対応。旧実装は直列実行で経路生成+
-// 号車+改札出口の最大3系統・最大210秒がかかりうる状態で、90秒設定では実機で
-// FUNCTION_INVOCATION_TIMEOUTを確認していた。Issue #68)。並列化後は
-// 経路生成(最大70秒)+ max(号車, 改札出口)(最大70秒)で合算最大140秒に収まる。
-// 安全マージンを見て180秒のまま維持する。
-export const maxDuration = 180;
+// searchRouteGuide内でresolveRouteCandidate(経路自体のAI生成、最大70秒)→
+// buildTransferAndExitSegments(改札・出口・徒歩ルート・乗車位置の統合生成、
+// 最大70秒)を直列実行する。2026-07-20(fix/unified-guide-boarding-and-
+// operator-disambiguation)で乗車位置を統合生成に統合したため、通常ケース
+// (easy/fastestモードかつ統合生成成功)ではbuildTrainSegments自体は追加の
+// AI呼び出しをせず、合算最大140秒(経路生成+統合生成)に収まる。
+//
+// accessibleモードは統合生成を使わないため、buildTrainSegments(号車、
+// 最大70秒)とbuildTransferAndExitSegments(改札・出口・エレベーター、
+// 最大70秒)を引き続き並列実行し、経路生成+max(両者)で合算最大140秒に収まる。
+//
+// 統合生成を試みたが出口を確認できなかった場合(accessible以外のモードで
+// 統合生成が失敗したケース)のみ、buildTrainSegmentsが独立した乗車位置生成を
+// 追加で直列に呼び、経路生成+統合生成+乗車位置生成で最大210秒かかりうる
+// (/ai-review指摘、High: 乗車位置と改札・出口の整合性を取るために直列化した
+// 副作用で、この経路だけ旧来の140秒上限を超えるようになった)。90秒設定では
+// 実機でFUNCTION_INVOCATION_TIMEOUTを確認済み(Issue #68)。210秒の想定に
+// 安全マージンを見て240秒に引き上げる。
+export const maxDuration = 240;
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 

@@ -18,6 +18,8 @@ describe("generateUnifiedArrivalGuide", () => {
     await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -31,12 +33,14 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(args[5]).toBe("gemini-3.5-flash");
   });
 
-  test("検索プロンプトに出発駅名・到着駅名・鉄道会社を含める", async () => {
+  test("検索プロンプトに出発駅名・乗車路線・方面・到着駅名・鉄道会社を含める", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
 
     await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -50,6 +54,29 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(searchPrompt).toContain("横浜駅");
     expect(searchPrompt).toContain("相鉄");
     expect(searchPrompt).toContain("相鉄本線");
+    expect(searchPrompt).toContain("横浜方面");
+  });
+
+  test("乗車路線が判明している場合、複数事業者駅の注意書き(乗車路線を根拠にした事業者固有設備の優先指示)を検索プロンプトに含める", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "", // destinationOperatorは常に空文字になりうる(HeartRailsが提供しないため)
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("複数の鉄道会社");
+    expect(searchPrompt).toContain("相鉄本線");
+    expect(searchPrompt).toContain("他社線専用の連絡改札");
   });
 
   test("destinationHintがある場合、検索プロンプトに目的地施設名・目的地の実座標を含め絞り込み型の指示にする", async () => {
@@ -58,6 +85,8 @@ describe("generateUnifiedArrivalGuide", () => {
     await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -74,11 +103,15 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(searchPrompt).toContain("139.6220");
   });
 
-  test("gate/exit/walkingStepsを正しく変換する", async () => {
+  test("boardingPosition/gate/exit/walkingStepsを正しく変換する", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({
-      gateName: "1F改札",
+      boardingCarNumber: 6,
+      boardingDoorPosition: "後方",
+      boardingReason: "1階改札への階段に近いため",
+      boardingConfidence: "medium",
+      gateName: "相鉄線1階改札",
       gateConfidence: "medium",
-      exitName: "五番街口",
+      exitName: "みなみ西口(相鉄口)",
       exitConfidence: "medium",
       walkingSteps: [
         { title: "改札を出て直進", instruction: "改札を出て直進してください。", confidence: "medium" },
@@ -88,6 +121,8 @@ describe("generateUnifiedArrivalGuide", () => {
     const result = await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -97,8 +132,14 @@ describe("generateUnifiedArrivalGuide", () => {
     );
 
     expect(result).toEqual({
-      gate: { name: "1F改札", confidenceLevel: "medium" },
-      exit: { name: "五番街口", confidenceLevel: "medium" },
+      boardingPosition: {
+        carNumber: 6,
+        doorPosition: "後方",
+        reason: "1階改札への階段に近いため",
+        confidenceLevel: "medium",
+      },
+      gate: { name: "相鉄線1階改札", confidenceLevel: "medium" },
+      exit: { name: "みなみ西口(相鉄口)", confidenceLevel: "medium" },
       walkingSteps: [
         {
           title: "改札を出て直進",
@@ -109,14 +150,18 @@ describe("generateUnifiedArrivalGuide", () => {
     });
   });
 
-  test("gateName/exitNameが省略された場合はnullとして扱う(確認できない場合を創作しない)", async () => {
+  test("boardingCarNumber等が省略された場合はboardingPositionをnullとして扱う(確認できない場合を創作しない)", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({
+      gateName: "1F改札",
+      gateConfidence: "medium",
       walkingSteps: [],
     });
 
     const result = await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -125,7 +170,53 @@ describe("generateUnifiedArrivalGuide", () => {
       null
     );
 
-    expect(result).toEqual({ gate: null, exit: null, walkingSteps: [] });
+    expect(result?.boardingPosition).toBeNull();
+  });
+
+  test("boardingCarNumberが範囲外(0や17以上)の場合はboardingPositionをnullとして扱う", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      boardingCarNumber: 17,
+      boardingDoorPosition: "後方",
+      boardingReason: "理由",
+      boardingConfidence: "medium",
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    expect(result?.boardingPosition).toBeNull();
+  });
+
+  test("gateName/exitNameが省略された場合はnullとして扱う(確認できない場合を創作しない)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    expect(result).toEqual({ boardingPosition: null, gate: null, exit: null, walkingSteps: [] });
   });
 
   test("confidenceが不正な値のwalkingStepは除外する", async () => {
@@ -139,6 +230,8 @@ describe("generateUnifiedArrivalGuide", () => {
     const result = await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -164,6 +257,8 @@ describe("generateUnifiedArrivalGuide", () => {
     const result = await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -181,6 +276,8 @@ describe("generateUnifiedArrivalGuide", () => {
     const result = await generateUnifiedArrivalGuide(
       "key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],

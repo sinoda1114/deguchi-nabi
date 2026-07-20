@@ -87,10 +87,32 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
   // await せず Promise のまま各セクションへ渡す。同じ Promise インスタンスは
   // 「生成元の処理を1回だけ表す」という JS の仕様上、複数コンポーネントで
   // 共有しても buildTrainSegments/buildTransferAndExitSegments が重複実行されることはない。
-  const trainSegmentsPromise = buildTrainSegments(candidate.chosen, { stationProvider });
+  //
+  // accessibleモードは統合生成を使わない(route-search.ts canTryUnified参照)
+  // ため、両者を独立実行する(Phase 3時点の並列動作を維持)。
+  //
+  // accessible以外のモードはtrainSegmentsPromiseがfacilitiesPromiseの解決を
+  // .then()で待ってからbuildTrainSegmentsを呼ぶ(2026-07-20
+  // fix/unified-guide-boarding-and-operator-disambiguation)。統合生成
+  // (facilitiesPromise内)がgateを基準に決めた乗車位置をbuildTrainSegments
+  // へ渡すことで、両者が無関係な改札を基準にした号車を独立に返してしまう
+  // 不整合を防ぐ(西谷駅→横浜駅の実機検証で確認済みの不具合)。通常ケース
+  // (統合生成成功時)ではbuildTrainSegments自体は追加のAI呼び出しをしない
+  // ため、直列化による体感速度への影響は小さい(route-search.ts
+  // searchRouteGuideの並列/直列分岐、maxDurationのコメントも参照)。
   const facilitiesPromise = buildTransferAndExitSegments(candidate, searchInput, {
     stationProvider,
   });
+  const trainSegmentsPromise =
+    mode === "accessible"
+      ? buildTrainSegments(candidate.chosen, { stationProvider })
+      : facilitiesPromise.then((outcome) =>
+          buildTrainSegments(
+            candidate.chosen,
+            { stationProvider },
+            outcome.ok ? outcome.result.unifiedBoardingPosition : null
+          )
+        );
 
   // accessible(バリアフリー)モードは、エレベーター情報を確認できない経路を
   // 「利用可能な経路」に見せてはならない(安全に関わる)。buildTransferAndExitSegments は

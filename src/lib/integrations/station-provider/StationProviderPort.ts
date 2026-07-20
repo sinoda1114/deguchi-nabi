@@ -47,9 +47,12 @@ export interface StationProviderPort {
     arrivalStationCoordinates?: Coordinates | null
   ): Promise<GuideStep[]>;
   /**
-   * 改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成する任意メソッド
-   * (council議論2026-07-20)。accessibleモード以外で試す。未実装のアダプターは
-   * 単に呼ばれない(既存のgetArrivalGuideNarrativeStepsと同方針)。
+   * 乗車位置・改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成する
+   * 任意メソッド(council議論2026-07-20)。accessibleモード以外で試す。未実装の
+   * アダプターは単に呼ばれない(既存のgetArrivalGuideNarrativeStepsと同方針)。
+   *
+   * originLine/originDirectionは乗車位置(号車・ドア位置)の決定に使う
+   * (2026-07-20追加、fix/unified-guide-boarding-and-operator-disambiguation)。
    */
   getUnifiedArrivalGuide?(
     stationId: string,
@@ -57,6 +60,8 @@ export interface StationProviderPort {
     operator: string,
     lines: string[],
     originStationName: string,
+    originLine: string,
+    originDirection: string,
     destinationHint: string | null,
     stationCoordinates: Coordinates | null,
     destinationPlaceCoordinates: Coordinates | null

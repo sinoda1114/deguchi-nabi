@@ -113,13 +113,23 @@ export interface ArrivalGuide {
 }
 
 /**
- * 改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成した結果
- * (unified-arrival-guide-generation.ts参照)。accessibleモード以外向け
- * (council議論2026-07-20)。gate/exitは座標を持たない
- * ため、route-search.tsの座標ベース選定(resolveExitRecommendation)を経由せず
- * 直接採用する。
+ * 乗車位置・改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成した
+ * 結果(unified-arrival-guide-generation.ts参照)。accessibleモード以外向け
+ * (council議論2026-07-20)。gate/exitは座標を持たないため、route-search.tsの
+ * 座標ベース選定(resolveExitRecommendation)を経由せず直接採用する。
+ *
+ * boardingPositionは2026-07-20に追加(fix/unified-guide-boarding-and-operator-
+ * disambiguation)。同一検索セッションでgateを基準に号車を決めさせることで、
+ * 独立した乗車位置生成(旧ai-generation.ts generateBoardingPosition)が
+ * 統合生成とは無関係の改札を基準に号車を回答してしまう不整合を防ぐ。
  */
 export interface UnifiedArrivalGuide {
+  boardingPosition: {
+    carNumber: number;
+    doorPosition: string;
+    reason: string;
+    confidence: Confidence;
+  } | null;
   gate: { name: string; confidence: Confidence } | null;
   exit: { name: string; confidence: Confidence } | null;
   walkingSteps: GuideStep[];

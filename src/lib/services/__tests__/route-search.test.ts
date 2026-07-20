@@ -9,7 +9,7 @@ import {
   sortCandidatesByMode,
   NO_DEPARTURE_TIME_DISCLAIMER,
 } from "@/lib/services/route-search";
-import type { RouteSearchDeps } from "@/lib/services/route-search";
+import type { RouteSearchDeps, UnifiedBoardingPosition } from "@/lib/services/route-search";
 import type { RouteProviderPort } from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import type {
@@ -563,6 +563,50 @@ describe("buildTrainSegments", () => {
     expect(segments[0].instruction).toContain("号車情報は確認できません");
     expect(segments[0].confidence).toEqual(unavailableConfidence("推奨号車の情報が不足しています"));
   });
+
+  test("unifiedBoardingPositionが渡された場合、到着駅直前の区間ではそれをそのまま採用し独立した乗車位置生成(getBoardingPosition)は呼ばない(統合生成が選んだ改札と矛盾しない号車にするため。2026-07-20 fix/unified-guide-boarding-and-operator-disambiguation)", async () => {
+    const getBoardingPositionSpy = vi.fn(async () => null);
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getBoardingPosition: getBoardingPositionSpy,
+    };
+    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
+    const candidate = await resolveRouteCandidate({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const unifiedBoardingPosition: UnifiedBoardingPosition = {
+      carNumber: 6,
+      doorPosition: "後方",
+      reason: "1階改札への階段に近いため",
+      confidence: highConfidence,
+    };
+    const segments = await buildTrainSegments(candidate.chosen, deps, unifiedBoardingPosition);
+
+    expect(getBoardingPositionSpy).not.toHaveBeenCalled();
+    expect(segments[0].boardingPosition).toEqual({
+      carNumber: 6,
+      doorPosition: "後方",
+      reason: "1階改札への階段に近いため",
+    });
+    expect(segments[0].confidence).toBe(highConfidence);
+  });
+
+  test("unifiedBoardingPositionがnullの場合、従来通り独立した乗車位置生成(getBoardingPosition)を呼ぶ", async () => {
+    const getBoardingPositionSpy = vi.fn(async () => null);
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getBoardingPosition: getBoardingPositionSpy,
+    };
+    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
+    const candidate = await resolveRouteCandidate({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    await buildTrainSegments(candidate.chosen, deps, null);
+
+    expect(getBoardingPositionSpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("buildTransferAndExitSegments", () => {
@@ -682,6 +726,7 @@ describe("buildTransferAndExitSegments", () => {
 
   test("easyモードかつ経路が非AI生成の場合、統合生成(getUnifiedArrivalGuide)を試し結果を採用する(council議論2026-07-20)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
       gate: { name: "統合生成改札", confidence: highConfidence },
       exit: { name: "統合生成出口", confidence: highConfidence },
       walkingSteps: [
@@ -718,6 +763,8 @@ describe("buildTransferAndExitSegments", () => {
       "テスト鉄道",
       ["テスト線"],
       "出発駅",
+      "テスト線",
+      "到着駅方面",
       null,
       { lat: 0, lng: 0 },
       null
@@ -747,6 +794,7 @@ describe("buildTransferAndExitSegments", () => {
 
   test("経路自体がAI生成の場合でも統合生成を呼ぶ(fixture外ルートは経路自体がAI生成になるため、ここを止めると常に「確認できません」に落ちる。IPレートリミットで総リクエスト数は上限があるため、1リクエストあたりのAI呼び出しが最大2系統になるコスト増は許容する)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
       gate: { name: "統合生成改札", confidence: highConfidence },
       exit: { name: "統合生成出口", confidence: highConfidence },
       walkingSteps: [],
@@ -817,6 +865,7 @@ describe("buildTransferAndExitSegments", () => {
 
   test("統合生成が出口を確認できなかった場合(gateのみ、または両方null)は、部分結果を「確認済み」扱いせず、かつ旧方式(getFacilities)へもフォールバックしない(/ai-review再指摘、Medium: exit未確認をexact tierとして誤判定しない。/security-review指摘、Medium: 課金AI呼び出しの二重発生を避ける)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
       gate: { name: "統合生成改札", confidence: highConfidence },
       exit: null,
       walkingSteps: [],

@@ -50,6 +50,7 @@ function buildResult(hasApproximateGuidance: boolean): FacilitiesSearchResult {
       elevator: null,
       hasApproximateGuidance,
       approximateDirectionLabel: hasApproximateGuidance ? "西" : null,
+      unifiedBoardingPosition: null,
       arrivalGuide: { steps: [], destinationDirection: hasApproximateGuidance ? "西" : null },
     },
   };
