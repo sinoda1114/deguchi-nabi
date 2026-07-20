@@ -83,8 +83,8 @@ function locationHint(coordinates: Coordinates | null): string {
 
 /**
  * 改札(gateName)から出口(exitName)までの改札後方向・自由通路・地下街等の
- * 詳細導線を、Google Search Groundingで検索の裏付けを取った上で生成する。
- * fixtureにこの粒度のデータが無い駅・区間向けの補完(docs/04 §Phase 2.5)。
+ * 詳細導線を、Google Search Groundingで検索の裏付けを取った上で生成する
+ * (docs/04 §Phase 2.5)。
  *
  * 実在しない改札名・通路名・地下街名を創作しない/確信が持てない区間は
  * 無理に埋めないよう、プロンプトで明示的に指示する。モデル自身が申告する

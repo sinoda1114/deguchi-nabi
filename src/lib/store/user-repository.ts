@@ -10,6 +10,23 @@ interface StoredUser extends User {
 
 const COLLECTION = "users";
 
+/**
+ * 廃止済みfixture(2026-07-20)のstationId接頭辞。旧fixture(西谷駅・渋谷駅・
+ * 新宿駅)を最寄り駅として登録していたユーザーのhomeStationIdがこの形式で
+ * 残っている場合、AiStationAdapter.getStation()では解決できず、経路検索が
+ * 常に「経路が見つかりません」になってしまう(クラッシュはしないが機能不全)。
+ * 読み出し時に検知してnull(未設定)として扱い、設定画面で再登録を促す形に
+ * 縮退させる(/ai-review指摘)。
+ */
+const LEGACY_FIXTURE_STATION_ID_PREFIX = "st_";
+
+function sanitizeHomeStationId(homeStationId: string | null): string | null {
+  if (homeStationId && homeStationId.startsWith(LEGACY_FIXTURE_STATION_ID_PREFIX)) {
+    return null;
+  }
+  return homeStationId;
+}
+
 function hashPassword(password: string, salt: string): string {
   return scryptSync(password, salt, 64).toString("hex");
 }
@@ -72,7 +89,7 @@ function toPublicUser(user: StoredUser): User {
     userId: user.userId,
     email: user.email,
     displayName: user.displayName,
-    homeStationId: user.homeStationId,
+    homeStationId: sanitizeHomeStationId(user.homeStationId),
     plan: user.plan,
     locale: user.locale,
     createdAt: user.createdAt,

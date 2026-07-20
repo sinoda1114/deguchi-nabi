@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
  *
  * AI検索(Gemini Search Grounding)は最大55秒のタイムアウトを持ち、一時的な
  * タイムアウトやAPI障害で失敗することがある。生成失敗はキャッシュされない設計
- * (CompositeRouteAdapter.ts参照)のため、同じURL(=同じ検索条件)に再アクセスすれば
+ * (AiRouteAdapter.ts参照)のため、同じURL(=同じ検索条件)に再アクセスすれば
  * 成功する可能性がある。Server Componentのままではクライアント側の再取得操作が
  * できないため、この小さなClient Componentに切り出している。
  */

@@ -348,7 +348,7 @@ describe("isPlainArrivalPlatformLabel", () => {
     expect(isPlainArrivalPlatformLabel("")).toBe(false);
   });
 
-  test("fixture platformId('pf_'接頭辞)はfalse(別駅のplatformIdを番線ラベルとして誤用しないため)", () => {
+  test("'pf_'接頭辞のplatformId(廃止済みfixture形式)はfalse(他データソースのIDを番線ラベルとして誤用しないため)", () => {
     expect(isPlainArrivalPlatformLabel("pf_shibuya_jr_yamanote")).toBe(false);
   });
 

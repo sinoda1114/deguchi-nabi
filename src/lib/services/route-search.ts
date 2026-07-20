@@ -85,7 +85,7 @@ function pickFacility(
 /**
  * 目的地座標に最も近い facility を選ぶ。座標が無い(destinationCoordinates が
  * null)、または該当種別のどの facility も coordinates を持たない場合は、
- * 既存の「最初の1件」選定にフォールバックする(fixture外駅のAI生成facility等、
+ * 既存の「最初の1件」選定にフォールバックする(AI生成facility等、
  * 座標が未整備なデータでも従来通り動作させるため)。
  */
 function pickNearestFacility(
@@ -180,7 +180,7 @@ export interface ExitRecommendation {
  * 候補出口が座標を持っていても、そのうちの「最寄り」が目的地の方角と
  * 大きくずれている場合、候補集合そのものが不完全(閉世界仮定の誤り)である
  * 可能性が高い。この場合は具体的な出口を名指しせず、方角のみの案内に
- * 格下げする(fixtureで候補が2つしかない駅で、両方とも駅の反対側に
+ * 格下げする(候補が2つしかない駅で、両方とも駅の反対側に
  * 偏っているケース等)。docs/04_EXIT_SELECTION_DESIGN.md 参照。
  */
 function resolveExitRecommendation(
@@ -468,57 +468,26 @@ export async function buildTransferAndExitSegments(
   // 検証ゲート(destination-hint-verification.test.ts)で「hint有り≧hint無し」を
   // 確認できるまで、DESTINATION_HINT_ENABLED環境変数でヒント注入自体を
   // デフォルトOFFにして止血する。フラグOFF時はgetFacilities呼び出し自体が
-  // destinationHint=nullになり、CompositeStationAdapterのキャッシュ照合・
+  // destinationHint=nullになり、AiStationAdapterのキャッシュ照合・
   // レートリミッタも含めてこの機能導入前と完全に同一の挙動になる。
   const destinationHint =
     process.env.DESTINATION_HINT_ENABLED === "1" && input.destinationCoordinates
       ? input.destinationLabel
       : null;
 
-  // fixtureに出口が無い駅は、AI生成facilities一覧が座標を持たないため
+  // 駅・出口はAI生成facilities一覧が座標を持たないため
   // resolveExitRecommendationの座標ベース選定の対象外になり、常に
   // hasApproximateGuidance(方角のみ)以下に落ちる構造的な限界があった
   // (council議論2026-07-20)。座標マッチングを経由せず改札・出口・徒歩ルートを
   // 直接AIに回答させる統合生成(unified-arrival-guide-generation.ts)を、
-  // accessibleモード以外に限って試す。
-  //
-  // 経路自体がAI生成(fixture外区間)の場合も統合生成を試す(2026-07-20
-  // fix/unified-guide-allow-ai-route)。当初はarrival-guide.tsの
-  // canGenerateNarrativeに倣い経路AI生成時は止めていたが、fixture収録は
-  // 西谷→渋谷・新宿→渋谷の2区間のみのため、fixture外ルート(=経路自体が
-  // ほぼ常にAI生成)では統合生成が実質一度も発動せず、本来この機能が救うはずの
-  // ケースが救えていなかった。1リクエストで経路生成+統合生成の計2系統の
-  // 課金AI呼び出しが発生しうるコスト増は残るが、`/api/routes/search`には
-  // commit #76でIPベースレートリミットが導入済みで総リクエスト数は上限が
-  // あるため、許容する判断とした(ユーザー承認済み)。
-  //
-  // fixtureのfacility一覧はgetFixtureFacilities(AI呼び出しを含まない)で先に
-  // 取得する。旧方式(getFacilities、fixtureに無ければAI生成へフォールバック
-  // する)を先に呼んでしまうと、統合生成が使われる状況では1リクエストでAI呼び出し
-  // が二重に発生してしまう(/ai-review指摘、Medium)。統合生成が使えない・出口を
-  // 確認できなかった場合のみ、フォールバックとしてgetFacilities(旧方式)を呼ぶ。
-  //
-  // 判定はexitの有無のみで行う(gateの有無では判定しない): fixtureにexitが
-  // 既にあれば、統合生成の部分結果(gateだけ、または両方null)でその既知データを
-  // 上書き・喪失させてはならない(/ai-review再指摘、Medium)。gateはexitから
-  // 逆引きする既存の設計(pickGateForExit)のため、exit基準の判定で一貫する。
-  //
-  // elevator/escalatorは統合生成が取得しない情報のため、fixtureにあれば常に
-  // それを使う(統合生成使用時に既知の設備情報を失わないため。/ai-review
-  // 再指摘、Medium: 改札・出口はfixtureに無いがエレベーター・エスカレーターは
-  // fixtureに収録済み、という駅が将来追加されても、その設備情報は
-  // 統合生成の対象になっても失われるべきではない)。
-  const fixtureFacilities = deps.stationProvider.getFixtureFacilities
-    ? await deps.stationProvider.getFixtureFacilities(input.destinationStationId)
-    : [];
-  const hasFixtureExit = fixtureFacilities.some((f) => f.facilityType === "exit");
-  let elevator = pickFacility(fixtureFacilities, "elevator");
-  let escalator = pickFacility(fixtureFacilities, "escalator");
+  // accessibleモード以外に限って試す(accessibleモードはエレベーター有無の
+  // 確定が必須のため、統合生成が取得しないelevator/escalatorを取りに行く
+  // 旧方式(getFacilities)を使う)。
+  let elevator: StationFacility | null = null;
+  let escalator: StationFacility | null = null;
 
   const canTryUnified =
-    !hasFixtureExit &&
-    input.mode !== "accessible" &&
-    Boolean(deps.stationProvider.getUnifiedArrivalGuide);
+    input.mode !== "accessible" && Boolean(deps.stationProvider.getUnifiedArrivalGuide);
 
   let unified: UnifiedArrivalGuide | null = null;
   if (canTryUnified) {
@@ -589,9 +558,8 @@ export async function buildTransferAndExitSegments(
     );
     exit = recommendation.exit;
     gate = exit ? pickGateForExit(arrivalFacilities, exit) : null;
-    // fixtureから既に取得済みなら維持し、無ければ旧方式(AI生成含む)の結果で補う。
-    elevator = elevator ?? pickFacility(arrivalFacilities, "elevator");
-    escalator = escalator ?? pickFacility(arrivalFacilities, "escalator");
+    elevator = pickFacility(arrivalFacilities, "elevator");
+    escalator = pickFacility(arrivalFacilities, "escalator");
   }
 
   if (input.mode === "accessible" && !elevator) {
@@ -770,12 +738,18 @@ export async function searchRouteGuide(
     return candidateResult;
   }
 
-  const trainSegments = await buildTrainSegments(candidateResult.chosen, deps);
-  const facilitiesOutcome = await buildTransferAndExitSegments(
-    candidateResult,
-    input,
-    deps
-  );
+  // 号車情報(buildTrainSegments)と改札・出口情報(buildTransferAndExitSegments)は
+  // 互いの結果に依存しない(どちらもcandidateResultのみから計算する)ため、
+  // 並列実行する(2026-07-20 fixture廃止に伴うPhase 3対策)。順に await すると
+  // 経路生成AI(最大70秒)に加えてこの2つ(各最大70秒)が直列に積み重なり、
+  // fixture未収録駅への初回アクセスで合計最大210秒かかりFUNCTION_INVOCATION_
+  // TIMEOUT(Issue #68)を再発しうる。並列化により140秒圏に短縮する。ストリーミング
+  // 表示側(RouteResultBody.tsx)は元々この2つを並列のPromiseとして扱っており、
+  // 今回はこのAPI route専用の直列実行のみが残っていた。
+  const [trainSegments, facilitiesOutcome] = await Promise.all([
+    buildTrainSegments(candidateResult.chosen, deps),
+    buildTransferAndExitSegments(candidateResult, input, deps),
+  ]);
   if (!facilitiesOutcome.ok) {
     return facilitiesOutcome;
   }

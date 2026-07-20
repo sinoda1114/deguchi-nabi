@@ -314,7 +314,7 @@ describe("searchRouteGuide", () => {
     expect(trainSegment?.confidence).toEqual(unavailableConfidence("推奨号車の情報が不足しています"));
   });
 
-  test("fixture未収録駅を含むAI生成ルート(platformId空)でも stationId/line/direction で号車情報を取得する", async () => {
+  test("AI生成ルート(platformId空)でも stationId/line/direction で号車情報を取得する", async () => {
     const receivedArgs: unknown[][] = [];
     const stationProvider: StationProviderPort = {
       ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
@@ -680,7 +680,7 @@ describe("buildTransferAndExitSegments", () => {
     expect(getFacilitiesSpy).toHaveBeenCalledWith("destination", null);
   });
 
-  test("fixtureに改札・出口が無い駅で、easyモードかつ経路が非AI生成の場合、統合生成(getUnifiedArrivalGuide)を試し結果を採用する(council議論2026-07-20)", async () => {
+  test("easyモードかつ経路が非AI生成の場合、統合生成(getUnifiedArrivalGuide)を試し結果を採用する(council議論2026-07-20)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       gate: { name: "統合生成改札", confidence: highConfidence },
       exit: { name: "統合生成出口", confidence: highConfidence },
@@ -695,11 +695,9 @@ describe("buildTransferAndExitSegments", () => {
         },
       ],
     }));
-    const getFixtureFacilities = vi.fn(async () => [] as StationFacility[]);
     const stationProvider: StationProviderPort = {
       ...buildStationProvider([]),
       getUnifiedArrivalGuide,
-      getFixtureFacilities,
     };
     const deps: RouteSearchDeps = {
       routeProvider: buildRouteProvider(true),
@@ -714,7 +712,6 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    expect(getFixtureFacilities).toHaveBeenCalledWith("destination");
     expect(getUnifiedArrivalGuide).toHaveBeenCalledWith(
       "destination",
       "到着駅",
@@ -729,57 +726,6 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.result.exit?.name).toBe("統合生成出口");
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(outcome.result.arrivalGuide.steps.some((s) => s.title === "見出し")).toBe(true);
-  });
-
-  test("fixtureに出口がある場合は統合生成を呼ばない(既存動作を優先、既知データの喪失を防ぐ)", async () => {
-    const getUnifiedArrivalGuide = vi.fn();
-    const getFixtureFacilities = vi.fn(async () => FACILITIES_WITH_ELEVATOR);
-    const stationProvider: StationProviderPort = {
-      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
-      getUnifiedArrivalGuide,
-      getFixtureFacilities,
-    };
-    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
-    const input = { ...BASE_INPUT, mode: "easy" as const };
-    const candidate = await resolveRouteCandidate(input, deps);
-    expect(candidate.ok).toBe(true);
-    if (!candidate.ok) return;
-
-    await buildTransferAndExitSegments(candidate, input, deps);
-
-    expect(getUnifiedArrivalGuide).not.toHaveBeenCalled();
-  });
-
-  test("fixtureにelevator/escalatorのみあり出口が無い場合は統合生成を試すが、fixtureの設備情報は保持する(/ai-review再指摘)", async () => {
-    const FIXTURE_ELEVATOR_ONLY: StationFacility[] = FACILITIES_WITH_ELEVATOR.filter(
-      (f) => f.facilityType !== "gate" && f.facilityType !== "exit"
-    );
-    const getUnifiedArrivalGuide = vi.fn(async () => ({
-      gate: { name: "統合生成改札", confidence: highConfidence },
-      exit: { name: "統合生成出口", confidence: highConfidence },
-      walkingSteps: [],
-    }));
-    const getFixtureFacilities = vi.fn(async () => FIXTURE_ELEVATOR_ONLY);
-    const stationProvider: StationProviderPort = {
-      ...buildStationProvider([]),
-      getUnifiedArrivalGuide,
-      getFixtureFacilities,
-    };
-    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
-    const input = { ...BASE_INPUT, mode: "easy" as const };
-    const candidate = await resolveRouteCandidate(input, deps);
-    expect(candidate.ok).toBe(true);
-    if (!candidate.ok) return;
-
-    const outcome = await buildTransferAndExitSegments(candidate, input, deps);
-    expect(outcome.ok).toBe(true);
-    if (!outcome.ok) return;
-
-    expect(getUnifiedArrivalGuide).toHaveBeenCalled();
-    expect(outcome.result.gate?.name).toBe("統合生成改札");
-    expect(outcome.result.exit?.name).toBe("統合生成出口");
-    // fixtureにあったエレベーターの既知情報が失われていないことを確認する。
-    expect(outcome.result.elevator?.name).toBe("中央エレベーター");
   });
 
   test("accessibleモードでは統合生成を呼ばない(既存のエレベーター確認ロジックを優先)", async () => {
@@ -808,7 +754,6 @@ describe("buildTransferAndExitSegments", () => {
     const stationProvider: StationProviderPort = {
       ...buildStationProvider([]),
       getUnifiedArrivalGuide,
-      getFixtureFacilities: async () => [],
     };
     const routeProvider: RouteProviderPort = {
       async findRailRoutes() {
@@ -854,7 +799,6 @@ describe("buildTransferAndExitSegments", () => {
       ...buildStationProvider([]),
       getUnifiedArrivalGuide,
       getFacilities,
-      getFixtureFacilities: async () => [],
     };
     const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
     const input = { ...BASE_INPUT, mode: "easy" as const };
@@ -882,7 +826,6 @@ describe("buildTransferAndExitSegments", () => {
       ...buildStationProvider([]),
       getUnifiedArrivalGuide,
       getFacilities,
-      getFixtureFacilities: async () => [],
     };
     const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
     const input = { ...BASE_INPUT, mode: "easy" as const };

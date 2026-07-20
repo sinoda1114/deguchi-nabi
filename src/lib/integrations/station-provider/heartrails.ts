@@ -1,6 +1,4 @@
 import type { Station } from "@/lib/domain/station";
-import { FIXTURE_STATIONS } from "@/lib/fixtures/stations";
-import { haversineMeters } from "@/lib/geo/haversine";
 
 const HEARTRAILS_URL = "https://express.heartrails.com/api/json";
 const REQUEST_TIMEOUT_MS = 5000;
@@ -8,9 +6,6 @@ const MAX_NAME_LENGTH = 50;
 const MAX_LINE_NAME_LENGTH = 50;
 const MAX_QUERY_LENGTH = 50;
 const HR_ID_PREFIX = "hr_";
-// fixtureの駅と同名でも、日本には同名の別駅が存在しうるため、
-// 座標がこの距離以内の場合のみ同一駅とみなしfixtureのstationIdへ揃える。
-const FIXTURE_MATCH_RADIUS_METERS = 1000;
 
 interface HeartRailsEntry {
   name: string;
@@ -43,18 +38,7 @@ function isValidEntry(e: unknown): e is HeartRailsEntry {
   );
 }
 
-function findFixtureMatch(name: string, x: number, y: number): Station | null {
-  const sameName = FIXTURE_STATIONS.find(
-    (s) => s.stationName.replace(/駅$/, "") === name
-  );
-  if (!sameName) return null;
-  const distance = haversineMeters(y, x, sameName.latitude, sameName.longitude);
-  return distance <= FIXTURE_MATCH_RADIUS_METERS ? sameName : null;
-}
-
 function stationIdFor(name: string, x: number, y: number): string {
-  const fixtureMatch = findFixtureMatch(name, x, y);
-  if (fixtureMatch) return fixtureMatch.stationId;
   return `${HR_ID_PREFIX}${encodeURIComponent(name)}_${x.toFixed(4)}_${y.toFixed(4)}`;
 }
 
@@ -97,13 +81,11 @@ export function decodeHeartRailsStationId(stationId: string): Station | null {
 /**
  * HeartRails Express API のレスポンスを Station[] に変換する共通処理。
  * 1駅につき乗り入れ路線ごとに1エントリが返るため、駅名+座標で
- * グルーピングしてStation[]に変換する。fixture(西谷・渋谷・新宿)と
- * 同名かつ近傍(1km以内)の駅は既存のstationIdに揃え、facility/boarding等の
- * 既存データと整合させる。事業者名(operator)はこのAPIから取得できないため
- * 空文字にする(誤った情報を作らない)。
+ * グルーピングしてStation[]に変換する。事業者名(operator)はこのAPIから
+ * 取得できないため空文字にする(誤った情報を作らない)。
  *
- * 個人運営サービスで可用性の保証が無いため、失敗時は必ずnullを返し、
- * 呼び出し側(CompositeStationAdapter)がfixtureにフォールバックする。
+ * 個人運営サービスで可用性の保証が無いため、失敗時は必ずnullを返す
+ * (呼び出し側のAiStationAdapterが空配列/nullとして扱う)。
  */
 async function fetchAndTransformStations(url: string): Promise<Station[] | null> {
   try {

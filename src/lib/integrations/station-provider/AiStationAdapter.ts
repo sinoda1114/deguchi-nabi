@@ -1,5 +1,4 @@
 import type { StationProviderPort } from "./StationProviderPort";
-import { FixtureStationAdapter } from "./FixtureStationAdapter";
 import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-generation";
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
@@ -11,11 +10,9 @@ import {
   searchStationsFromHeartRails,
 } from "./heartrails";
 import { getKvCacheStore } from "@/lib/store/kv-cache-store";
-import { FIXTURE_PLATFORMS } from "@/lib/fixtures/stations";
 import type {
   BoardingPosition,
   Coordinates,
-  Platform,
   Station,
   StationFacility,
 } from "@/lib/domain/station";
@@ -29,26 +26,20 @@ const NEARBY_STATION_CACHE = "nearby-stations";
 const MAX_SEARCH_RESULTS = 20;
 
 /**
- * fixture platform に一致する区間(実在の platformId)向けのBoardingPosition.platformId値。
- * stationId を先頭に付けることで、実在の platformId(pf_...)自体が別駅の
- * ものと衝突しても駅単位で区別できる。
- */
-function fixtureBoardingPlatformId(stationId: string, platformId: string): string {
-  return `${stationId}::pf::${platformId}`;
-}
-
-/**
- * fixture platform に一致しない区間(fixture未収録駅を含むAI生成ルート等)向けの
- * BoardingPosition.platformId値。実在の platformId(pf_...)と衝突しないよう
- * 区切り文字で分離する。
+ * 号車位置のキャッシュキー用platformId値。実在の platformId(pf_...)と
+ * 衝突しないよう区切り文字で分離する。
  */
 function lineBoardingPlatformId(stationId: string, line: string, direction: string): string {
   return `${stationId}::line::${line}::${direction}`;
 }
 
 /**
- * FixtureStationAdapter を優先しつつ、fixture に無い駅の改札・出口・号車情報は
- * Gemini で下書き生成して confidence: low として補う複合アダプター。
+ * 全駅の改札・出口・号車情報をGeminiで生成する(confidence: low〜medium)アダプター。
+ *
+ * fixture(手動確認済みハードコードデータ)は2026-07-20に廃止した
+ * (chore/remove-fixtures)。収録3駅・号車データ西谷発1件のみという中途半端な
+ * 収録範囲では「fixtureなら100%確実」という前提自体が既に崩れており、
+ * 全駅をAI生成に一本化した方が一貫性がある、というユーザー判断による。
  *
  * AI生成結果(facilities/boarding/arrival-guide)は永続キャッシュしない
  * (council議論2026-07-20: 検索を伴うAI生成は実行ごとに号車・改札名の
@@ -59,8 +50,7 @@ function lineBoardingPlatformId(stationId: string, line: string, direction: stri
  * nearby-stations(HeartRails検索結果)はAI生成ではなく外部API結果の
  * キャッシュのため、対象外として維持する。
  */
-export class CompositeStationAdapter implements StationProviderPort {
-  private readonly fixture = new FixtureStationAdapter();
+export class AiStationAdapter implements StationProviderPort {
   /**
    * HeartRails再照会結果(getStationのlines復元)のインメモリメモ化。
    * このアダプター自体がintegrations/index.tsでモジュール単位のシングルトンとして
@@ -75,30 +65,16 @@ export class CompositeStationAdapter implements StationProviderPort {
   constructor(private readonly geminiApiKey: string) {}
 
   async searchStations(query: string): Promise<Station[]> {
-    // fixture(即時)とHeartRails(外部API、最大5秒)を並列に問い合わせる。
-    // 直列にすると fixture がヒットする検索(西谷・渋谷・新宿)まで毎回
-    // 外部APIの応答を待つ羽目になり、HeartRails側の遅延・障害が
-    // 既存機能のレイテンシに波及してしまうため。
-    const [fixtureMatches, fromApi] = await Promise.all([
-      this.fixture.searchStations(query),
-      searchStationsFromHeartRails(query),
-    ]);
-    if (!fromApi || fromApi.length === 0) return fixtureMatches;
+    const fromApi = await searchStationsFromHeartRails(query);
+    if (!fromApi || fromApi.length === 0) return [];
 
-    const fixtureIds = new Set(fixtureMatches.map((s) => s.stationId));
-    const additional = fromApi
-      .filter((s) => !fixtureIds.has(s.stationId))
-      .slice(0, MAX_SEARCH_RESULTS);
+    const limited = fromApi.slice(0, MAX_SEARCH_RESULTS);
+    await this.cacheNearbyStations(limited);
 
-    await this.cacheNearbyStations(additional);
-
-    return [...fixtureMatches, ...additional];
+    return limited;
   }
 
   async getStation(stationId: string): Promise<Station | null> {
-    const fixtureStation = await this.fixture.getStation(stationId);
-    if (fixtureStation) return fixtureStation;
-
     const cachedEntry = await getKvCacheStore().get<Station>(NEARBY_STATION_CACHE, stationId);
     if (cachedEntry) return cachedEntry.value;
 
@@ -139,10 +115,10 @@ export class CompositeStationAdapter implements StationProviderPort {
     return matched ?? decoded;
   }
 
-  getPlatforms(stationId: string) {
-    // Step B(駅マスタの全国対応)までは Platform 自体も fixture 収録分のみのため、
-    // HeartRails由来の駅は号車情報「確認できません」として扱われる(route-search.ts側)。
-    return this.fixture.getPlatforms(stationId);
+  async getPlatforms(_stationId: string): Promise<never[]> {
+    // 番線マスタ(全国対応)は未実装のため、号車位置は常にstationId+line+direction
+    // ベースのAI生成(getBoardingPosition)に委ねる。
+    return [];
   }
 
   async nearestStations(
@@ -151,9 +127,7 @@ export class CompositeStationAdapter implements StationProviderPort {
     limit: number
   ): Promise<Station[]> {
     const fromApi = await fetchNearestStationsFromHeartRails(latitude, longitude);
-    if (!fromApi || fromApi.length === 0) {
-      return this.fixture.nearestStations(latitude, longitude, limit);
-    }
+    if (!fromApi || fromApi.length === 0) return [];
 
     const limited = fromApi.slice(0, limit);
     await this.cacheNearbyStations(limited);
@@ -185,9 +159,6 @@ export class CompositeStationAdapter implements StationProviderPort {
     stationId: string,
     destinationHint: string | null = null
   ): Promise<StationFacility[]> {
-    const fixtureFacilities = await this.fixture.getFacilities(stationId);
-    if (fixtureFacilities.length > 0) return fixtureFacilities;
-
     const station = await this.getStation(stationId);
     if (!station) return [];
 
@@ -211,48 +182,18 @@ export class CompositeStationAdapter implements StationProviderPort {
     line: string,
     direction: string
   ): Promise<BoardingPosition | null> {
-    // fixture platform に一致する場合はまず fixture の号車情報を試す
-    // (西谷→渋谷のような検証済みデータを優先するため)。
-    // stationId が一致しない platformId(呼び出し元の不整合なデータ)は
-    // 別駅の号車情報を誤って返さないよう、fixture一致として扱わない。
-    const fixturePlatform = platformId ? this.findPlatform(platformId) : null;
-    const verifiedFixturePlatform =
-      fixturePlatform && fixturePlatform.stationId === stationId ? fixturePlatform : null;
-    if (verifiedFixturePlatform) {
-      const fixturePositions = await this.fixture.getBoardingPositions(platformId);
-      if (fixturePositions.length > 0) return fixturePositions[0];
-    }
+    const boardingPlatformId = lineBoardingPlatformId(stationId, line, direction);
 
-    // fixture platform が無い区間(fixture未収録駅を含むAI生成ルート等)は
-    // platformId に依存せず stationId+line+direction でAI下書き生成にフォールバックする。
-    // fixture platform 自体は一致しているが号車データが無いケース(新宿→渋谷等)は、
-    // 呼び出し元の line/direction ではなく fixture 側の正規値を使う
-    // (キャッシュキーが platformId 固定のため、不整合な値でキャッシュを汚染しないため)。
-    const effectiveLine = verifiedFixturePlatform ? verifiedFixturePlatform.lineId : line;
-    const effectiveDirection = verifiedFixturePlatform
-      ? verifiedFixturePlatform.direction
-      : direction;
-    const boardingPlatformId = verifiedFixturePlatform
-      ? fixtureBoardingPlatformId(stationId, platformId)
-      : lineBoardingPlatformId(stationId, line, direction);
-
-    // 到着番線が判明していれば号車推定へ引き渡す。fixture platformが検証済みなら
-    // その正規のplatformNumberを使い(最も確実)、そうでない場合はgenerateRailRoute
+    // 到着番線が判明していればAI下書き生成へ引き渡す。generateRailRoute
     // (ai-route-generation.ts)が検索で確認できた到着番線ラベルをplatformId経由で
-    // 引き継ぐ。ただし"pf_"接頭辞のfixture platformId文字列(別駅のplatformIdが
-    // 誤って渡された場合等)は番線ラベルとして扱わない(isPlainArrivalPlatformLabel参照)。
-    // 取れない場合はnullのまま(無理に埋めない原則を維持)。
-    const arrivalPlatformNumber = verifiedFixturePlatform
-      ? verifiedFixturePlatform.platformNumber
-      : isPlainArrivalPlatformLabel(platformId)
-        ? platformId
-        : null;
+    // 引き継ぐ。取れない場合はnullのまま(無理に埋めない原則を維持)。
+    const arrivalPlatformNumber = isPlainArrivalPlatformLabel(platformId) ? platformId : null;
 
     return generateBoardingPosition(
       this.geminiApiKey,
       stationName,
-      effectiveLine,
-      effectiveDirection,
+      line,
+      direction,
       boardingPlatformId,
       arrivalPlatformNumber
     );
@@ -312,15 +253,5 @@ export class CompositeStationAdapter implements StationProviderPort {
         provenance: "ai_inferred",
       })),
     };
-  }
-
-  async getFixtureFacilities(stationId: string): Promise<StationFacility[]> {
-    return this.fixture.getFacilities(stationId);
-  }
-
-  private findPlatform(platformId: string): Platform | null {
-    // Step B(駅マスタの全国対応)までは Platform 自体も fixture 収録分のみのため、
-    // fixture データを直接参照する。全国対応時は駅マスタ由来の索引に置き換える。
-    return FIXTURE_PLATFORMS.find((p) => p.platformId === platformId) ?? null;
   }
 }

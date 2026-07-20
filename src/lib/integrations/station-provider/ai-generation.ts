@@ -22,9 +22,12 @@ const MAX_TEXT_LENGTH = 200;
  * 正しくてもisValidBoardingPositionがreasonの長さだけでfalseを返してしまう)。
  */
 const MAX_REASON_LENGTH = 300;
-/** fixtureのplatformIdは常に "pf_" 接頭辞を持つ(fixtures/stations.ts参照)。
- * AI生成ルート(ai-route-generation.ts)由来の到着番線文字列(例: "3")と、
- * fixture由来の実在platformIdを取り違えないための判定に使う。 */
+/**
+ * "pf_" 接頭辞は廃止済みfixtureのplatformId形式だった名残(2026-07-20
+ * fixture廃止)。現在この形式のplatformIdを生成する経路は存在しないが、
+ * 他データソース由来の不整合な文字列をそのまま番線ラベルとして誤用しない
+ * 防御として、判定自体は維持する。
+ */
 const FIXTURE_PLATFORM_ID_PREFIX = "pf_";
 
 const VALID_CONFIDENCE_LEVELS: ConfidenceLevel[] = ["high", "medium", "low"];
@@ -244,12 +247,11 @@ const BOARDING_SCHEMA = {
 };
 
 /**
- * fixtureのplatformIdの実際の値ではなく、AI生成ルート(ai-route-generation.ts)
- * が検索で確認できた到着番線ラベル(例:"3")をそのまま乗車位置生成のヒントに
- * 使ってよいかを判定する。"pf_"接頭辞のfixture platformIdは、呼び出し元の
- * データ不整合(別駅のplatformId)が渡された場合に、無関係な文字列をそのまま
- * プロンプトへ混入させないよう除外する(CompositeStationAdapter.getBoardingPosition
- * 側で使用)。
+ * AI生成ルート(ai-route-generation.ts)が検索で確認できた到着番線ラベル
+ * (例:"3")をそのまま乗車位置生成のヒントに使ってよいかを判定する。
+ * "pf_"接頭辞の(廃止済みfixture形式の)platformIdは、呼び出し元のデータ
+ * 不整合が渡された場合に、無関係な文字列をそのままプロンプトへ混入させない
+ * よう除外する(AiStationAdapter.getBoardingPosition側で使用)。
  */
 export function isPlainArrivalPlatformLabel(platformId: string): boolean {
   return platformId.length > 0 && !platformId.startsWith(FIXTURE_PLATFORM_ID_PREFIX);

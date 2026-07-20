@@ -44,7 +44,7 @@ interface RouteResultBodyProps {
 /**
  * 経路名・所要時間・号車・出口を含む結果本体。origin/destinationの解決
  * (resolveOriginDestination)と経路候補の解決(resolveRouteCandidate、
- * fixture未収録区間はAI生成を含み数秒〜数十秒かかりうる)をこの中で行う。
+ * AI生成を含み数秒〜数十秒かかりうる)をこの中で行う。
  * page.tsx側でSuspenseに包むことで、この解決を待つ間は
  * RouteResultBodySkeletonが表示され、検索直後に白い画面のまま止まって
  * 見えることを防ぐ(「検索画面が長い」というユーザーフィードバックに基づく)。
@@ -77,7 +77,7 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
   const candidate = await resolveRouteCandidate(searchInput, { routeProvider, stationProvider });
 
   if (!candidate.ok) {
-    // 経路探索(fixture未収録区間はAI/Web検索によるルート生成を含む)の失敗。
+    // 経路探索(AI/Web検索によるルート生成を含む)の失敗。
     // タイムアウトや一時的なAPI障害の可能性があり、生成失敗はキャッシュされない
     // ため再試行で成功しうる。
     return <ResultErrorMessage message={candidate.reason} retryable />;

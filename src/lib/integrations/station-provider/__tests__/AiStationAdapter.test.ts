@@ -31,7 +31,7 @@ vi.mock("@/lib/store/kv-cache-store", () => ({
 const generateBoardingPosition = vi.fn();
 const generateStationFacilities = vi.fn(async (..._args: unknown[]) => [] as unknown[]);
 vi.mock("../ai-generation", async () => {
-  // isPlainArrivalPlatformLabel は実実装をそのまま使う(CompositeStationAdapter側の
+  // isPlainArrivalPlatformLabel は実実装をそのまま使う(AiStationAdapter側の
   // 分岐判定を正しく検証するため。generateBoardingPosition/generateStationFacilities
   // のみ実際のAI呼び出しをモックに差し替える)。
   const actual = await vi.importActual<typeof import("../ai-generation")>("../ai-generation");
@@ -62,7 +62,7 @@ vi.mock("../heartrails", () => ({
   searchStationsFromHeartRails: (query: string) => searchStationsFromHeartRails(query),
 }));
 
-const { CompositeStationAdapter } = await import("../CompositeStationAdapter");
+const { AiStationAdapter } = await import("../AiStationAdapter");
 
 const AI_POSITION = {
   boardingPositionId: "bp_ai",
@@ -82,7 +82,7 @@ const AI_POSITION = {
   verifiedAt: null,
 };
 
-describe("CompositeStationAdapter.getBoardingPosition", () => {
+describe("AiStationAdapter.getBoardingPosition", () => {
   beforeEach(() => {
     clearKvState();
     generateBoardingPosition.mockReset();
@@ -93,44 +93,9 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
     vi.clearAllMocks();
   });
 
-  test("fixture platform に fixture 号車データがあればそれを返し、AIは呼ばない", async () => {
-    const adapter = new CompositeStationAdapter("test-key");
-    const result = await adapter.getBoardingPosition(
-      "st_nishiya",
-      "西谷駅",
-      "pf_nishiya_soutetsu_shin_yokohama",
-      "相鉄新横浜線",
-      "渋谷方面"
-    );
-    expect(result?.carNumber).toBe(8);
-    expect(generateBoardingPosition).not.toHaveBeenCalled();
-  });
-
-  test("fixture platform はあるが号車データが無ければAIにフォールバックする(新宿→渋谷相当)", async () => {
+  test("platformIdが空文字でもstationId+line+directionでAI生成する", async () => {
     generateBoardingPosition.mockResolvedValue(AI_POSITION);
-    const adapter = new CompositeStationAdapter("test-key");
-    const result = await adapter.getBoardingPosition(
-      "st_shinjuku",
-      "新宿駅",
-      "pf_shinjuku_jr_yamanote",
-      "JR山手線",
-      "渋谷方面"
-    );
-    expect(result?.carNumber).toBe(4);
-    // fixtureのplatformNumber("14")がAI生成の到着番線ヒントとして引き渡される。
-    expect(generateBoardingPosition).toHaveBeenCalledWith(
-      "test-key",
-      "新宿駅",
-      "JR山手線",
-      "渋谷方面",
-      "st_shinjuku::pf::pf_shinjuku_jr_yamanote",
-      "14"
-    );
-  });
-
-  test("fixture platformが存在しない(fixture未収録駅を含むAI生成ルート)場合もplatformIdに依存せずAIにフォールバックする", async () => {
-    generateBoardingPosition.mockResolvedValue(AI_POSITION);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     const result = await adapter.getBoardingPosition(
       "st_unknown",
       "未知駅",
@@ -151,7 +116,7 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
 
   test("AI生成ルート由来の到着番線ラベル(platformId)が渡された場合、号車推定へ引き渡す", async () => {
     generateBoardingPosition.mockResolvedValue(AI_POSITION);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     await adapter.getBoardingPosition("st_unknown", "未知駅", "3", "テスト線", "到着方面");
     expect(generateBoardingPosition).toHaveBeenCalledWith(
       "test-key",
@@ -163,9 +128,30 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
     );
   });
 
+  test("'pf_'接頭辞のplatformId(旧fixture形式)は番線ラベルとして扱わない(誤って別データソースのIDが渡された場合の防御)", async () => {
+    generateBoardingPosition.mockResolvedValue(AI_POSITION);
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getBoardingPosition(
+      "st_shibuya",
+      "渋谷駅",
+      "pf_some_legacy_platform_id",
+      "相鉄新横浜線",
+      "渋谷方面"
+    );
+    expect(result?.carNumber).toBe(4);
+    expect(generateBoardingPosition).toHaveBeenCalledWith(
+      "test-key",
+      "渋谷駅",
+      "相鉄新横浜線",
+      "渋谷方面",
+      "st_shibuya::line::相鉄新横浜線::渋谷方面",
+      null
+    );
+  });
+
   test("AI生成結果は毎回再生成される(永続キャッシュしない。council議論2026-07-20: 検索を伴うAI生成は実行ごとに表現が揺れうるため)", async () => {
     generateBoardingPosition.mockResolvedValue(AI_POSITION);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     await adapter.getBoardingPosition("st_unknown", "未知駅", "", "テスト線", "到着方面");
     const result = await adapter.getBoardingPosition(
       "st_unknown",
@@ -187,74 +173,9 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
     );
   });
 
-  test("fixture platform経由の生成は`${stationId}::pf::${platformId}`形式のplatformIdで呼ばれる(キー設計の回帰確認)", async () => {
-    generateBoardingPosition.mockResolvedValue(AI_POSITION);
-    const adapter = new CompositeStationAdapter("test-key");
-    await adapter.getBoardingPosition(
-      "st_shinjuku",
-      "新宿駅",
-      "pf_shinjuku_jr_yamanote",
-      "JR山手線",
-      "渋谷方面"
-    );
-    expect(generateBoardingPosition).toHaveBeenCalledWith(
-      "test-key",
-      "新宿駅",
-      "JR山手線",
-      "渋谷方面",
-      "st_shinjuku::pf::pf_shinjuku_jr_yamanote",
-      "14"
-    );
-  });
-
-  test("platformIdが別駅のものと一致してしまっても、その駅の号車情報は使わずAIにフォールバックする", async () => {
-    generateBoardingPosition.mockResolvedValue(AI_POSITION);
-    const adapter = new CompositeStationAdapter("test-key");
-    // pf_nishiya_soutetsu_shin_yokohama は st_nishiya 所属だが、st_shibuya として渡す
-    const result = await adapter.getBoardingPosition(
-      "st_shibuya",
-      "渋谷駅",
-      "pf_nishiya_soutetsu_shin_yokohama",
-      "相鉄新横浜線",
-      "渋谷方面"
-    );
-    expect(result?.carNumber).toBe(4);
-    // "pf_"接頭辞のfixture platformIdは、番線ラベルとして誤用しないためnullになる
-    // (isPlainArrivalPlatformLabel参照。別駅のplatformIdをそのままAIプロンプトに
-    // 混入させない)。
-    expect(generateBoardingPosition).toHaveBeenCalledWith(
-      "test-key",
-      "渋谷駅",
-      "相鉄新横浜線",
-      "渋谷方面",
-      "st_shibuya::line::相鉄新横浜線::渋谷方面",
-      null
-    );
-  });
-
-  test("fixture platformに一致した場合、呼び出し元のline/directionが不整合でもfixture側の正規値でAI生成する", async () => {
-    generateBoardingPosition.mockResolvedValue(AI_POSITION);
-    const adapter = new CompositeStationAdapter("test-key");
-    await adapter.getBoardingPosition(
-      "st_shinjuku",
-      "新宿駅",
-      "pf_shinjuku_jr_yamanote",
-      "誤った路線名",
-      "誤った方面"
-    );
-    expect(generateBoardingPosition).toHaveBeenCalledWith(
-      "test-key",
-      "新宿駅",
-      "JR山手線",
-      "渋谷方面",
-      "st_shinjuku::pf::pf_shinjuku_jr_yamanote",
-      "14"
-    );
-  });
-
   test("AI生成が失敗(null)した場合は null を返す", async () => {
     generateBoardingPosition.mockResolvedValue(null);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     const result = await adapter.getBoardingPosition(
       "st_unknown",
       "未知駅",
@@ -266,7 +187,15 @@ describe("CompositeStationAdapter.getBoardingPosition", () => {
   });
 });
 
-describe("CompositeStationAdapter.searchStations", () => {
+describe("AiStationAdapter.getPlatforms", () => {
+  test("番線マスタ未実装のため常に空配列を返す", async () => {
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getPlatforms("st_shibuya");
+    expect(result).toEqual([]);
+  });
+});
+
+describe("AiStationAdapter.searchStations", () => {
   beforeEach(() => {
     clearKvState();
     searchStationsFromHeartRails.mockReset();
@@ -296,9 +225,9 @@ describe("CompositeStationAdapter.searchStations", () => {
     longitude: 136.8816,
   };
 
-  test("fixtureにヒットしない駅名でもHeartRailsで見つかれば結果に含める", async () => {
+  test("HeartRailsで見つかった駅を結果に含める", async () => {
     searchStationsFromHeartRails.mockResolvedValue([NAGOYA]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.searchStations("名古屋");
 
@@ -307,12 +236,21 @@ describe("CompositeStationAdapter.searchStations", () => {
 
   test("HeartRailsの結果はgetStationで後から解決できるようキャッシュする", async () => {
     searchStationsFromHeartRails.mockResolvedValue([NAGOYA]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     await adapter.searchStations("名古屋");
     const resolved = await adapter.getStation(NAGOYA.stationId);
 
     expect(resolved?.stationName).toBe("名古屋駅");
+  });
+
+  test("HeartRailsが失敗(null)した場合は空配列を返す", async () => {
+    searchStationsFromHeartRails.mockResolvedValue(null);
+    const adapter = new AiStationAdapter("test-key");
+
+    const result = await adapter.searchStations("西谷");
+
+    expect(result).toEqual([]);
   });
 
   test("nearby-stationsキャッシュが効かない場合(本番の読み取り専用ファイルシステム等)、HeartRailsへ再照会してlinesを復元する", async () => {
@@ -327,7 +265,7 @@ describe("CompositeStationAdapter.searchStations", () => {
     };
     decodeHeartRailsStationId.mockReturnValue(decodedWithoutLines);
     fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     // searchStations を経由せず、getStation単体呼び出し(cacheミス)を再現する。
     const resolved = await adapter.getStation(NAGOYA.stationId);
@@ -351,7 +289,7 @@ describe("CompositeStationAdapter.searchStations", () => {
     };
     decodeHeartRailsStationId.mockReturnValue(decodedWithoutLines);
     fetchNearestStationsFromHeartRails.mockResolvedValue(null);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const resolved = await adapter.getStation(NAGOYA.stationId);
 
@@ -361,7 +299,7 @@ describe("CompositeStationAdapter.searchStations", () => {
 
   test("stationId自体が復元不能(decodeがnull)な場合はnullを返す(再照会もしない)", async () => {
     decodeHeartRailsStationId.mockReturnValue(null);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const resolved = await adapter.getStation("invalid_station_id");
 
@@ -381,7 +319,7 @@ describe("CompositeStationAdapter.searchStations", () => {
     };
     decodeHeartRailsStationId.mockReturnValue(decodedWithoutLines);
     fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     await adapter.getStation(NAGOYA.stationId);
     await adapter.getStation(NAGOYA.stationId);
@@ -407,35 +345,12 @@ describe("CompositeStationAdapter.searchStations", () => {
       longitude: NAGOYA.longitude,
     }));
     fetchNearestStationsFromHeartRails.mockResolvedValue([NAGOYA, SHIN_YOKOHAMA]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     await adapter.getStation(NAGOYA.stationId);
     await adapter.getStation(SHIN_YOKOHAMA.stationId);
 
     expect(fetchNearestStationsFromHeartRails).toHaveBeenCalledTimes(2);
-  });
-
-  test("HeartRailsが失敗(null)してもfixtureの検索結果は返す", async () => {
-    searchStationsFromHeartRails.mockResolvedValue(null);
-    const adapter = new CompositeStationAdapter("test-key");
-
-    const result = await adapter.searchStations("西谷");
-
-    expect(result.some((s) => s.stationId === "st_nishiya")).toBe(true);
-  });
-
-  test("fixtureとHeartRailsで同じstationIdが返っても重複しない", async () => {
-    const nishiyaFromApi = {
-      ...NAGOYA,
-      stationId: "st_nishiya",
-      stationName: "西谷駅",
-    };
-    searchStationsFromHeartRails.mockResolvedValue([nishiyaFromApi]);
-    const adapter = new CompositeStationAdapter("test-key");
-
-    const result = await adapter.searchStations("西谷");
-
-    expect(result.filter((s) => s.stationId === "st_nishiya")).toHaveLength(1);
   });
 
   test("HeartRailsからの結果が上限を超えても件数制限する(短い部分一致クエリでの肥大化対策)", async () => {
@@ -445,30 +360,11 @@ describe("CompositeStationAdapter.searchStations", () => {
       stationName: `テスト駅${i}`,
     }));
     searchStationsFromHeartRails.mockResolvedValue(manyStations);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.searchStations("テスト");
 
     expect(result.length).toBeLessThanOrEqual(20);
-  });
-
-  test("fixtureとHeartRailsを並列に問い合わせる(HeartRailsが遅くてもfixture検索を待たせない設計であることの回帰確認)", async () => {
-    let resolveApi!: (v: unknown) => void;
-    searchStationsFromHeartRails.mockReturnValue(
-      new Promise((resolve) => {
-        resolveApi = resolve;
-      })
-    );
-    const adapter = new CompositeStationAdapter("test-key");
-
-    const promise = adapter.searchStations("西谷");
-    // fixture.searchStations は同期的な文字列比較のみで即完了するため、
-    // HeartRails側が未解決の間でも呼び出し自体は既に行われているはず。
-    expect(searchStationsFromHeartRails).toHaveBeenCalledWith("西谷");
-
-    resolveApi(null);
-    const result = await promise;
-    expect(result.some((s) => s.stationId === "st_nishiya")).toBe(true);
   });
 });
 
@@ -492,7 +388,7 @@ const AI_FACILITY = {
   provenance: "ai_inferred" as const,
 };
 
-describe("CompositeStationAdapter.getFacilities", () => {
+describe("AiStationAdapter.getFacilities", () => {
   beforeEach(() => {
     clearKvState();
     generateStationFacilities.mockReset().mockResolvedValue([]);
@@ -503,14 +399,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
     vi.clearAllMocks();
   });
 
-  test("fixtureにfacilitiesがあればそれを返し、AIは呼ばない", async () => {
-    const adapter = new CompositeStationAdapter("test-key");
-    const result = await adapter.getFacilities("st_shibuya");
-    expect(result.length).toBeGreaterThan(0);
-    expect(generateStationFacilities).not.toHaveBeenCalled();
-  });
-
-  test("fixtureに無い駅は、駅の座標を含めてAI生成にフォールバックする(同名駅の曖昧性解消のため)", async () => {
+  test("駅の座標を含めてAI生成する(同名駅の曖昧性解消のため)", async () => {
     generateStationFacilities.mockResolvedValue([AI_FACILITY]);
     searchStationsFromHeartRails.mockResolvedValue([
       {
@@ -523,7 +412,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
         longitude: 136.2,
       },
     ]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     await adapter.searchStations("テスト");
 
     const result = await adapter.getFacilities("hr_test");
@@ -540,7 +429,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
   });
 
   test("駅自体が解決できない場合は空配列を返す(AIは呼ばない)", async () => {
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     const result = await adapter.getFacilities("st_unknown_no_station");
     expect(result).toEqual([]);
     expect(generateStationFacilities).not.toHaveBeenCalled();
@@ -559,7 +448,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
         longitude: 136.2,
       },
     ]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     await adapter.searchStations("テスト");
 
     await adapter.getFacilities("hr_test", "テストカフェ");
@@ -587,7 +476,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
         longitude: 136.2,
       },
     ]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
     await adapter.searchStations("テスト");
 
     await adapter.getFacilities("hr_test", "テストカフェ");
@@ -606,7 +495,7 @@ describe("CompositeStationAdapter.getFacilities", () => {
   });
 });
 
-describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
+describe("AiStationAdapter.getArrivalGuideNarrativeSteps", () => {
   beforeEach(() => {
     clearKvState();
     generateArrivalNarrativeSteps.mockReset();
@@ -633,7 +522,7 @@ describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
 
   test("生成結果をそのまま返す", async () => {
     generateArrivalNarrativeSteps.mockResolvedValue([NARRATIVE_STEP]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.getArrivalGuideNarrativeSteps(
       "st_shibuya",
@@ -654,7 +543,7 @@ describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
 
   test("座標を渡すとそのままAI生成関数へ引き継ぐ", async () => {
     generateArrivalNarrativeSteps.mockResolvedValue([NARRATIVE_STEP]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     await adapter.getArrivalGuideNarrativeSteps(
       "st_shibuya",
@@ -675,7 +564,7 @@ describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
 
   test("同じ駅・改札・出口の組み合わせで複数回呼んでも永続キャッシュせず毎回AIを呼ぶ(council議論2026-07-20)", async () => {
     generateArrivalNarrativeSteps.mockResolvedValue([NARRATIVE_STEP]);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     await adapter.getArrivalGuideNarrativeSteps("st_shibuya", "渋谷駅", "ヒカリエ改札", "B5出口");
     const result = await adapter.getArrivalGuideNarrativeSteps(
@@ -698,7 +587,7 @@ describe("CompositeStationAdapter.getArrivalGuideNarrativeSteps", () => {
   });
 });
 
-describe("CompositeStationAdapter.getUnifiedArrivalGuide", () => {
+describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   beforeEach(() => {
     generateUnifiedArrivalGuide.mockReset();
   });
@@ -713,7 +602,7 @@ describe("CompositeStationAdapter.getUnifiedArrivalGuide", () => {
       exit: { name: "五番街口", confidenceLevel: "medium" },
       walkingSteps: [],
     });
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     await adapter.getUnifiedArrivalGuide(
       "st_yokohama",
@@ -744,7 +633,7 @@ describe("CompositeStationAdapter.getUnifiedArrivalGuide", () => {
       exit: { name: "五番街口", confidenceLevel: "high" },
       walkingSteps: [],
     });
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.getUnifiedArrivalGuide(
       "st_yokohama",
@@ -771,7 +660,7 @@ describe("CompositeStationAdapter.getUnifiedArrivalGuide", () => {
         { title: "見出し", instruction: "改札を出て直進してください。", confidenceLevel: "high" },
       ],
     });
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.getUnifiedArrivalGuide(
       "st_yokohama",
@@ -804,7 +693,7 @@ describe("CompositeStationAdapter.getUnifiedArrivalGuide", () => {
 
   test("生成に失敗(null)した場合はnullを返す", async () => {
     generateUnifiedArrivalGuide.mockResolvedValue(null);
-    const adapter = new CompositeStationAdapter("test-key");
+    const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.getUnifiedArrivalGuide(
       "st_yokohama",
@@ -818,29 +707,5 @@ describe("CompositeStationAdapter.getUnifiedArrivalGuide", () => {
     );
 
     expect(result).toBeNull();
-  });
-});
-
-
-describe("CompositeStationAdapter.getFixtureFacilities", () => {
-  test("fixtureのfacility一覧をAI呼び出しなしで返す(渋谷駅、gate・exit両方収録)", async () => {
-    const adapter = new CompositeStationAdapter("test-key");
-    const result = await adapter.getFixtureFacilities("st_shibuya");
-    expect(result.some((f) => f.facilityType === "gate")).toBe(true);
-    expect(result.some((f) => f.facilityType === "exit")).toBe(true);
-    expect(generateStationFacilities).not.toHaveBeenCalled();
-  });
-
-  test("fixtureにfacility自体が無い駅(西谷駅)は空配列を返す", async () => {
-    const adapter = new CompositeStationAdapter("test-key");
-    const result = await adapter.getFixtureFacilities("st_nishiya");
-    expect(result).toEqual([]);
-  });
-
-  test("fixture未収録駅は空配列を返す(AIは呼ばない)", async () => {
-    const adapter = new CompositeStationAdapter("test-key");
-    const result = await adapter.getFixtureFacilities("st_unknown_no_fixture");
-    expect(result).toEqual([]);
-    expect(generateStationFacilities).not.toHaveBeenCalled();
   });
 });

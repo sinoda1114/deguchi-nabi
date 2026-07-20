@@ -10,7 +10,7 @@ interface RouteResultBodySkeletonProps {
 
 /**
  * RouteResultBody の Suspense fallback。経路候補(candidate)自体の解決
- * (fixture未収録区間はAI生成を含み最大70秒)を待つ間、検索フォームから
+ * (AI生成を含み最大70秒)を待つ間、検索フォームから
  * 遷移した直後に白い画面のまま止まって見えないよう、結果画面のレイアウト
  * 骨格を即座に表示する。この時点で確定しているのは URL から分かる
  * mode のみで、経路名・所要時間・号車・出口はすべて未確定のためスケルトン。
