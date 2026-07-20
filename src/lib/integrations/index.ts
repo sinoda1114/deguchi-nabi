@@ -18,7 +18,13 @@ import type { RouteProviderPort } from "./route-provider/RouteProviderPort";
  * メソッド呼び出し時に自然に失敗する(専用のフォールバック先は無い)。
  */
 const geminiApiKey = process.env.GEMINI_API_KEY;
-export const stationProvider: StationProviderPort = new AiStationAdapter(geminiApiKey ?? "");
+const serperApiKey = process.env.SERPER_API_KEY;
+const jinaApiKey = process.env.JINA_API_KEY;
+export const stationProvider: StationProviderPort = new AiStationAdapter(
+  geminiApiKey ?? "",
+  serperApiKey ?? "",
+  jinaApiKey ?? null
+);
 
 export const routeProvider: RouteProviderPort = new AiRouteAdapter(
   geminiApiKey ?? "",

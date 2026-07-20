@@ -48,10 +48,13 @@ vi.mock("../arrival-guide-ai-generation", () => ({
 }));
 
 const generateUnifiedArrivalGuide = vi.fn();
-const searchDestinationStatedExit = vi.fn(async (..._args: unknown[]) => null as unknown);
 vi.mock("../unified-arrival-guide-generation", () => ({
   generateUnifiedArrivalGuide: (...args: unknown[]) => generateUnifiedArrivalGuide(...args),
-  searchDestinationStatedExit: (...args: unknown[]) => searchDestinationStatedExit(...args),
+}));
+
+const searchDestinationExitViaSerper = vi.fn(async (..._args: unknown[]) => null as unknown);
+vi.mock("@/lib/integrations/search/destination-exit-search-pipeline", () => ({
+  searchDestinationExitViaSerper: (...args: unknown[]) => searchDestinationExitViaSerper(...args),
 }));
 
 const searchStationsFromHeartRails = vi.fn(async (_query: string) => null as unknown);
@@ -592,8 +595,8 @@ describe("AiStationAdapter.getArrivalGuideNarrativeSteps", () => {
 describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   beforeEach(() => {
     generateUnifiedArrivalGuide.mockReset();
-    searchDestinationStatedExit.mockReset();
-    searchDestinationStatedExit.mockResolvedValue(null);
+    searchDestinationExitViaSerper.mockReset();
+    searchDestinationExitViaSerper.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -637,15 +640,21 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     );
   });
 
-  test("destinationHintがある場合、統合生成の前に専用検索(searchDestinationStatedExit)を呼び、確認できた出口をfixedExitとして渡す(2026-07-20 experiment/destination-fix-then-vote)", async () => {
+  test("destinationHintがある場合、統合生成の前に専用検索(searchDestinationExitViaSerper)を呼び、確認できた出口をfixedExitとして渡す(2026-07-20 experiment/destination-fix-then-vote: Gemini groundingベースの専用検索は実機検証で再現性が低く、Serper検索パイプラインに置き換えた)", async () => {
     generateUnifiedArrivalGuide.mockResolvedValue({
       boardingPosition: null,
       gate: null,
       exit: null,
       walkingSteps: [],
     });
-    searchDestinationStatedExit.mockResolvedValue({ name: "ハチ公口", confidenceLevel: "high" });
-    const adapter = new AiStationAdapter("test-key");
+    searchDestinationExitViaSerper.mockResolvedValue({
+      exit: {
+        name: "ハチ公口",
+        confidence: { level: "high", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 2 },
+      },
+      gateHint: "ハチ公改札",
+    });
+    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
 
     await adapter.getUnifiedArrivalGuide(
       "st_shibuya",
@@ -660,10 +669,11 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       { lat: 35.6587716, lng: 139.6982764 }
     );
 
-    expect(searchDestinationStatedExit).toHaveBeenCalledWith(
-      "test-key",
+    expect(searchDestinationExitViaSerper).toHaveBeenCalledWith(
+      { serperApiKey: "serper-key", jinaApiKey: "jina-key", geminiApiKey: "test-key" },
       "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587716, lng: 139.6982764 }
+      { lat: 35.6587716, lng: 139.6982764 },
+      ["東急東横線"]
     );
     expect(generateUnifiedArrivalGuide).toHaveBeenCalledWith(
       "test-key",
@@ -702,7 +712,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       null
     );
 
-    expect(searchDestinationStatedExit).not.toHaveBeenCalled();
+    expect(searchDestinationExitViaSerper).not.toHaveBeenCalled();
   });
 
   test("boardingPositionのconfidenceLevelをai_inferredの上限(medium)にキャップしたConfidenceへ変換する", async () => {
