@@ -221,6 +221,8 @@ export class AiStationAdapter implements StationProviderPort {
     operator: string,
     lines: string[],
     originStationName: string,
+    originLine: string,
+    originDirection: string,
     destinationHint: string | null,
     stationCoordinates: Coordinates | null,
     destinationPlaceCoordinates: Coordinates | null
@@ -228,6 +230,8 @@ export class AiStationAdapter implements StationProviderPort {
     const result = await generateUnifiedArrivalGuide(
       this.geminiApiKey,
       originStationName,
+      originLine,
+      originDirection,
       stationName,
       operator,
       lines,
@@ -238,6 +242,14 @@ export class AiStationAdapter implements StationProviderPort {
     if (!result) return null;
 
     return {
+      boardingPosition: result.boardingPosition
+        ? {
+            carNumber: result.boardingPosition.carNumber,
+            doorPosition: result.boardingPosition.doorPosition,
+            reason: result.boardingPosition.reason,
+            confidence: groundedAiConfidence(result.boardingPosition.confidenceLevel),
+          }
+        : null,
       gate: result.gate
         ? { name: result.gate.name, confidence: groundedAiConfidence(result.gate.confidenceLevel) }
         : null,

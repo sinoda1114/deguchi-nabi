@@ -4,7 +4,8 @@ import type { Coordinates } from "@/lib/domain/station";
 import { locationHint } from "./ai-generation";
 
 /**
- * 改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成するバックエンド。
+ * 乗車位置・改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成する
+ * バックエンド。
  *
  * council議論(2026-07-20): 実機比較で「西谷駅から目的地までの号車・改札・出口・
  * 徒歩ルートを1つのシステムプロンプトで一括検索させる」方式(Geminiチャットでの
@@ -20,6 +21,19 @@ import { locationHint } from "./ai-generation";
  * リスクを避けるため)。統合生成は同一検索セッションで改札・出口・徒歩ルートを
  * 一貫して回答させるため、この「別々の推測を重ねる」問題自体が発生しない。
  *
+ * 乗車位置(号車・ドア位置)も2026-07-20に統合生成へ組み込んだ
+ * (fix/unified-guide-boarding-and-operator-disambiguation)。従来は
+ * ai-generation.tsのgenerateBoardingPositionが完全に独立したAIセッションで
+ * 「改札に近い停止位置」とだけ検索していたため、到着駅に同一事業者の改札が
+ * 複数ある場合(例: 横浜駅の相鉄1階改札・2階改札)、統合生成が選んだ改札とは
+ * 無関係な改札を基準に号車を回答してしまう実例が確認された(西谷駅→kawara
+ * CAFE&DINING横浜店の実機検証で、統合生成は「相鉄1階改札」を選んだのに、
+ * 独立した乗車位置生成は「2階改札」寄りの号車を回答していた)。乗車位置も
+ * 同一検索セッションで「1で確定した改札」を明示的な基準にして決めさせることで、
+ * 号車と改札・出口の不整合を構造的に防ぐ。副次効果として、AI生成駅への
+ * 1リクエストあたりの課金対象AI呼び出しが1回減る(号車の独立呼び出しが不要に
+ * なるため)。
+ *
  * モデルはgemini-3.5-flashを使う(gemini-3.1-pro-previewとの比較で、検索実行の
  * 安定性・応答速度・コストのバランスが良かったため。gemini-3.1-flash-liteは
  * ツール呼び出し判断が弱く検索を実行しないケースがあり不採用)。
@@ -31,21 +45,49 @@ import { locationHint } from "./ai-generation";
  * generateStationFacilitiesのコメント参照)、gemini-3.5-flash+この統合プロンプト
  * では同じ問題は再現しなかった(西谷駅→kawara CAFE&DINING横浜店のドライランで
  * 改札名・出口名・徒歩ルートまで具体的に取得できることを確認済み)。
+ *
+ * 複数事業者が乗り入れる結節点駅(例: 横浜駅の相鉄・JR・東急・市営地下鉄)では、
+ * 検索で見つかりやすい他社共用の連絡改札名や他社の番号出口案内を誤って
+ * 採用する実例が確認された(西谷駅→横浜駅で「JR・相鉄連絡改札口」「出口5」
+ * (いずれも地下鉄側の案内)を誤答し、正しくは相鉄自身の「相鉄線1階改札」
+ * 「みなみ西口(相鉄口)」だった)。プロンプトに事業者固有設備の優先指示を
+ * 追加して対応する。
+ *
+ * 事業者名は乗車路線名(originLine)を根拠にする。到着駅のoperator
+ * (destinationOperator)ではない — HeartRails Express APIは事業者名を
+ * 提供しないため、fixture廃止(2026-07-20)後はdestinationOperatorが常に
+ * 空文字になり、これを条件にした注意書きは実質発火しない不具合だった。
+ * originLine(経路生成AIが検索で確認した乗車路線)は必ず存在し、「この路線に
+ * 乗車した時点で到着事業者は一意に確定する」という事実で代替できる。
  */
 
 const MODEL = "gemini-3.5-flash";
 const MAX_TEXT_LENGTH = 200;
+const MAX_REASON_LENGTH = 150;
 const MAX_WALKING_STEPS = 6;
+const MAX_CAR_NUMBER = 16;
 
 const VALID_CONFIDENCE_LEVELS: ConfidenceLevel[] = ["high", "medium", "low"];
+const VALID_DOOR_POSITIONS = ["前方", "中央", "後方"] as const;
+type DoorPosition = (typeof VALID_DOOR_POSITIONS)[number];
 
 export interface UnifiedArrivalGuideResult {
+  boardingPosition: {
+    carNumber: number;
+    doorPosition: DoorPosition;
+    reason: string;
+    confidenceLevel: ConfidenceLevel;
+  } | null;
   gate: { name: string; confidenceLevel: ConfidenceLevel } | null;
   exit: { name: string; confidenceLevel: ConfidenceLevel } | null;
   walkingSteps: { title: string; instruction: string; confidenceLevel: ConfidenceLevel }[];
 }
 
 interface GeneratedUnifiedArrivalGuide {
+  boardingCarNumber?: number;
+  boardingDoorPosition?: DoorPosition;
+  boardingReason?: string;
+  boardingConfidence?: ConfidenceLevel;
   gateName?: string;
   gateConfidence?: ConfidenceLevel;
   exitName?: string;
@@ -56,6 +98,10 @@ interface GeneratedUnifiedArrivalGuide {
 const UNIFIED_ARRIVAL_GUIDE_SCHEMA = {
   type: "object",
   properties: {
+    boardingCarNumber: { type: "integer" },
+    boardingDoorPosition: { type: "string", enum: VALID_DOOR_POSITIONS },
+    boardingReason: { type: "string" },
+    boardingConfidence: { type: "string", enum: VALID_CONFIDENCE_LEVELS },
     gateName: { type: "string" },
     gateConfidence: { type: "string", enum: VALID_CONFIDENCE_LEVELS },
     exitName: { type: "string" },
@@ -84,6 +130,10 @@ function isValidConfidenceLevel(value: unknown): value is ConfidenceLevel {
   return typeof value === "string" && VALID_CONFIDENCE_LEVELS.includes(value as ConfidenceLevel);
 }
 
+function isValidDoorPosition(value: unknown): value is DoorPosition {
+  return typeof value === "string" && (VALID_DOOR_POSITIONS as readonly string[]).includes(value);
+}
+
 function isValidWalkingStep(
   value: unknown
 ): value is { title: string; instruction: string; confidence: ConfidenceLevel } {
@@ -99,6 +149,8 @@ function isValidWalkingStep(
 export async function generateUnifiedArrivalGuide(
   apiKey: string,
   originStationName: string,
+  originLine: string,
+  originDirection: string,
   destinationStationName: string,
   destinationOperator: string,
   destinationLines: string[],
@@ -119,21 +171,36 @@ export async function generateUnifiedArrivalGuide(
     ? `${stationLabel}付近の「${destinationHint}」${locationHint(destinationPlaceCoordinates)}`
     : stationLabel;
 
-  const searchPrompt = `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStationName}駅」から「${destinationLabel}」へ向かうルートを知りたいと考えています。
-回答時には必ずインターネット検索を行い、最新かつ正確な改札・出口・徒歩ルート情報を取得し、出力前にファクトチェックを行います。
+  // 事業者名(destinationOperator)はHeartRails由来の駅では常に空文字になる
+  // (HeartRails Express APIが事業者名を提供しないため。heartrails.ts参照。
+  // fixture廃止(2026-07-20)によりHeartRailsが唯一の駅データ源になったため、
+  // destinationOperatorを条件にした注意書きは実質発火しなくなっていた
+  // 不具合をここで修正)。代わりに、乗車路線(originLine)は経路生成AIが
+  // 検索で確認した値のため確実に存在し、かつ「この路線に乗車した時点で
+  // 到着に使う事業者は一意に確定する(自動で他社線に乗り入れない限り)」
+  // という事実を根拠にできる。事業者名の代わりに乗車路線名を軸に
+  // 事業者固有設備への絞り込みを指示する。
+  const operatorDisambiguationNote = originLine
+    ? `\n\n【複数事業者駅の注意】\n${destinationStationName}駅は複数の鉄道会社が乗り入れる駅である可能性があります。今回${originStationName}駅から乗車したのは${originLine}です。直通運転・相互乗り入れが無い区間であれば、到着に使う事業者はこの${originLine}を運行する会社に絞り込めます。ただし直通運転区間では到着時点の運行会社が変わっている場合があるため、路線名だけで事業者を断定せず、到着ホームの案内表示や公式構内図で実際の運行会社を確認したうえで回答してください。回答する乗車位置・改札名・出口名は、その(到着時点で実際に案内に使われている)会社の名称にしてください。他社線専用の連絡改札や、その会社が使わない番号のみの出口案内(例:地下鉄や他社線の「出口5」等)を、確認せずそのまま採用しないでください。`
+    : "";
+
+  const searchPrompt = `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStationName}駅」から${originLine}(${originDirection})に乗車し、「${destinationLabel}」へ向かうルートを知りたいと考えています。
+回答時には必ずインターネット検索を行い、最新かつ正確な乗車位置・改札・出口・徒歩ルート情報を取得し、出力前にファクトチェックを行います。
 
 【回答すべき情報】
 1. ${stationLabel}で降りるべき改札名(${destinationHint ? "目的地に最も近いもの" : "主要な改札"})
 2. その改札を出て利用すべき出口名
 3. 改札を出てから目的地までの徒歩ルート(目印を含む、簡潔に)
+4. ${originStationName}駅で${originLine}(${originDirection})に乗車する場合、1の改札に到着ホーム上の階段・エスカレーターで最短で向かえる号車・ドア位置(列車の進行方向・編成両数と照合して決めてください。到着番線や編成によって結果が変わる場合はその条件を含めてください)${operatorDisambiguationNote}
 
 【制約】
 - 鉄道会社公式の駅構内図・公式サイトを最優先の情報源としてください。
 - 同じ駅名が他にも存在する場合は、必ず上記の位置に最も近い駅を対象にしてください。
-- 確証がない場合は「確認できません」と明示し、推測による回答は行わない。実在しない改札名・出口名を創作しないでください。`;
+- 確証がない場合は「確認できません」と明示し、推測による回答は行わない。実在しない乗車位置・改札名・出口名を創作しないでください。`;
 
-  const extractionInstruction = `以下の文章から、改札名・出口名・徒歩ルートの情報をJSON形式で抽出してください。
-確信が持てない項目は含めないでください(改札名・出口名が確認できない場合はgateName/exitNameのプロパティ自体を省略してください)。
+  const extractionInstruction = `以下の文章から、乗車位置(号車・ドア位置・理由)・改札名・出口名・徒歩ルートの情報をJSON形式で抽出してください。
+確信が持てない項目は含めないでください(乗車位置が確認できない場合はboardingCarNumber等のプロパティ自体を省略、改札名・出口名が確認できない場合はgateName/exitNameのプロパティ自体を省略してください)。
+boardingReasonには、到着番線や編成によって結果が変わる場合の条件(例:◯番線着の場合は◯号車)を含めてください。ただし150字程度までの簡潔な文章にまとめてください。
 徒歩ルートの各ステップには、短い見出し(title、例:「改札を出て直進」)と詳しい説明(instruction)の両方を含めてください。
 各項目について、あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
 
@@ -148,6 +215,21 @@ export async function generateUnifiedArrivalGuide(
 
   if (!result) return null;
 
+  const boardingPosition =
+    typeof result.boardingCarNumber === "number" &&
+    Number.isInteger(result.boardingCarNumber) &&
+    result.boardingCarNumber >= 1 &&
+    result.boardingCarNumber <= MAX_CAR_NUMBER &&
+    isValidDoorPosition(result.boardingDoorPosition) &&
+    isNonEmptyText(result.boardingReason, MAX_REASON_LENGTH) &&
+    isValidConfidenceLevel(result.boardingConfidence)
+      ? {
+          carNumber: result.boardingCarNumber,
+          doorPosition: result.boardingDoorPosition,
+          reason: result.boardingReason,
+          confidenceLevel: result.boardingConfidence,
+        }
+      : null;
   const gate =
     isNonEmptyText(result.gateName) && isValidConfidenceLevel(result.gateConfidence)
       ? { name: result.gateName, confidenceLevel: result.gateConfidence }
@@ -167,5 +249,5 @@ export async function generateUnifiedArrivalGuide(
         }))
     : [];
 
-  return { gate, exit, walkingSteps };
+  return { boardingPosition, gate, exit, walkingSteps };
 }

@@ -65,6 +65,7 @@ const OK_RESULT: FacilitiesSearchResult = {
     elevator: null,
     hasApproximateGuidance: false,
     approximateDirectionLabel: null,
+    unifiedBoardingPosition: null,
     arrivalGuide: { steps: [], destinationDirection: null },
   },
 };

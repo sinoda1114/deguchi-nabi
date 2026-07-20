@@ -596,8 +596,9 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     vi.clearAllMocks();
   });
 
-  test("出発駅名・到着駅名・operator・lines・destinationHint・座標をそのまま生成関数へ引き継ぐ", async () => {
+  test("出発駅名・乗車路線・方面・到着駅名・operator・lines・destinationHint・座標をそのまま生成関数へ引き継ぐ", async () => {
     generateUnifiedArrivalGuide.mockResolvedValue({
+      boardingPosition: null,
       gate: { name: "1F改札", confidenceLevel: "medium" },
       exit: { name: "五番街口", confidenceLevel: "medium" },
       walkingSteps: [],
@@ -610,6 +611,8 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       "相鉄",
       ["相鉄本線"],
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "kawara CAFE&DINING 横浜店",
       { lat: 35.4662, lng: 139.6227 },
       { lat: 35.4657, lng: 139.622 }
@@ -618,6 +621,8 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     expect(generateUnifiedArrivalGuide).toHaveBeenCalledWith(
       "test-key",
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       "横浜駅",
       "相鉄",
       ["相鉄本線"],
@@ -627,8 +632,14 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     );
   });
 
-  test("gate/exitのconfidenceLevelをai_inferredの上限(medium)にキャップしたConfidenceへ変換する", async () => {
+  test("boardingPositionのconfidenceLevelをai_inferredの上限(medium)にキャップしたConfidenceへ変換する", async () => {
     generateUnifiedArrivalGuide.mockResolvedValue({
+      boardingPosition: {
+        carNumber: 6,
+        doorPosition: "後方",
+        reason: "1階改札への階段に近いため",
+        confidenceLevel: "high",
+      },
       gate: { name: "1F改札", confidenceLevel: "high" },
       exit: { name: "五番街口", confidenceLevel: "high" },
       walkingSteps: [],
@@ -641,19 +652,50 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       "相鉄",
       ["相鉄本線"],
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       null,
       null,
       null
     );
 
+    expect(result?.boardingPosition?.carNumber).toBe(6);
+    expect(result?.boardingPosition?.doorPosition).toBe("後方");
+    expect(result?.boardingPosition?.confidence.level).toBe("medium");
     expect(result?.gate?.name).toBe("1F改札");
     expect(result?.gate?.confidence.level).toBe("medium");
     expect(result?.exit?.name).toBe("五番街口");
     expect(result?.exit?.confidence.level).toBe("medium");
   });
 
+  test("boardingPositionがnullの場合はそのままnullとして返す", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue({
+      boardingPosition: null,
+      gate: { name: "1F改札", confidenceLevel: "medium" },
+      exit: { name: "五番街口", confidenceLevel: "medium" },
+      walkingSteps: [],
+    });
+    const adapter = new AiStationAdapter("test-key");
+
+    const result = await adapter.getUnifiedArrivalGuide(
+      "st_yokohama",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      null,
+      null,
+      null
+    );
+
+    expect(result?.boardingPosition).toBeNull();
+  });
+
   test("walkingStepsをGuideStep[](type: public_passage、provenance: ai_inferred)へ変換する", async () => {
     generateUnifiedArrivalGuide.mockResolvedValue({
+      boardingPosition: null,
       gate: null,
       exit: null,
       walkingSteps: [
@@ -668,6 +710,8 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       "相鉄",
       ["相鉄本線"],
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       null,
       null,
       null
@@ -701,6 +745,8 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       "相鉄",
       ["相鉄本線"],
       "西谷駅",
+      "相鉄本線",
+      "横浜方面",
       null,
       null,
       null
