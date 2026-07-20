@@ -194,6 +194,28 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(searchPrompt).toContain("出口の決定は上記【出口の決め方】を最優先とし");
   });
 
+  test("destinationHintがある場合、駅の有名・象徴的な出口を理由なく選ばないよう禁止する指示を含める(2026-07-20 fix/destination-first-access-priority: 目的地公式サイト優先検索だけでは実機再検証(渋谷駅ルート)で改善せず、AIが有名な出口(ハチ公口・宮益坂口等)へ理由なく誘導される傾向自体が原因と推定したため)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線"],
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 }
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("有名だから");
+    expect(searchPrompt).toContain("目的地の住所・座標と各出口の位置関係");
+    expect(searchPrompt).toContain("目的地に実際に近い方角の出口を選んでください");
+  });
+
   test("destinationHintが無い場合(駅そのものが目的地)は目的地優先検索の指示を含めない", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
 
