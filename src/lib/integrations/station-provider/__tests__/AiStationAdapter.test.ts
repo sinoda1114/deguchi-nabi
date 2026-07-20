@@ -52,6 +52,11 @@ vi.mock("../unified-arrival-guide-generation", () => ({
   generateUnifiedArrivalGuide: (...args: unknown[]) => generateUnifiedArrivalGuide(...args),
 }));
 
+const searchDestinationExitViaSerper = vi.fn(async (..._args: unknown[]) => null as unknown);
+vi.mock("@/lib/integrations/search/destination-exit-search-pipeline", () => ({
+  searchDestinationExitViaSerper: (...args: unknown[]) => searchDestinationExitViaSerper(...args),
+}));
+
 const searchStationsFromHeartRails = vi.fn(async (_query: string) => null as unknown);
 const fetchNearestStationsFromHeartRails = vi.fn(async (_lat: number, _lng: number) => null as unknown);
 const decodeHeartRailsStationId = vi.fn((_stationId: string) => null as unknown);
@@ -590,6 +595,8 @@ describe("AiStationAdapter.getArrivalGuideNarrativeSteps", () => {
 describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   beforeEach(() => {
     generateUnifiedArrivalGuide.mockReset();
+    searchDestinationExitViaSerper.mockReset();
+    searchDestinationExitViaSerper.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -628,8 +635,84 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       ["相鉄本線"],
       "kawara CAFE&DINING 横浜店",
       { lat: 35.4662, lng: 139.6227 },
-      { lat: 35.4657, lng: 139.622 }
+      { lat: 35.4657, lng: 139.622 },
+      null
     );
+  });
+
+  test("destinationHintがある場合、統合生成の前に専用検索(searchDestinationExitViaSerper)を呼び、確認できた出口をfixedExitとして渡す(2026-07-20 experiment/destination-fix-then-vote: Gemini groundingベースの専用検索は実機検証で再現性が低く、Serper検索パイプラインに置き換えた)", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue({
+      boardingPosition: null,
+      gate: null,
+      exit: null,
+      walkingSteps: [],
+    });
+    searchDestinationExitViaSerper.mockResolvedValue({
+      exit: {
+        name: "ハチ公口",
+        confidence: { level: "high", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 2 },
+      },
+      gateHint: "ハチ公改札",
+    });
+    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
+
+    await adapter.getUnifiedArrivalGuide(
+      "st_shibuya",
+      "渋谷駅",
+      "東急",
+      ["東急東横線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 }
+    );
+
+    expect(searchDestinationExitViaSerper).toHaveBeenCalledWith(
+      { serperApiKey: "serper-key", jinaApiKey: "jina-key", geminiApiKey: "test-key" },
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587716, lng: 139.6982764 },
+      ["東急東横線"]
+    );
+    expect(generateUnifiedArrivalGuide).toHaveBeenCalledWith(
+      "test-key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線"],
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 },
+      { name: "ハチ公口", confidenceLevel: "high" }
+    );
+  });
+
+  test("destinationHintが無い場合(駅そのものが目的地)は専用検索を呼ばない", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue({
+      boardingPosition: null,
+      gate: null,
+      exit: null,
+      walkingSteps: [],
+    });
+    const adapter = new AiStationAdapter("test-key");
+
+    await adapter.getUnifiedArrivalGuide(
+      "st_yokohama",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      null,
+      null,
+      null
+    );
+
+    expect(searchDestinationExitViaSerper).not.toHaveBeenCalled();
   });
 
   test("boardingPositionのconfidenceLevelをai_inferredの上限(medium)にキャップしたConfidenceへ変換する", async () => {

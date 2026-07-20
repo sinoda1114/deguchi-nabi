@@ -85,7 +85,7 @@ export async function generateStationFacilitiesWithVision(
 
   const result = await searchAndGenerateStructuredContentWithImage<{
     facilities: GeneratedFacility[];
-  }>(geminiApiKey, searchPrompt, extractionInstruction, FACILITIES_SCHEMA, image);
+  }>(geminiApiKey, searchPrompt, extractionInstruction, FACILITIES_SCHEMA, image, "gemini-3.5-flash");
 
   // 画像付きGrounding呼び出しは同一条件でも失敗(検索が実行されない/JSON応答が
   // 不正)することがある実測フレーク挙動を確認したため(東京駅、2回連続実行で

@@ -6,28 +6,32 @@ import type { RouteMode } from "@/lib/domain/route";
 import { checkRoutesSearchRateLimit, extractClientIp } from "@/lib/rate-limit/ip-rate-limit";
 
 // 全駅間の経路・乗車位置・改札・出口・徒歩ルートをGemini Search Groundingで
-// 検索(検索55秒+抽出15秒を直列実行、最大70秒)するため、プラットフォームの
-// デフォルト実行時間上限より長くかかりうる。明示的に確保する。
+// 検索するため、プラットフォームのデフォルト実行時間上限より長くかかりうる。
+// 明示的に確保する。
 //
-// searchRouteGuide内でresolveRouteCandidate(経路自体のAI生成、最大70秒)→
-// buildTransferAndExitSegments(改札・出口・徒歩ルート・乗車位置の統合生成、
-// 最大70秒)を直列実行する。2026-07-20(fix/unified-guide-boarding-and-
-// operator-disambiguation)で乗車位置を統合生成に統合したため、通常ケース
-// (easy/fastestモードかつ統合生成成功)ではbuildTrainSegments自体は追加の
-// AI呼び出しをせず、合算最大140秒(経路生成+統合生成)に収まる。
+// searchRouteGuide内でresolveRouteCandidate(経路自体のAI生成。GeminiClient.ts
+// 経由、検索55秒+抽出15秒=最大70秒)→buildTransferAndExitSegments(改札・出口・
+// 徒歩ルート・乗車位置の統合生成。GeminiAiSdkClient.ts経由)を直列実行する。
+// 統合生成は2026-07-20(fix/unified-guide-exit-first-derivation)で出口→改札→
+// 徒歩→乗車位置の依存関係を明示する指示を追加した結果プロンプトが長くなり、
+// 標準の検索タイムアウト(55秒)ではPreview環境の実機検証でTimeoutErrorを確認
+// したため、統合生成専用に検索タイムアウトを90秒へ延長した(unified-arrival-
+// guide-generation.ts SEARCH_TIMEOUT_MS参照。検索90秒+抽出15秒=最大105秒)。
+// 通常ケース(easy/fastestモードかつ統合生成成功)ではbuildTrainSegments自体は
+// 追加のAI呼び出しをせず、合算最大175秒(経路生成70秒+統合生成105秒)に収まる。
 //
-// accessibleモードは統合生成を使わないため、buildTrainSegments(号車、
-// 最大70秒)とbuildTransferAndExitSegments(改札・出口・エレベーター、
-// 最大70秒)を引き続き並列実行し、経路生成+max(両者)で合算最大140秒に収まる。
+// accessibleモードは統合生成を使わないため、buildTrainSegments(号車。
+// GeminiClient.ts経由、最大70秒)とbuildTransferAndExitSegments(改札・出口・
+// エレベーター、最大70秒)を引き続き並列実行し、経路生成+max(両者)で合算
+// 最大140秒に収まる。
 //
 // 統合生成を試みたが出口を確認できなかった場合(accessible以外のモードで
-// 統合生成が失敗したケース)のみ、buildTrainSegmentsが独立した乗車位置生成を
-// 追加で直列に呼び、経路生成+統合生成+乗車位置生成で最大210秒かかりうる
-// (/ai-review指摘、High: 乗車位置と改札・出口の整合性を取るために直列化した
-// 副作用で、この経路だけ旧来の140秒上限を超えるようになった)。90秒設定では
-// 実機でFUNCTION_INVOCATION_TIMEOUTを確認済み(Issue #68)。210秒の想定に
-// 安全マージンを見て240秒に引き上げる。
-export const maxDuration = 240;
+// 統合生成が失敗したケース)のみ、buildTrainSegmentsが独立した乗車位置生成
+// (GeminiClient.ts経由、最大70秒)を追加で直列に呼び、経路生成(70秒)+
+// 統合生成(105秒)+乗車位置生成(70秒)で最大245秒かかりうる。90秒設定では
+// 実機でFUNCTION_INVOCATION_TIMEOUTを確認済み(Issue #68)。245秒の想定に
+// 安全マージンを見て290秒に引き上げる。
+export const maxDuration = 290;
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
