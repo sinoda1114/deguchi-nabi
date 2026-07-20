@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">でぐちなび</title>
+  <rect width="512" height="512" rx="80" fill="#ffffff"/>
+  <g transform="translate(-38.4 -38.4) scale(1.15)">
+    <path fill="#007a3d" d="M256 57c-87 0-158 69-158 154 0 113 126 207 158 246 32-39 158-133 158-246 0-85-71-154-158-154Z"/>
+    <circle cx="256" cy="200" r="111" fill="#ffffff"/>
+    <rect x="186" y="121" width="140" height="159" rx="34" fill="#007a3d"/>
+    <rect x="211" y="151" width="90" height="67" rx="15" fill="#ffffff"/>
+    <rect x="237" y="133" width="38" height="10" rx="5" fill="#ffffff"/>
+    <circle cx="220" cy="244" r="12" fill="#ffffff"/>
+    <circle cx="292" cy="244" r="12" fill="#ffffff"/>
+    <path fill="#ffffff" d="m214 280-29 41h142l-29-41h-84Zm-37 53-15 22h188l-15-22H177Z"/>
+  </g>
+</svg>
