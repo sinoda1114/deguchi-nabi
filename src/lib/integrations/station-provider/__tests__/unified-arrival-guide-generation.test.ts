@@ -171,7 +171,57 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(searchPrompt).toContain("139.6220");
   });
 
-  test("destinationHintがある場合、駅全体の出口一覧からの徒歩距離推測より、目的地自身が公式サイト等で明言する出口を優先検索させる指示を含める(2026-07-20 fix/destination-first-access-priority: 実機検証で「駅の主要出口から徒歩距離で推測」する設計だと、目的地から実際には遠い代表的な出口に系統的に誘導され、複数回検索しても同じ誤りに収束する不具合を確認したため。experiment/majority-vote-unified-guide参照)", async () => {
+  test("fixedExitが渡された場合、出口を確定済みとして扱い改札選定のみをその出口起点で行わせる指示にする(2026-07-20 experiment/destination-fix-then-vote: 目的地公式サイト優先検索・有名性バイアス禁止のプロンプト指示はいずれも実機検証で効果がなく撤回。代わりに専用検索(searchDestinationStatedExit)で確認した出口をfixedExitとして受け取り、この関数自身には出口を選ばせない設計に変更した)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4662, lng: 139.6227 },
+      { lat: 35.4657, lng: 139.622 },
+      { name: "みなみ西口（相鉄口）", confidenceLevel: "high" }
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("出口は既に「みなみ西口（相鉄口）」と判明しています");
+    expect(searchPrompt).toContain("今回の乗車事業者(相鉄本線を運行する会社)基準で選ぶ");
+    expect(searchPrompt).toContain('出口名は「みなみ西口（相鉄口）」で確定済みです');
+  });
+
+  test("fixedExitが渡された場合、抽出結果のexitNameより優先してfixedExitをそのまま採用する", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      gateName: "東急 ハチ公改札",
+      gateConfidence: "medium",
+      exitName: "モデルが独自に返した別の出口", // fixedExit指定時は無視されるべき
+      exitConfidence: "medium",
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線"],
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 },
+      { name: "ハチ公口", confidenceLevel: "high" }
+    );
+
+    expect(result?.exit).toEqual({ name: "ハチ公口", confidenceLevel: "high" });
+    expect(result?.gate).toEqual({ name: "東急 ハチ公改札", confidenceLevel: "medium" });
+  });
+
+  test("fixedExitが無い場合(専用検索で見つからなかった)は従来通りこの関数自身が出口を選ぶ", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
 
     await generateUnifiedArrivalGuide(
@@ -188,52 +238,8 @@ describe("generateUnifiedArrivalGuide", () => {
     );
 
     const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
-    expect(searchPrompt).toContain("公式サイト・予約ページ・グルメサイト等に「アクセス」「最寄り出口」として明記された出口名を検索してください");
-    expect(searchPrompt).toContain("目的地自身が明言する出口名が見つかった場合は、それを最優先で採用してください");
-    // 出口の決め方の優先順位が明記されている(改札・徒歩ルート・乗車位置は駅公式情報が優先のまま)。
-    expect(searchPrompt).toContain("出口の決定は上記【出口の決め方】を最優先とし");
-  });
-
-  test("destinationHintがある場合、駅の有名・象徴的な出口を理由なく選ばないよう禁止する指示を含める(2026-07-20 fix/destination-first-access-priority: 目的地公式サイト優先検索だけでは実機再検証(渋谷駅ルート)で改善せず、AIが有名な出口(ハチ公口・宮益坂口等)へ理由なく誘導される傾向自体が原因と推定したため)", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
-
-    await generateUnifiedArrivalGuide(
-      "key",
-      "西谷駅",
-      "相鉄本線",
-      "横浜方面",
-      "渋谷駅",
-      "東急",
-      ["東急東横線"],
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587, lng: 139.7009 },
-      { lat: 35.6587716, lng: 139.6982764 }
-    );
-
-    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
-    expect(searchPrompt).toContain("有名だから");
-    expect(searchPrompt).toContain("目的地の住所・座標と各出口の位置関係");
-    expect(searchPrompt).toContain("目的地に実際に近い方角の出口を選んでください");
-  });
-
-  test("destinationHintが無い場合(駅そのものが目的地)は目的地優先検索の指示を含めない", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
-
-    await generateUnifiedArrivalGuide(
-      "key",
-      "西谷駅",
-      "相鉄本線",
-      "横浜方面",
-      "横浜駅",
-      "相鉄",
-      ["相鉄本線"],
-      null,
-      null,
-      null
-    );
-
-    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
-    expect(searchPrompt).not.toContain("公式サイト・予約ページ・グルメサイト等に「アクセス」「最寄り出口」として明記された出口名を検索してください");
+    expect(searchPrompt).not.toContain("出口は既に");
+    expect(searchPrompt).toContain("最も直接的にたどり着ける出口名(徒歩距離が最短になるものを優先してください)");
   });
 
   test("boardingPosition/gate/exit/walkingStepsを正しく変換する", async () => {

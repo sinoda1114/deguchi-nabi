@@ -2,7 +2,10 @@ import type { StationProviderPort } from "./StationProviderPort";
 import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-generation";
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
-import { generateUnifiedArrivalGuide } from "./unified-arrival-guide-generation";
+import {
+  generateUnifiedArrivalGuide,
+  searchDestinationStatedExit,
+} from "./unified-arrival-guide-generation";
 import { groundedAiConfidence } from "./ai-generation";
 import {
   decodeHeartRailsStationId,
@@ -227,6 +230,17 @@ export class AiStationAdapter implements StationProviderPort {
     stationCoordinates: Coordinates | null,
     destinationPlaceCoordinates: Coordinates | null
   ): Promise<UnifiedArrivalGuide | null> {
+    // 目的地公式サイト・食べログ等が明記している出口を、統合生成本体より
+    // 先に専用検索で確認する(experiment/destination-fix-then-vote)。
+    // destinationHintが無い(駅そのものが目的地)場合は対象外。
+    const fixedExit = destinationHint
+      ? await searchDestinationStatedExit(
+          this.geminiApiKey,
+          destinationHint,
+          destinationPlaceCoordinates
+        )
+      : null;
+
     const result = await generateUnifiedArrivalGuide(
       this.geminiApiKey,
       originStationName,
@@ -237,7 +251,8 @@ export class AiStationAdapter implements StationProviderPort {
       lines,
       destinationHint,
       stationCoordinates,
-      destinationPlaceCoordinates
+      destinationPlaceCoordinates,
+      fixedExit
     );
     if (!result) return null;
 

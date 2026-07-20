@@ -180,7 +180,8 @@ export async function generateUnifiedArrivalGuide(
   destinationLines: string[],
   destinationHint: string | null,
   stationCoordinates: Coordinates | null,
-  destinationPlaceCoordinates: Coordinates | null
+  destinationPlaceCoordinates: Coordinates | null,
+  fixedExit: { name: string; confidenceLevel: ConfidenceLevel } | null = null
 ): Promise<UnifiedArrivalGuideResult | null> {
   const stationLabel = destinationOperator
     ? `${destinationStationName}駅(${destinationOperator}、${destinationLines.join("・")})${locationHint(stationCoordinates)}`
@@ -208,27 +209,25 @@ export async function generateUnifiedArrivalGuide(
     ? `\n\n【複数事業者駅の注意】\n${destinationStationName}駅は複数の鉄道会社が乗り入れる駅である可能性があります。今回${originStationName}駅から乗車したのは${originLine}です。直通運転・相互乗り入れが無い区間であれば、到着に使う事業者はこの${originLine}を運行する会社に絞り込めます。ただし直通運転区間では到着時点の運行会社が変わっている場合があるため、路線名だけで事業者を断定せず、到着ホームの案内表示や公式構内図で実際の運行会社を確認したうえで回答してください。回答する乗車位置・改札名・出口名は、その(到着時点で実際に案内に使われている)会社の名称にしてください。他社線専用の連絡改札や、その会社が使わない番号のみの出口案内(例:地下鉄や他社線の「出口5」等)を、確認せずそのまま採用しないでください。`
     : "";
 
-  // 目的地自身の公式サイト・予約ページ等が最寄り出口を明記しているケースが
-  // 多いため(実機検証で判明: 「駅の主要出口から徒歩距離で推測する」設計だと、
-  // 実際には目的地から遠い側の代表的な出口(例:利用者数の多いメジャーな出口)
-  // に系統的に誘導されてしまい、しかも複数回検索しても同じ誤りに収束する
-  // ため多数決サンプリングでも是正できない不具合を確認した。experiment/
-  // majority-vote-unified-guide参照)、駅全体の出口一覧から徒歩距離で推測
-  // させるのではなく、目的地自身が明言するアクセス情報を優先的に検索させる。
-  // destinationAccessPriorityNote(目的地公式サイト優先検索)だけでは実機検証
-  // (fix/destination-first-access-priority)で改善が見られなかった。原因は
-  // 「情報源の優先順位」ではなく、AI自身が「駅で最も有名・象徴的な出口
-  // (例: 渋谷駅のハチ公口、横浜駅のみなみ西口)」を、実際の位置関係を検証
-  // せず理由付けしてしまう傾向(有名性バイアス)にあると推定されるため、
-  // この傾向自体を名指しで禁止する指示を追加する。有名な出口はWeb上の
-  // 言及量が多く、search groundingの検索結果でも優先的にヒットしやすいため、
-  // 情報源を目的地優先に変えるだけでは是正されなかったと考えられる。
-  const antiLandmarkBiasNote = destinationHint
-    ? `\n\n【有名性バイアスの禁止】\n${destinationStationName}駅のように複数の有名な出口(例: 渋谷駅のハチ公口・宮益坂口、横浜駅のみなみ西口)を持つ駅では、それらの出口の知名度や利用者数の多さだけを理由に選ばないでください。「有名だから」「多くの人が使うから」という理由での選定は禁止します。必ず目的地の住所・座標と各出口の位置関係(駅構内図上でどちら方向に出るか)を照合し、目的地に実際に近い方角の出口を選んでください。`
-    : "";
-
-  const destinationAccessPriorityNote = destinationHint
-    ? `\n\n【出口の決め方(最優先)】\nまず「${destinationHint}」の公式サイト・予約ページ・グルメサイト等に「アクセス」「最寄り出口」として明記された出口名を検索してください。目的地自身が明言する出口名が見つかった場合は、それを最優先で採用してください(駅全体でよく使われる代表的な出口だからという理由だけで、目的地が明言していない出口を選ばないでください)。目的地自身の記載が見つからない場合のみ、次善策として徒歩距離が最短になる出口を駅構内図から判断してください。${antiLandmarkBiasNote}`
+  // 目的地公式サイト優先検索(destinationAccessPriorityNote)・有名性バイアス
+  // 禁止(antiLandmarkBiasNote)というプロンプト指示ベースの対策は、いずれも
+  // 実機検証(fix/destination-first-access-priority)で効果が確認できず撤回した。
+  // 「みなみ西口」「ハチ公口」のような有名な出口への収束自体は、実際に食べログ・
+  // ホットペッパーグルメ等の公開情報が案内している内容と一致していることが
+  // 別途の専用検索(diag-dest-access)で確認できたため、「最短距離」より
+  // 「広く案内されている迷いにくい出口」を優先する方針とし、有名性の排除は
+  // もう試みない。
+  //
+  // 代わりに、呼び出し元(route-search.ts)が別の専用検索で確認した「目的地が
+  // 明言する出口」をfixedExitとして渡せるようにし、渡された場合はこの関数
+  // 自身に出口を選ばせず、その出口を起点に改札を選ばせる設計に変更した。
+  // 改札名まで目的地の公開情報から機械的に固定しないのは、目的地のページが
+  // 「渋谷駅から徒歩3分」のように鉄道会社を意識せず書かれていることが多く、
+  // 今回の乗車路線(originLine)の運行会社と無関係な改札名(例: 東急利用者なのに
+  // 京王井の頭線側の改札)を拾ってしまうリスクがあるため。改札は事業者の
+  // 整合性を保てるこの関数(統合生成)側で、確定した出口を起点に選ばせる。
+  const fixedExitNote = fixedExit
+    ? `\n\n【出口は既に確定済み】\n目的地の公式情報の検索により、出口は既に「${fixedExit.name}」と判明しています。この出口名をそのまま採用してください(別の出口を提案しないでください)。あなたが行うべきなのは、この「${fixedExit.name}」に直接つながる、またはこの出口を利用する際に必ず通る改札名を、今回の乗車事業者(${originLine}を運行する会社)基準で選ぶことです。`
     : "";
 
   const searchPrompt = `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStationName}駅」から${originLine}(${originDirection})に乗車し、「${destinationLabel}」へ向かうルートを知りたいと考えています。
@@ -236,16 +235,16 @@ export async function generateUnifiedArrivalGuide(
 
 【回答の考え方(重要)】
 以下の4項目は目的地から逆算した依存関係にあります。必ずこの順序で考え、後の項目は前の項目の結果を踏まえて決めてください(改札を先に単独で決めて、それに合わせて出口を選ぶという逆の順序にはしないでください)。
-出口(目的地に最も近い/最も直接的にたどり着けるもの) → 改札(その出口に直接つながる、またはその出口を利用する際に必ず通るもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)${destinationAccessPriorityNote}
+出口(目的地に最も近い/最も直接的にたどり着けるもの) → 改札(その出口に直接つながる、またはその出口を利用する際に必ず通るもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)${fixedExitNote}
 
 【回答すべき情報】
-1. ${destinationHint ? `${destinationLabel}に最も直接的にたどり着ける出口名(上記の出口の決め方に従ってください)` : `${stationLabel}の主要な出口名`}
+1. ${fixedExit ? `出口名は「${fixedExit.name}」で確定済みです(そのまま回答してください)` : destinationHint ? `${destinationLabel}に最も直接的にたどり着ける出口名(徒歩距離が最短になるものを優先してください)` : `${stationLabel}の主要な出口名`}
 2. 1の出口に直接つながる、またはその出口を利用する際に必ず通る改札名(1で決めた出口を起点に選んでください)
 3. 2の改札を出て1の出口を通り、目的地までの徒歩ルート(目印を含む、簡潔に)
 4. ${originStationName}駅で${originLine}(${originDirection})に乗車する場合、2の改札に到着ホーム上の階段・エスカレーターで最短で向かえる号車・ドア位置(列車の進行方向・編成両数と照合して決めてください。到着番線や編成によって結果が変わる場合はその条件を含めてください)${operatorDisambiguationNote}
 
 【制約】
-- 出口の決定は上記【出口の決め方】を最優先とし、それ以外(改札・徒歩ルート・乗車位置)は鉄道会社公式の駅構内図・公式サイトを最優先の情報源としてください。
+- 鉄道会社公式の駅構内図・公式サイトを最優先の情報源としてください。
 - 同じ駅名が他にも存在する場合は、必ず上記の位置に最も近い駅を対象にしてください。
 - 確証がない場合は「確認できません」と明示し、推測による回答は行わない。実在しない乗車位置・改札名・出口名を創作しないでください。`;
 
@@ -287,8 +286,12 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     isNonEmptyText(result.gateName) && isValidConfidenceLevel(result.gateConfidence)
       ? { name: result.gateName, confidenceLevel: result.gateConfidence }
       : null;
-  const exit =
-    isNonEmptyText(result.exitName) && isValidConfidenceLevel(result.exitConfidence)
+  // fixedExitが渡された場合は、抽出結果のexitNameより優先してそのまま採用する
+  // (モデルが「出口名は確定済み」という指示に従わず別の出口を返した場合の
+  // 揺らぎを吸収するため。改札はfixedExit起点で選ばせた抽出結果をそのまま使う)。
+  const exit = fixedExit
+    ? fixedExit
+    : isNonEmptyText(result.exitName) && isValidConfidenceLevel(result.exitConfidence)
       ? { name: result.exitName, confidenceLevel: result.exitConfidence }
       : null;
   const walkingSteps = Array.isArray(result.walkingSteps)
@@ -303,4 +306,62 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     : [];
 
   return { boardingPosition, gate, exit, walkingSteps };
+}
+
+const DESTINATION_STATED_EXIT_SCHEMA = {
+  type: "object",
+  properties: {
+    exitName: { type: "string" },
+    confidence: { type: "string", enum: VALID_CONFIDENCE_LEVELS },
+  },
+};
+
+/**
+ * 目的地自身の公式サイト・食べログ・ホットペッパーグルメ等が明記している
+ * 具体的な出口名だけを、焦点を絞った専用検索で確認する
+ * (experiment/destination-fix-then-vote)。改札・徒歩ルート・乗車位置を
+ * 同時に聞く統合生成(generateUnifiedArrivalGuide)に埋め込むと、目的地優先の
+ * 指示が他の指示に埋もれて機能しないことを実機検証で確認したため、単独の
+ * 検索呼び出しに分離した。
+ *
+ * ここで確認できた出口名は、統合生成のfixedExit引数に渡して出口選定を
+ * 上書きする用途を想定している。改札名は目的地のページが乗車事業者を
+ * 意識せず書かれていることが多く事業者不一致のリスクがあるため、ここでは
+ * 出口のみを対象にする(改札は統合生成側で、確定した出口を起点に乗車事業者
+ * 基準で選ばせる)。
+ *
+ * 検索・応答が失敗した場合や、目的地自身の明記が見つからなかった場合は
+ * nullを返す(呼び出し元は統合生成自身の出口選定にフォールバックする)。
+ */
+export async function searchDestinationStatedExit(
+  apiKey: string,
+  destinationHint: string,
+  destinationPlaceCoordinates: Coordinates | null
+): Promise<{ name: string; confidenceLevel: ConfidenceLevel } | null> {
+  const searchPrompt = `「${destinationHint}」${locationHint(destinationPlaceCoordinates)}の公式サイト・食べログ・ぐるなび・一休.com等の予約/口コミサイトを検索してください。
+それらのページに「〇〇駅△△出口から徒歩□分」のように、目的地自身が明記している具体的な出口名があれば教えてください。
+一般的な「最寄り駅は〇〇駅です」程度の記載しかない場合、または出口名が明記されていない場合は、無理に推測せず「記載なし」と回答してください。`;
+
+  const extractionInstruction = `以下の文章から、目的地の公式サイト等に明記されていた具体的な出口名をJSON形式で抽出してください。
+明記されていなかった場合はexitNameのプロパティ自体を省略してください。
+自信の度合いをhigh/medium/lowで自己申告してください。`;
+
+  const result = await searchAndGenerateStructuredContent<{
+    exitName?: string;
+    confidence?: ConfidenceLevel;
+  }>(
+    apiKey,
+    searchPrompt,
+    extractionInstruction,
+    DESTINATION_STATED_EXIT_SCHEMA,
+    "destination-stated-exit-search",
+    MODEL,
+    EXTRACTION_MODEL
+  );
+
+  if (!result || !isNonEmptyText(result.exitName) || !isValidConfidenceLevel(result.confidence)) {
+    return null;
+  }
+
+  return { name: result.exitName, confidenceLevel: result.confidence };
 }
