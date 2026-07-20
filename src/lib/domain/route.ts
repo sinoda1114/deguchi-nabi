@@ -114,8 +114,8 @@ export interface ArrivalGuide {
 
 /**
  * 改札・出口・改札後の徒歩ルートを1回の検索セッションで統合生成した結果
- * (unified-arrival-guide-generation.ts参照)。fixtureに改札・出口が無い駅の
- * easy/fastestモード向け(council議論2026-07-20)。gate/exitは座標を持たない
+ * (unified-arrival-guide-generation.ts参照)。accessibleモード以外向け
+ * (council議論2026-07-20)。gate/exitは座標を持たない
  * ため、route-search.tsの座標ベース選定(resolveExitRecommendation)を経由せず
  * 直接採用する。
  */

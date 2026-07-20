@@ -91,7 +91,7 @@ interface OriginFieldProps {
   onSetLocalDefaultStation: (station: Station) => void;
 }
 
-// 周辺駅候補は距離順(近い順)で返る(CompositeStationAdapter.nearestStations参照)。
+// 周辺駅候補は距離順(近い順)で返る(AiStationAdapter.nearestStations参照)。
 // ヒックの法則(選択肢が多いほど意思決定が遅くなる)を踏まえ、最有力の先頭2件だけを自動露出し、
 // 残りは「もっと見る」で展開する progressive disclosure にする。
 const NEARBY_PRIMARY_COUNT = 2;

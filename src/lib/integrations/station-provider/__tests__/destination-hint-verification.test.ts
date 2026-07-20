@@ -5,8 +5,8 @@ import { scoreFacilities } from "@/lib/eval/facilities-score";
 /**
  * destinationHint機能の検証ゲート(/plans/sunny-munching-lovelace.md参照)。
  *
- * 本番同一構成(generateStationFacilitiesを直接呼ぶ。CompositeStationAdapterの
- * JSONファイルキャッシュ・レートリミッタ・fixtureフォールバックは経由しない)で
+ * 本番同一構成(generateStationFacilitiesを直接呼ぶ。AiStationAdapterの
+ * JSONファイルキャッシュ・レートリミッタは経由しない)で
  * 実際のGemini APIに対して、目的地ヒント有り/無しの生成結果を比較する。
  * DESTINATION_HINT_ENABLEDフラグの値には依存しない(ここでは常に
  * generateStationFacilitiesへ直接destinationHintを渡す)。

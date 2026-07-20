@@ -79,7 +79,7 @@ export interface Destination {
   nearestStationCandidates: string[];
   /**
    * 公式サイトURL(Google Places由来のみ)。目的地特定の確からしさを示す付帯情報。
-   * fixture等、公式サイトの有無を確認していないadapterはフィールド自体を省略する
+   * 公式サイトの有無を確認していないadapterはフィールド自体を省略する
    * (「未確認」と「確認したが公式サイト無し」を区別するため、`undefined` と `null` を使い分ける)。
    */
   websiteUri?: string | null;
@@ -88,7 +88,7 @@ export interface Destination {
    * 誤案内になるため、検索候補生成の時点で除外され、ここには残らない。
    * `closed_temporarily`(一時休業)は閉世界仮定を避けるため除外せず、確認できた
    * 事実として保持する(docs/04_EXIT_SELECTION_DESIGN.md と同じ設計思想)。
-   * fixture等、営業状態を確認していないadapterはフィールド自体を省略する。
+   * 営業状態を確認していないadapterはフィールド自体を省略する。
    */
   businessStatus?: "operational" | "closed_temporarily";
 }

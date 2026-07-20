@@ -39,9 +39,14 @@ function facilityStep(type: GuideStepType, facility: StationFacility, instructio
  *   は未認証・レート制限なしで呼べるため、経路生成AI(検索55秒+抽出15秒)と
  *   本機能のAI生成(同じく最大70秒)が同一リクエストで両方走ると、1リクエスト
  *   あたり2系統の課金対象API呼び出しを確実に誘発でき、コスト濫用・DoSの
- *   実害を広げてしまう(セキュリティレビュー指摘に基づく対応)。到着駅の
- *   gate/exitがfixture収録済みでも、出発地〜到着駅間の経路自体がfixtureに
- *   無い区間(=AI生成)なら、その1リクエストでは改札後導線のAI生成を諦める。
+ *   実害を広げてしまう(セキュリティレビュー指摘に基づく対応)。
+ *
+ *   注記(2026-07-20 fixture廃止時点): AiRouteAdapterは全経路でisAiGenerated:
+ *   trueを設定するため、この関数は常にfalseを返す(=この旧方式のAI補完は
+ *   実質使われなくなった)。改札後導線の補完は現在、経路生成の有無に依らず
+ *   統合生成(unified-arrival-guide-generation.ts、buildArrivalGuideの
+ *   unifiedWalkingStepsパス)が担う。この関数・getArrivalGuideNarrativeSteps
+ *   自体の削除は本タスク(fixture廃止)のスコープ外としたため未対応。
  */
 function canGenerateNarrative(
   result: Pick<FacilitiesBuildSuccess, "gate" | "exit">,
@@ -70,7 +75,7 @@ function canGenerateNarrative(
  * canGenerateNarrative()の条件を満たす場合に限り改札後方向・自由通路・
  * 地下街等の中間ステップをAI生成で補う。
  *
- * 最終的な steps は isGuideStepVisible でフィルタしてから返す。fixture由来
+ * 最終的な steps は isGuideStepVisible でフィルタしてから返す。facility種別
  * (ticket_gate/street_exit)・AI生成由来のどちらであっても、表示可否の判定は
  * 常にこの1箇所を経由させ、判定漏れを防ぐ。
  */

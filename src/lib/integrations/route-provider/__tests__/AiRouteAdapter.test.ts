@@ -7,7 +7,7 @@ vi.mock("../ai-route-generation", () => ({
   generateRailRoute: (...args: unknown[]) => generateRailRoute(...args),
 }));
 
-const { CompositeRouteAdapter } = await import("../CompositeRouteAdapter");
+const { AiRouteAdapter } = await import("../AiRouteAdapter");
 
 const ORIGIN_STATION: Station = {
   stationId: "st_unknown_origin",
@@ -59,7 +59,7 @@ function fakeStationProvider(stations: Record<string, Station | null>) {
   };
 }
 
-describe("CompositeRouteAdapter.findRailRoutes", () => {
+describe("AiRouteAdapter.findRailRoutes", () => {
   beforeEach(() => {
     generateRailRoute.mockReset();
   });
@@ -68,23 +68,12 @@ describe("CompositeRouteAdapter.findRailRoutes", () => {
     vi.clearAllMocks();
   });
 
-  test("fixtureに区間があればそれを返し、AI生成は行わない", async () => {
-    const stationProvider = fakeStationProvider({});
-    const adapter = new CompositeRouteAdapter("test-key", stationProvider);
-
-    const result = await adapter.findRailRoutes("st_nishiya", "st_shibuya");
-
-    expect(result).toHaveLength(1);
-    expect(result[0].originStationId).toBe("st_nishiya");
-    expect(generateRailRoute).not.toHaveBeenCalled();
-  });
-
   test("両駅が解決できれば生成して返す", async () => {
     const stationProvider = fakeStationProvider({
       [ORIGIN_STATION.stationId]: ORIGIN_STATION,
       [DESTINATION_STATION.stationId]: DESTINATION_STATION,
     });
-    const adapter = new CompositeRouteAdapter("test-key", stationProvider);
+    const adapter = new AiRouteAdapter("test-key", stationProvider);
     generateRailRoute.mockResolvedValue(GENERATED_ROUTE);
 
     const result = await adapter.findRailRoutes(
@@ -105,7 +94,7 @@ describe("CompositeRouteAdapter.findRailRoutes", () => {
       [ORIGIN_STATION.stationId]: ORIGIN_STATION,
       [DESTINATION_STATION.stationId]: DESTINATION_STATION,
     });
-    const adapter = new CompositeRouteAdapter("test-key", stationProvider);
+    const adapter = new AiRouteAdapter("test-key", stationProvider);
     generateRailRoute.mockResolvedValue(GENERATED_ROUTE);
 
     await adapter.findRailRoutes(ORIGIN_STATION.stationId, DESTINATION_STATION.stationId);
@@ -119,7 +108,7 @@ describe("CompositeRouteAdapter.findRailRoutes", () => {
       [ORIGIN_STATION.stationId]: ORIGIN_STATION,
       // destination は未解決(null)
     });
-    const adapter = new CompositeRouteAdapter("test-key", stationProvider);
+    const adapter = new AiRouteAdapter("test-key", stationProvider);
 
     const result = await adapter.findRailRoutes(
       ORIGIN_STATION.stationId,
@@ -135,7 +124,7 @@ describe("CompositeRouteAdapter.findRailRoutes", () => {
       [ORIGIN_STATION.stationId]: ORIGIN_STATION,
       [DESTINATION_STATION.stationId]: DESTINATION_STATION,
     });
-    const adapter = new CompositeRouteAdapter("test-key", stationProvider);
+    const adapter = new AiRouteAdapter("test-key", stationProvider);
     generateRailRoute.mockResolvedValue(null);
 
     const result = await adapter.findRailRoutes(

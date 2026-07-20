@@ -5,26 +5,18 @@ import { resolveAndSearchRoute } from "@/lib/services/route-search-orchestrator"
 import type { RouteMode } from "@/lib/domain/route";
 import { checkRoutesSearchRateLimit, extractClientIp } from "@/lib/rate-limit/ip-rate-limit";
 
-// fixture未収録駅間はGemini Search Groundingで検索(検索55秒+抽出15秒を直列実行)するため、
-// プラットフォームのデフォルト実行時間上限より長くかかりうる。明示的に確保する。
+// 全駅間の経路・改札・出口・号車情報をGemini Search Groundingで検索
+// (検索55秒+抽出15秒を直列実行、最大70秒)するため、プラットフォームの
+// デフォルト実行時間上限より長くかかりうる。明示的に確保する。
 //
-// 改札後導線(arrivalGuide)の旧方式AI補完(getArrivalGuideNarrativeSteps)も同じ
-// 検索+抽出パターン(最大70秒)を使うが、arrival-guide.tsのcanGenerateNarrativeが
-// 「経路自体がAI生成の場合は生成しない」よう排他制御しているため、この旧方式と
-// 経路生成AIが1リクエストで同時に走ることはない(未認証・レート制限の無い
-// このエンドポイントで、1リクエストあたりの課金対象API呼び出し数が積み重なる
-// コスト濫用/DoSリスクを避けるための設計。セキュリティレビュー指摘に基づく)。
-//
-// ただし到着駅がfixture未収録の場合、経路自体のAI生成(resolveRouteCandidate、
-// 最大70秒)と、到着駅の改札・出口AI生成(buildTransferAndExitSegments内の
-// getFacilitiesまたは統合生成unified-arrival-guide-generation、最大70秒)は
-// 上記の排他制御の対象外で直列実行されるため、合算で最大140秒かかりうる。
-// 統合生成は2026-07-20(fix/unified-guide-allow-ai-route)以降、経路自体が
-// AI生成の場合でも意図的に呼ぶ(fixture外ルートで改札・出口を確認可能にする
-// ため。IPレートリミットで総リクエスト数は上限があるためコスト増は許容する
-// 判断)。90秒では不足し実機でFUNCTION_INVOCATION_TIMEOUTを確認した
-// (Issue #68)。当面の緩和策として安全マージンを見て180秒に引き上げる。
-// 根本対応(経路生成とfacilities生成の並列化)はIssue #68で追跡する。
+// resolveRouteCandidate(経路自体のAI生成、最大70秒)の後、buildTrainSegments
+// (号車情報)とbuildTransferAndExitSegments(改札・出口・統合生成)は互いの
+// 結果に依存しないため searchRouteGuide 内で Promise.all により並列実行する
+// (2026-07-20 fixture廃止Phase 3、根本対応。旧実装は直列実行で経路生成+
+// 号車+改札出口の最大3系統・最大210秒がかかりうる状態で、90秒設定では実機で
+// FUNCTION_INVOCATION_TIMEOUTを確認していた。Issue #68)。並列化後は
+// 経路生成(最大70秒)+ max(号車, 改札出口)(最大70秒)で合算最大140秒に収まる。
+// 安全マージンを見て180秒のまま維持する。
 export const maxDuration = 180;
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
