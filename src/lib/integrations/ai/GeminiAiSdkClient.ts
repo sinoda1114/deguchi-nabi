@@ -29,6 +29,11 @@ const REQUEST_TIMEOUT_MS = 15000;
 // Google Search Grounding は実際にWeb検索を行うため、単発の構造化生成より大幅に時間がかかる
 // (GeminiClient.tsのSEARCH_REQUEST_TIMEOUT_MSと同じ根拠。西谷駅→国際センター駅(名駅)の
 // ような遠距離・同名駅の曖昧性解消が絡む検索で実測35秒超のため55秒を確保する)。
+// searchAndGenerateStructuredContentのデフォルト値として使う。呼び出し元の
+// プロンプトが特に長い/複雑な推論を要求する場合(unified-arrival-guide-
+// generation.ts等)は、searchTimeoutMs引数で個別に上書きできる
+// (2026-07-20 fix/unified-guide-exit-first-derivation: 出口→改札の依存関係
+// 明示によりプロンプトが長くなり、55秒では実機でTimeoutErrorを確認したため)。
 const SEARCH_REQUEST_TIMEOUT_MS = 55000;
 
 interface GoogleGroundingMetadata {
@@ -137,7 +142,8 @@ export async function searchAndGenerateStructuredContent<T>(
   extractionInstruction: string,
   responseSchema: object,
   callerId: string = "gemini-ai-sdk.searchAndGenerateStructuredContent",
-  searchModel: string = MODEL_ID
+  searchModel: string = MODEL_ID,
+  searchTimeoutMs: number = SEARCH_REQUEST_TIMEOUT_MS
 ): Promise<T | null> {
   diagLogAiModuleIdentity();
   try {
@@ -147,7 +153,7 @@ export async function searchAndGenerateStructuredContent<T>(
       model: google(searchModel),
       tools: { google_search: google.tools.googleSearch({}) },
       prompt: searchPrompt,
-      abortSignal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
+      abortSignal: AbortSignal.timeout(searchTimeoutMs),
       telemetry: {
         isEnabled: true,
         functionId: `${callerId}.search`,

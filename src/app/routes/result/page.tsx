@@ -9,18 +9,20 @@ import { RouteResultBodySkeleton } from "@/components/result/RouteResultBodySkel
 import { checkRoutesSearchRateLimit, extractClientIp } from "@/lib/rate-limit/ip-rate-limit";
 
 // buildTrainSegments/buildTransferAndExitSegments(RouteResultBody内)は
-// /api/routes/search と同じGemini Search Groundingパターン(検索55秒+抽出15秒、
-// 最大70秒)を使いうる。Suspense配下でストリーミングしていても、Functionは
-// レンダリング完了まで生き続けるため、プラットフォームのデフォルト実行時間
-// 上限では打ち切られ、ページが「途中で固まる」ように見える。
+// /api/routes/search と同じGemini Search Groundingパターンを使いうる。
+// Suspense配下でストリーミングしていても、Functionはレンダリング完了まで
+// 生き続けるため、プラットフォームのデフォルト実行時間上限では打ち切られ、
+// ページが「途中で固まる」ように見える。
 //
-// 通常ケース(easy/fastestモードかつ統合生成成功)は経路自体のAI生成
-// (最大70秒)と到着駅の統合生成(改札・出口・乗車位置・徒歩ルート、最大70秒)
-// が直列実行され合算で最大140秒かかりうる。統合生成を試みたが出口を
-// 確認できなかった場合のみ、乗車位置の独立生成が追加で直列に走り最大210秒
-// かかりうる。/api/routes/search/route.ts と同じ理由・同じ上限に揃える
-// (Issue #68)。
-export const maxDuration = 240;
+// 通常ケース(easy/fastestモードかつ統合生成成功)は経路自体のAI生成(最大70秒)
+// と到着駅の統合生成(改札・出口・乗車位置・徒歩ルート、検索90秒+抽出15秒=
+// 最大105秒。2026-07-20 fix/unified-guide-exit-first-derivationで依存関係を
+// 明示する指示追加によりプロンプトが長くなり、標準の55秒ではTimeoutErrorを
+// 確認したため延長)が直列実行され合算で最大175秒かかりうる。統合生成を
+// 試みたが出口を確認できなかった場合のみ、乗車位置の独立生成(最大70秒)が
+// 追加で直列に走り最大245秒かかりうる。/api/routes/search/route.ts と
+// 同じ理由・同じ上限に揃える(Issue #68)。
+export const maxDuration = 290;
 
 const VALID_MODES: RouteMode[] = ["fastest", "easy", "accessible"];
 
