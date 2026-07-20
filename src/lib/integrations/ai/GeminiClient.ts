@@ -1,10 +1,12 @@
-const GENERATE_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
 const REQUEST_TIMEOUT_MS = 15000;
 // Google Search Grounding は実際にWeb検索を行うため、単発の構造化生成より大幅に時間がかかる
 // (西谷駅→国際センター駅(名駅)のような遠距離・同名駅の曖昧性解消が絡む検索で実測35秒超)。
 // 短いタイムアウトのままだと毎回タイムアウトで失敗し、経路情報が確認できません扱いになってしまう。
 const SEARCH_REQUEST_TIMEOUT_MS = 55000;
+
+function generateUrl(model: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+}
 
 interface GeminiCandidate {
   content?: { parts?: { text?: string }[] };
@@ -17,11 +19,12 @@ interface GeminiResponse {
 
 async function callGemini(
   apiKey: string,
+  model: string,
   body: object,
   timeoutMs: number = REQUEST_TIMEOUT_MS
 ): Promise<GeminiCandidate | null> {
   try {
-    const res = await fetch(GENERATE_URL, {
+    const res = await fetch(generateUrl(model), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -53,9 +56,10 @@ async function callGemini(
 export async function generateStructuredContent<T>(
   apiKey: string,
   prompt: string,
-  responseSchema: object
+  responseSchema: object,
+  model: string
 ): Promise<T | null> {
-  const candidate = await callGemini(apiKey, {
+  const candidate = await callGemini(apiKey, model, {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: "application/json",
@@ -87,10 +91,12 @@ export async function searchAndGenerateStructuredContent<T>(
   apiKey: string,
   searchPrompt: string,
   extractionInstruction: string,
-  responseSchema: object
+  responseSchema: object,
+  model: string
 ): Promise<T | null> {
   const searchCandidate = await callGemini(
     apiKey,
+    model,
     {
       contents: [{ parts: [{ text: searchPrompt }] }],
       tools: [{ google_search: {} }],
@@ -102,7 +108,7 @@ export async function searchAndGenerateStructuredContent<T>(
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
   if (!searchText || !searchExecuted) return null;
 
-  return extractStructuredContent<T>(apiKey, extractionInstruction, searchText, responseSchema);
+  return extractStructuredContent<T>(apiKey, model, extractionInstruction, searchText, responseSchema);
 }
 
 export interface InlineImage {
@@ -126,10 +132,12 @@ export async function searchAndGenerateStructuredContentWithImage<T>(
   searchPrompt: string,
   extractionInstruction: string,
   responseSchema: object,
-  image: InlineImage
+  image: InlineImage,
+  model: string
 ): Promise<T | null> {
   const searchCandidate = await callGemini(
     apiKey,
+    model,
     {
       contents: [
         {
@@ -148,7 +156,7 @@ export async function searchAndGenerateStructuredContentWithImage<T>(
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
   if (!searchText || !searchExecuted) return null;
 
-  return extractStructuredContent<T>(apiKey, extractionInstruction, searchText, responseSchema);
+  return extractStructuredContent<T>(apiKey, model, extractionInstruction, searchText, responseSchema);
 }
 
 /**
@@ -158,11 +166,12 @@ export async function searchAndGenerateStructuredContentWithImage<T>(
  */
 async function extractStructuredContent<T>(
   apiKey: string,
+  model: string,
   extractionInstruction: string,
   searchText: string,
   responseSchema: object
 ): Promise<T | null> {
-  const extractionCandidate = await callGemini(apiKey, {
+  const extractionCandidate = await callGemini(apiKey, model, {
     contents: [{ parts: [{ text: `${extractionInstruction}\n\n${searchText}` }] }],
     generationConfig: {
       responseMimeType: "application/json",

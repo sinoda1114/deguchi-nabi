@@ -112,7 +112,8 @@ ${destinationStation.stationName}の到着番線が検索で確認できれば�
     apiKey,
     searchPrompt,
     extractionInstruction,
-    ROUTE_SCHEMA
+    ROUTE_SCHEMA,
+    "gemini-3.5-flash"
   );
 
   if (!isValidGeneratedRoute(result)) return null;

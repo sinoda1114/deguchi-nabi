@@ -74,6 +74,11 @@ import { locationHint } from "./ai-generation";
  */
 
 const MODEL = "gemini-3.5-flash";
+// 抽出フェーズ(検索で得たテキストを構造化データに変換するのみ、検索能力は
+// 要求しない)はsearch phaseより軽量なモデルで足りるかをA/B評価する対象
+// (chore/pin-models-pattern-a: 検索を伴わない純粋な構造化抽出はコストの
+// 低いモデルでも精度が落ちないという仮説の検証)。
+const EXTRACTION_MODEL = "gemini-3.1-flash-lite";
 // GeminiAiSdkClientのデフォルト検索タイムアウト(55秒)を上書きする。出口→改札→
 // 徒歩→乗車位置の依存関係を明示する指示を追加した結果プロンプトが長くなり、
 // 実機検証(Preview環境)で55秒ではTimeoutErrorが発生することを確認したため
@@ -234,6 +239,7 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     UNIFIED_ARRIVAL_GUIDE_SCHEMA,
     "unified-arrival-guide-generation",
     MODEL,
+    EXTRACTION_MODEL,
     SEARCH_TIMEOUT_MS
   );
 

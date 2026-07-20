@@ -33,6 +33,26 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(args[5]).toBe("gemini-3.5-flash");
   });
 
+  test("gemini-3.1-flash-liteをextractionModelとして渡す(chore/pin-models-pattern-a: 検索能力を要求しない構造化抽出フェーズはコストの低いモデルで足りるかのA/B評価対象)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    const args = searchAndGenerateStructuredContent.mock.calls[0];
+    expect(args[6]).toBe("gemini-3.1-flash-lite");
+  });
+
   test("標準の55秒より長い検索タイムアウト(90秒)をsearchTimeoutMsとして渡す(2026-07-20 fix/unified-guide-exit-first-derivation: 出口→改札の依存関係を明示する指示追加でプロンプトが長くなり、実機検証で55秒ではTimeoutErrorが発生したため)", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
 
@@ -50,7 +70,7 @@ describe("generateUnifiedArrivalGuide", () => {
     );
 
     const args = searchAndGenerateStructuredContent.mock.calls[0];
-    expect(args[6]).toBe(90_000);
+    expect(args[7]).toBe(90_000);
   });
 
   test("検索プロンプトに出発駅名・乗車路線・方面・到着駅名・鉄道会社を含める", async () => {

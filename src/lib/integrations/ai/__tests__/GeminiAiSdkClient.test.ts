@@ -46,7 +46,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", { type: "object" });
+      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
 
       expect(result).toEqual({ ok: true });
       expect(createGoogleMock).toHaveBeenCalledWith({ apiKey: "key" });
@@ -61,7 +61,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: {} });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      await generateStructuredContent("key", "prompt", { type: "object" });
+      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
 
       expect(timeoutSpy).toHaveBeenCalledTimes(1);
       expect(timeoutSpy.mock.calls[0][0]).toBeLessThanOrEqual(15000);
@@ -71,7 +71,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("timeout"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", { type: "object" });
+      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
 
       expect(result).toBeNull();
     });
@@ -80,7 +80,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("NoObjectGeneratedError"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", { type: "object" });
+      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
 
       expect(result).toBeNull();
     });
@@ -89,7 +89,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", {});
+      const result = await generateStructuredContent("key", "prompt", {}, "gemini-3.5-flash");
 
       expect(result).toBeNull();
       expect(generateObjectMock).not.toHaveBeenCalled();
@@ -99,7 +99,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", [] as unknown as object);
+      const result = await generateStructuredContent("key", "prompt", [] as unknown as object, "gemini-3.5-flash");
 
       expect(result).toBeNull();
       expect(generateObjectMock).not.toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      await generateStructuredContent("key", "prompt", { type: "object" });
+      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
 
       expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
@@ -118,13 +118,18 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("timeout"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      await generateStructuredContent("key", "prompt", { type: "object" });
+      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
 
       expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
   });
 
   describe("searchAndGenerateStructuredContent", () => {
+    // callerId/searchModel/extractionModelは全てモデルピン留め(chore/pin-models-
+    // pattern-a)で必須引数化した。呼び出し元がバージョンを明示しない限り
+    // コンパイルが通らないようにするための変更のため、テストも全呼び出しで
+    // 明示的に渡す。
+
     test("正常系: 検索実行(groundingMetadata有り)→抽出の2段呼び出しで結果を返す", async () => {
       generateTextMock.mockResolvedValue({
         text: "検索結果テキスト",
@@ -139,7 +144,10 @@ describe("GeminiAiSdkClient", () => {
         "key",
         "search prompt",
         "extract",
-        { type: "object" }
+        { type: "object" },
+        "test-caller",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
       );
 
       expect(result).toEqual({ steps: [] });
@@ -163,9 +171,15 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: {} });
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
-        type: "object",
-      });
+      await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        { type: "object" },
+        "test-caller",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
+      );
 
       expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
     });
@@ -177,7 +191,15 @@ describe("GeminiAiSdkClient", () => {
       });
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await searchAndGenerateStructuredContent("key", "search prompt", "extract", {});
+      const result = await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        {},
+        "test-caller",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
+      );
 
       expect(result).toBeNull();
       expect(generateObjectMock).not.toHaveBeenCalled();
@@ -187,7 +209,15 @@ describe("GeminiAiSdkClient", () => {
       generateTextMock.mockRejectedValue(new Error("timeout"));
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await searchAndGenerateStructuredContent("key", "search prompt", "extract", {});
+      const result = await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        {},
+        "test-caller",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
+      );
 
       expect(result).toBeNull();
     });
@@ -202,9 +232,15 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { steps: [] } });
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
-        type: "object",
-      });
+      await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        { type: "object" },
+        "test-caller",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
+      );
 
       expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
@@ -213,12 +249,20 @@ describe("GeminiAiSdkClient", () => {
       generateTextMock.mockRejectedValue(new Error("timeout"));
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {});
+      await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        {},
+        "test-caller",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
+      );
 
       expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
 
-    test("searchModelを指定すると検索フェーズにそのモデルが使われ、抽出フェーズはデフォルトモデルのまま", async () => {
+    test("searchModel/extractionModelにそれぞれ指定したモデルが使われる", async () => {
       generateTextMock.mockResolvedValue({
         text: "検索結果テキスト",
         providerMetadata: {
@@ -234,28 +278,12 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         { type: "object" },
         "unified-arrival-guide",
-        "gemini-3.5-flash"
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
       );
 
       expect(generateTextMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-3.5-flash" });
-      expect(generateObjectMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-flash-latest" });
-    });
-
-    test("searchModelを省略すると検索フェーズもデフォルトモデル(gemini-flash-latest)を使う", async () => {
-      generateTextMock.mockResolvedValue({
-        text: "検索結果テキスト",
-        providerMetadata: {
-          google: { groundingMetadata: { webSearchQueries: ["q1"] } },
-        },
-      });
-      generateObjectMock.mockResolvedValue({ object: {} });
-
-      const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
-        type: "object",
-      });
-
-      expect(generateTextMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-flash-latest" });
+      expect(generateObjectMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-3.1-flash-lite" });
     });
 
     test("searchTimeoutMsを指定すると検索フェーズのタイムアウトが上書きされる(2026-07-20 fix/unified-guide-exit-first-derivation: 長いプロンプトを持つ呼び出し元が個別に検索タイムアウトを延長できるようにするため)", async () => {
@@ -276,6 +304,7 @@ describe("GeminiAiSdkClient", () => {
         { type: "object" },
         "unified-arrival-guide",
         "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
         90_000
       );
 
@@ -293,9 +322,15 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: {} });
 
       const { searchAndGenerateStructuredContent } = await import("../GeminiAiSdkClient");
-      await searchAndGenerateStructuredContent("key", "search prompt", "extract", {
-        type: "object",
-      });
+      await searchAndGenerateStructuredContent(
+        "key",
+        "search prompt",
+        "extract",
+        { type: "object" },
+        "test-caller",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite"
+      );
 
       expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
     });
