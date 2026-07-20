@@ -171,6 +171,49 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(searchPrompt).toContain("139.6220");
   });
 
+  test("destinationHintがある場合、駅全体の出口一覧からの徒歩距離推測より、目的地自身が公式サイト等で明言する出口を優先検索させる指示を含める(2026-07-20 fix/destination-first-access-priority: 実機検証で「駅の主要出口から徒歩距離で推測」する設計だと、目的地から実際には遠い代表的な出口に系統的に誘導され、複数回検索しても同じ誤りに収束する不具合を確認したため。experiment/majority-vote-unified-guide参照)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4662, lng: 139.6227 },
+      { lat: 35.4657, lng: 139.622 }
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("公式サイト・予約ページ・グルメサイト等に「アクセス」「最寄り出口」として明記された出口名を検索してください");
+    expect(searchPrompt).toContain("目的地自身が明言する出口名が見つかった場合は、それを最優先で採用してください");
+    // 出口の決め方の優先順位が明記されている(改札・徒歩ルート・乗車位置は駅公式情報が優先のまま)。
+    expect(searchPrompt).toContain("出口の決定は上記【出口の決め方】を最優先とし");
+  });
+
+  test("destinationHintが無い場合(駅そのものが目的地)は目的地優先検索の指示を含めない", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).not.toContain("公式サイト・予約ページ・グルメサイト等に「アクセス」「最寄り出口」として明記された出口名を検索してください");
+  });
+
   test("boardingPosition/gate/exit/walkingStepsを正しく変換する", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({
       boardingCarNumber: 6,
