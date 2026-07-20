@@ -110,11 +110,14 @@ export async function checkIpRateLimit(
  * バーストで即座に予算が尽きるわけではない)と判断し、sliding window等の
  * 複雑な実装は見送る。
  */
+// 一時的に上限を緩和(2026-07-21、experiment/destination-fix-then-vote検証用)。
+// このブランチは本番マージ対象外の検証専用ブランチのため一時変更してよいが、
+// 本番反映するブランチへは絶対に持ち込まないこと(元の10/60・60/86400に戻す)。
 export async function checkRoutesSearchRateLimit(ip: string): Promise<RateLimitResult> {
-  const perMinute = await checkIpRateLimit(ip, "routes-search", { limit: 10, windowSeconds: 60 });
+  const perMinute = await checkIpRateLimit(ip, "routes-search", { limit: 100, windowSeconds: 60 });
   if (!perMinute.allowed) return perMinute;
 
-  return checkIpRateLimit(ip, "routes-search-daily", { limit: 60, windowSeconds: 86400 });
+  return checkIpRateLimit(ip, "routes-search-daily", { limit: 1000, windowSeconds: 86400 });
 }
 
 // IPv6の最長表記(45文字程度)に十分な余裕を持たせた上限。ヘッダは外部から
