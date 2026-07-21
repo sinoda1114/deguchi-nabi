@@ -71,7 +71,7 @@ describe("callGemini のタイムアウト設定", () => {
     // 実測(西谷→国際センター駅、遠距離・複数県の同名駅の曖昧性解消込み)で
     // 検索フェーズ単体が35.1秒かかったため、それを上回る猶予(55秒)が検索フェーズのみに
     // 適用され、抽出フェーズは従来の短いタイムアウト(15秒)のままであることを検証する。
-    expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
+    expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([100_000, 15_000]);
   });
 
   test("画像付きSearch Groundingも検索フェーズのみ長いタイムアウトを使う", async () => {
@@ -105,7 +105,7 @@ describe("callGemini のタイムアウト設定", () => {
     );
 
     expect(result).toEqual({ facilities: [] });
-    expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([55_000, 15_000]);
+    expect(timeoutSpy.mock.calls.map(([timeout]) => timeout)).toEqual([100_000, 15_000]);
   });
 
   test("画像パートが検索フェーズのリクエストボディに含まれる", async () => {

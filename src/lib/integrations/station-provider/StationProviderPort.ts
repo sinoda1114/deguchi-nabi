@@ -53,6 +53,11 @@ export interface StationProviderPort {
    *
    * originLine/originDirectionは乗車位置(号車・ドア位置)の決定に使う
    * (2026-07-20追加、fix/unified-guide-boarding-and-operator-disambiguation)。
+   *
+   * originStationIdは2026-07-21追加(単一呼び出し方式、single-call-navigator.ts)。
+   * RouteProviderPort.findRailRoutesと同じ生成結果を共有するための共有キャッシュ
+   * キー(buildSharedGuideCacheKey)、および出発駅の完全な位置情報(同名駅の
+   * 曖昧性解消)取得に使う任意パラメータ(既存実装は無視してよい)。
    */
   getUnifiedArrivalGuide?(
     stationId: string,
@@ -64,6 +69,7 @@ export interface StationProviderPort {
     originDirection: string,
     destinationHint: string | null,
     stationCoordinates: Coordinates | null,
-    destinationPlaceCoordinates: Coordinates | null
+    destinationPlaceCoordinates: Coordinates | null,
+    originStationId?: string
   ): Promise<UnifiedArrivalGuide | null>;
 }

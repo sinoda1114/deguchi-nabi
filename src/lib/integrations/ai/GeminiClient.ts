@@ -2,7 +2,13 @@ const REQUEST_TIMEOUT_MS = 15000;
 // Google Search Grounding は実際にWeb検索を行うため、単発の構造化生成より大幅に時間がかかる
 // (西谷駅→国際センター駅(名駅)のような遠距離・同名駅の曖昧性解消が絡む検索で実測35秒超)。
 // 短いタイムアウトのままだと毎回タイムアウトで失敗し、経路情報が確認できません扱いになってしまう。
-const SEARCH_REQUEST_TIMEOUT_MS = 55000;
+//
+// 2026-07-21: 単一呼び出し方式(single-call-navigator.ts)の改善プロンプトは、
+// 実在確認と適合性検証の分離・複数改札比較・情報源優先順位等を1回の検索に
+// 詰め込んだ長いプロンプトのため、実機検証で55秒の壁を越えてタイムアウトし
+// サイレントにnullを返すケースを確認した(8回実測では38.9〜75.6秒だったが、
+// 実配線検証では2回とも55秒ちょうどでタイムアウトし空振りした)。100秒へ延長する。
+const SEARCH_REQUEST_TIMEOUT_MS = 100000;
 
 function generateUrl(model: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;

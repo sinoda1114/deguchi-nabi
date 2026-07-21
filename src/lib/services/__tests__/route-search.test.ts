@@ -783,12 +783,65 @@ describe("buildTransferAndExitSegments", () => {
       "到着駅方面",
       null,
       { lat: 0, lng: 0 },
-      null
+      null,
+      "origin"
     );
     expect(outcome.result.gate?.name).toBe("統合生成改札");
     expect(outcome.result.exit?.name).toBe("統合生成出口");
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(outcome.result.arrivalGuide.steps.some((s) => s.title === "見出し")).toBe(true);
+  });
+
+  test("destinationCoordinatesがある場合、routeProvider.findRailRoutesとstationProvider.getUnifiedArrivalGuideへ同じdestinationHintを渡す(単一呼び出し方式のキャッシュ共有が成立する前提。DESTINATION_HINT_ENABLED未設定でも一致すること)", async () => {
+    const findRailRoutes = vi.fn(async (..._args: unknown[]) => [
+      {
+        originStationId: "origin",
+        arrivalStationId: "destination",
+        transferCount: 0,
+        estimatedDurationMinutes: 10,
+        segments: [
+          {
+            fromStationId: "origin",
+            toStationId: "destination",
+            line: "テスト線",
+            direction: "到着駅方面",
+            platformId: PLATFORM.platformId,
+            estimatedMinutes: 10,
+          },
+        ],
+      },
+    ]);
+    const getUnifiedArrivalGuide = vi.fn(async (..._args: unknown[]) => ({
+      boardingPosition: null,
+      gate: null,
+      exit: null,
+      walkingSteps: [],
+    }));
+    const deps: RouteSearchDeps = {
+      routeProvider: { findRailRoutes },
+      stationProvider: { ...buildStationProvider([]), getUnifiedArrivalGuide },
+    };
+    const destinationCoordinates = { lat: 35.1, lng: 136.2 };
+    const input = {
+      ...BASE_INPUT,
+      mode: "easy" as const,
+      destinationLabel: "テストカフェ",
+      destinationCoordinates,
+    };
+    const candidate = await resolveRouteCandidate(input, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    await buildTransferAndExitSegments(candidate, input, deps);
+
+    expect(findRailRoutes).toHaveBeenCalledWith(
+      "origin",
+      "destination",
+      "テストカフェ",
+      destinationCoordinates
+    );
+    const guideDestinationHint = getUnifiedArrivalGuide.mock.calls[0]?.[7];
+    expect(guideDestinationHint).toBe("テストカフェ");
   });
 
   test("accessibleモードでは統合生成を呼ばない(既存のエレベーター確認ロジックを優先)", async () => {
