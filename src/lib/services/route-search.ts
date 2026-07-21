@@ -574,16 +574,28 @@ export async function buildTransferAndExitSegments(
   let unifiedWalkingSteps: GuideStep[] | null = null;
   let recommendation: ExitRecommendation;
 
-  if (unified && unified.exit) {
-    // 統合生成が出口を確認できた場合のみ採用する(/ai-review再指摘、Medium:
-    // 出口を確認できなかった部分結果を「確認済み(exact)」として扱ってしまうと、
-    // UI・後続処理の確度表示を誤らせる)。
-    exit = toUnifiedStationFacility("exit", input.destinationStationId, unified.exit);
+  if (unified) {
+    // 改札・出口は互いに独立して採否を判定する(2026-07-21実機発覚: 単一呼び出し
+    // 方式(single-call-navigator.ts)へ移行後、旧「exitが確認できた場合のみ
+    // gateも採用する」ロジックのままだと、改札名だけ確信度高く抽出できていても
+    // 出口が同じ応答内でたまたま未確認だった場合にgateごと丸ごと「確認できません」
+    // にしてしまう不具合が発生した(西谷駅→kawara CAFE&DINING横浜店で再現:
+    // gate="1階改札口（みなみ西口方面）"は抽出できていたのにexitがnullだった
+    // ためgate自体もnull化されていた)。旧方式では改札を出口から逆引きする
+    // 設計だったため両者を結合する意味があったが、単一呼び出し方式では改札・
+    // 出口は同じ検索セッションから独立した事実として抽出されるため、
+    // 「存在する情報は必ず出す、隠さない」という既定方針(下記exitSegmentの
+    // コメント参照)を改札・出口の組み合わせ判定にも一貫して適用する。
+    exit = unified.exit
+      ? toUnifiedStationFacility("exit", input.destinationStationId, unified.exit)
+      : null;
     gate = unified.gate
       ? toUnifiedStationFacility("gate", input.destinationStationId, unified.gate)
       : null;
     unifiedWalkingSteps = unified.walkingSteps;
-    recommendation = { tier: "exact", exit, destinationDirectionLabel: null };
+    recommendation = exit
+      ? { tier: "exact", exit, destinationDirectionLabel: null }
+      : { tier: "unavailable", exit: null, destinationDirectionLabel: null };
   } else if (canTryUnified) {
     // 統合生成を試みたが出口を確認できなかった場合、旧方式(getFacilities、
     // AI生成2回)へはフォールバックせず「確認できません」のまま返す
@@ -737,7 +749,12 @@ export async function buildTransferAndExitSegments(
     // 統合生成がgateを基準に決めた乗車位置(2026-07-20追加)。buildTrainSegments
     // 側の独立した乗車位置生成(getBoardingPosition)と不整合が起きないよう、
     // これが取れている場合はそちらを優先させる(searchRouteGuide参照)。
-    unifiedBoardingPosition: unified && unified.exit ? unified.boardingPosition : null,
+    // 判定条件はunified.exitではなくunified.gateにする(2026-07-21修正:
+    // 乗車位置は「gateを基準に決めた」ものであり出口の有無とは無関係。
+    // 単一呼び出し方式では改札・出口が独立して抽出されるため、旧来の
+    // exit依存の判定のままだと出口未確認の場合に乗車位置まで無関係に
+    // 捨ててしまっていた)。
+    unifiedBoardingPosition: unified && unified.gate ? unified.boardingPosition : null,
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
