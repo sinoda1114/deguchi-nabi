@@ -145,8 +145,12 @@ ${combinedBody}`;
 /**
  * 路線名の表記ゆれ(「相鉄本線」と「相鉄線」等)を吸収するため、末尾の
  * 「本線」または「線」を取り除いて比較用に正規化する。
+ *
+ * arrival-gate-search-pipeline.tsでも同じ表記ゆれ吸収ロジックが必要なため
+ * exportする(2026-07-21: 改札検索パイプライン追加に伴いコード重複を避ける
+ * ためexport化。ロジック自体は変更していない)。
  */
-function normalizeLineName(name: string): string {
+export function normalizeLineName(name: string): string {
   return name.trim().replace(/(本線|線)$/, "");
 }
 
