@@ -33,6 +33,27 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(args[5]).toBe("gemini-3.5-flash");
   });
 
+  test("extractionInstructionに「目的地に到着」のような内容のない末尾ステップを含めない指示を含める(2026-07-21、ユーザー指摘: 目的地ピンと重複し、出口ノードとの並び順もあべこべに見える原因になっていた)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    const extractionInstruction = searchAndGenerateStructuredContent.mock.calls[0][2] as string;
+    expect(extractionInstruction).toContain("目的地に到着");
+    expect(extractionInstruction).toContain("含めないでください");
+  });
+
   test("gemini-3.1-flash-liteをextractionModelとして渡す(chore/pin-models-pattern-a: 検索能力を要求しない構造化抽出フェーズはコストの低いモデルで足りるかのA/B評価対象)", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
 
@@ -278,6 +299,161 @@ describe("generateUnifiedArrivalGuide", () => {
     );
 
     expect(result?.exit).toBeNull();
+  });
+
+  test("パターンA: fixedExit(matched)とfixedGateが両方渡された場合、出口・改札両方確定済みとして扱い、号車・徒歩ルートのみを求める指示にする。最終結果のgate/exitはfixedGate/fixedExitをそのまま採用する(抽出結果のgateName/exitNameより優先)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      gateName: "モデルが独自に返した別の改札", // fixedGate指定時は無視されるべき
+      gateConfidence: "medium",
+      exitName: "モデルが独自に返した別の出口", // fixedExit指定時は無視されるべき
+      exitConfidence: "medium",
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "東急東横線",
+      "渋谷方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線"],
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 },
+      { name: "A0出口", confidenceLevel: "high", matchedArrivalLine: true },
+      { name: "道玄坂改札", confidenceLevel: "medium" }
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("【出口・改札は既に確定済み】");
+    expect(searchPrompt).toContain("出口は「A0出口」、改札は「道玄坂改札」と判明しています");
+    expect(searchPrompt).toContain('出口名は「A0出口」で確定済みです');
+    expect(searchPrompt).toContain('改札名は「道玄坂改札」で確定済みです');
+
+    expect(result?.exit).toEqual({ name: "A0出口", confidenceLevel: "high" });
+    expect(result?.gate).toEqual({ name: "道玄坂改札", confidenceLevel: "medium" });
+  });
+
+  test("パターンB: fixedGateのみ渡された場合(fixedExitは無し)、改札を確定済みとして扱い、出口はその改札を起点に選ばせる指示にする。依存関係の順序も「改札→出口」に逆転する", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      exitName: "A0出口",
+      exitConfidence: "medium",
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "東急東横線",
+      "渋谷方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線"],
+      null,
+      null,
+      null,
+      null,
+      { name: "道玄坂改札", confidenceLevel: "medium" }
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("【改札は既に確定済み】");
+    expect(searchPrompt).toContain(
+      "東急東横線をご利用の場合の改札は既に「道玄坂改札」と判明しています"
+    );
+    expect(searchPrompt).toContain(
+      "この「道玄坂改札」改札を出た先で目的地に最も直接的にたどり着ける出口を選ぶことです"
+    );
+    expect(searchPrompt).toContain('改札名は「道玄坂改札」で確定済みです');
+    // 依存関係の順序が「改札→出口」に逆転していること
+    expect(searchPrompt).toContain(
+      "改札(既に確定済み) → 出口(その改札を出た先で目的地に最も直接的にたどり着けるもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)"
+    );
+    // fixedExitが無いので「参考情報」文言は含まれない
+    expect(searchPrompt).not.toContain("参考情報として、目的地の公式情報には出口");
+
+    // 出口はfixedExitが無いため、モデル自身の自己判定結果(exitName)を採用する。
+    expect(result?.exit).toEqual({ name: "A0出口", confidenceLevel: "medium" });
+    // 改札はfixedGateをそのまま採用する。
+    expect(result?.gate).toEqual({ name: "道玄坂改札", confidenceLevel: "medium" });
+  });
+
+  test("パターンB: fixedGateがあり、fixedExitがmatchedArrivalLine:falseの参考情報として渡された場合、改札確定済みの指示に加え末尾に出口の参考情報文言を追記する", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      exitName: "A0出口",
+      exitConfidence: "medium",
+      walkingSteps: [],
+    });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "東急東横線",
+      "渋谷方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線", "京王井の頭線"],
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 },
+      { name: "井の頭線西口", confidenceLevel: "medium", matchedArrivalLine: false },
+      { name: "道玄坂改札", confidenceLevel: "medium" }
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("【改札は既に確定済み】");
+    expect(searchPrompt).toContain(
+      "参考情報として、目的地の公式情報には出口「井の頭線西口」という案内もありますが、今回の東急東横線向けの情報かどうかは未確認です。"
+    );
+  });
+
+  test("fixedGateが渡された場合、抽出結果のgateNameより優先してfixedGateをそのまま採用する(パターンC: fixedExitのみ確定・fixedGateも渡されたケース)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      gateName: "モデルが独自に返した別の改札",
+      gateConfidence: "low",
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4662, lng: 139.6227 },
+      { lat: 35.4657, lng: 139.622 },
+      null,
+      { name: "相鉄線1階改札", confidenceLevel: "high" }
+    );
+
+    expect(result?.gate).toEqual({ name: "相鉄線1階改札", confidenceLevel: "high" });
+  });
+
+  test("fixedGateが無い場合(パターンC/D)は従来通り抽出結果のgateNameを採用する", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      gateName: "相鉄線1階改札",
+      gateConfidence: "medium",
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    expect(result?.gate).toEqual({ name: "相鉄線1階改札", confidenceLevel: "medium" });
   });
 
   test("fixedExitが無い場合(専用検索で見つからなかった)は従来通りこの関数自身が出口を選ぶ", async () => {
