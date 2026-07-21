@@ -78,6 +78,17 @@ function canGenerateNarrative(
  * 最終的な steps は isGuideStepVisible でフィルタしてから返す。facility種別
  * (ticket_gate/street_exit)・AI生成由来のどちらであっても、表示可否の判定は
  * 常にこの1箇所を経由させ、判定漏れを防ぐ。
+ *
+ * steps配列の並び順は「改札→出口→徒歩(ナラティブ)ステップ」にしている
+ * (2026-07-21、ユーザー指摘に基づく修正)。以前は「改札→徒歩→出口」の順で
+ * 組み立てていたが、徒歩ステップ(AIの自由文)自体が「改札を出る」「出口へ
+ * 向かう」「目的地に到着」まで一連の流れとして含んでいるため、その末尾
+ * ("目的地に到着")の後ろに別枠の出口ノードが表示され、「ルートの流れ」
+ * タイムライン(route-timeline-nodes.ts、steps配列の順序をそのまま表示に使う)
+ * で「目的地に到着→出口」という物理的にありえない逆転が発生していた
+ * (実機確認: 西谷駅→kawara CAFE&DINING横浜店)。出口は改札を出てすぐ近くに
+ * あることが多く、その後の徒歩(ナラティブ)ステップは出口を経由した先の
+ * 説明として読める方が自然なため、出口を徒歩ステップより前に配置する。
  */
 export async function buildArrivalGuide(
   result: Pick<FacilitiesBuildSuccess, "gate" | "exit" | "approximateDirectionLabel">,
@@ -95,6 +106,10 @@ export async function buildArrivalGuide(
     steps.push(facilityStep("ticket_gate", result.gate, `${result.gate.name}を利用してください。`));
   }
 
+  if (result.exit) {
+    steps.push(facilityStep("street_exit", result.exit, `${result.exit.name}から地上へ出てください。`));
+  }
+
   if (unifiedWalkingSteps !== null) {
     steps.push(...unifiedWalkingSteps);
   } else if (
@@ -109,10 +124,6 @@ export async function buildArrivalGuide(
       arrivalStationCoordinates
     );
     steps.push(...narrativeSteps);
-  }
-
-  if (result.exit) {
-    steps.push(facilityStep("street_exit", result.exit, `${result.exit.name}から地上へ出てください。`));
   }
 
   return {

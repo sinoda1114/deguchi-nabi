@@ -324,6 +324,7 @@ ${dependencyOrder}${derivedFactsNote}
 確信が持てない項目は含めないでください(改札名・出口名が確認できない場合はgateName/exitNameのプロパティ自体を省略、乗車位置が確認できない場合はboardingCarNumber等のプロパティ自体を省略してください)。
 boardingReasonには、到着番線や編成によって結果が変わる場合の条件(例:◯番線着の場合は◯号車)を含めてください。ただし150字程度までの簡潔な文章にまとめてください。
 徒歩ルートの各ステップには、短い見出し(title、例:「改札を出て直進」)と詳しい説明(instruction)の両方を含めてください。
+徒歩ルートの最後に「目的地に到着」のような、到着した事実だけを述べる内容のないステップは含めないでください(目的地名は画面の他の箇所に別途表示されるため不要です)。徒歩ルートは目的地の直前の行動(例:「〇〇ビル1Fへ入る」)までで終えてください。
 各項目について、あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
 
   const result = await searchAndGenerateStructuredContent<GeneratedUnifiedArrivalGuide>(
