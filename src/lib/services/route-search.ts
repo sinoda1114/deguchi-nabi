@@ -294,9 +294,19 @@ export async function resolveRouteCandidate(
   input: RouteSearchInput,
   deps: RouteSearchDeps
 ): Promise<ResolveRouteCandidateResult> {
+  // 単一呼び出し方式(single-call-navigator.ts)では、目的地施設名が分かって
+  // いれば経路解決の時点から渡し、改札・出口の検索(buildTransferAndExit
+  // Segments側のgetUnifiedArrivalGuide呼び出し)と同じ1回の生成結果を共有する
+  // (AiRouteAdapter・single-call-navigator.tsのJSDoc参照)。旧DESTINATION_HINT_
+  // ENABLEDフラグは、目的地名を絞り込みクエリに使う旧方式(getFacilities)で
+  // 精度が悪化した問題への止血だったが、単一呼び出し方式は目的地名を
+  // 検索対象そのもの(ユーザー入力)として扱う設計のため、そのフラグの対象外とする。
+  const destinationHintForRoute = input.destinationCoordinates ? input.destinationLabel : null;
   const candidates = await deps.routeProvider.findRailRoutes(
     input.originStationId,
-    input.destinationStationId
+    input.destinationStationId,
+    destinationHintForRoute,
+    input.destinationCoordinates
   );
 
   if (candidates.length === 0) {
@@ -502,6 +512,22 @@ export async function buildTransferAndExitSegments(
       ? input.destinationLabel
       : null;
 
+  // 単一呼び出し方式(single-call-navigator.ts、getUnifiedArrivalGuide経由)向けの
+  // 目的地ヒントは、上記destinationHintとは別に、DESTINATION_HINT_ENABLEDフラグに
+  // 関わらず常に渡す。上記フラグは旧方式(getFacilitiesへのヒント注入)で精度が
+  // 悪化した問題への止血であり、単一呼び出し方式は目的地名を検索対象そのもの
+  // (ユーザー入力)として扱う別設計のため対象外(resolveRouteCandidateの
+  // destinationHintForRouteと同じ理由)。
+  //
+  // 重要: findRailRoutes(resolveRouteCandidate内)にはdestinationHintForRouteを
+  // 渡しているため、ここでフラグ経由のdestinationHint(既定でnull)を使うと、
+  // 同じ区間でも2つの呼び出しの目的地ヒントが食い違い、getSharedSingleCall
+  // NavigatorGuideのキャッシュキーが一致せずGeminiを2回呼んでしまう
+  // (実機レビューで発覚、single-call-navigator.tsのキャッシュ設計が無効化される)。
+  const destinationHintForUnifiedGuide = input.destinationCoordinates
+    ? input.destinationLabel
+    : null;
+
   // 駅・出口はAI生成facilities一覧が座標を持たないため
   // resolveExitRecommendationの座標ベース選定の対象外になり、常に
   // hasApproximateGuidance(方角のみ)以下に落ちる構造的な限界があった
@@ -535,9 +561,10 @@ export async function buildTransferAndExitSegments(
         originStation.stationName,
         arrivalSegment?.line ?? "",
         arrivalSegment?.direction ?? "",
-        destinationHint,
+        destinationHintForUnifiedGuide,
         candidate.arrivalStationCoordinates,
-        input.destinationCoordinates
+        input.destinationCoordinates,
+        originStation.stationId
       );
     }
   }

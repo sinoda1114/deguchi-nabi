@@ -2,9 +2,11 @@ import type { StationProviderPort } from "./StationProviderPort";
 import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-generation";
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
-import { generateUnifiedArrivalGuide } from "./unified-arrival-guide-generation";
-import { searchDestinationExitViaSerper } from "@/lib/integrations/search/destination-exit-search-pipeline";
-import { searchArrivalGateForLine } from "@/lib/integrations/search/arrival-gate-search-pipeline";
+import {
+  buildSharedGuideCacheKey,
+  generateSingleCallNavigatorGuide,
+  getSharedSingleCallNavigatorGuide,
+} from "@/lib/integrations/ai/single-call-navigator";
 import { groundedAiConfidence } from "./ai-generation";
 import {
   decodeHeartRailsStationId,
@@ -222,126 +224,81 @@ export class AiStationAdapter implements StationProviderPort {
   }
 
   async getUnifiedArrivalGuide(
-    _stationId: string,
+    stationId: string,
     stationName: string,
     operator: string,
     lines: string[],
     originStationName: string,
-    originLine: string,
-    originDirection: string,
+    _originLine: string,
+    _originDirection: string,
     destinationHint: string | null,
     stationCoordinates: Coordinates | null,
-    destinationPlaceCoordinates: Coordinates | null
+    destinationPlaceCoordinates: Coordinates | null,
+    originStationId?: string
   ): Promise<UnifiedArrivalGuide | null> {
-    // 目的地公式サイト・食べログ等が明記している出口を、統合生成本体より
-    // 先に専用検索で確認する。Gemini google_search grounding単体
-    // (searchDestinationStatedExit、fix/destination-first-access-priority)は
-    // 実機検証で再現性が低く、Serper検索パイプライン(実在するfacilities-
-    // search-pipeline.tsと同設計: Serper検索→スコアリング→Jina Reader本文
-    // 取得→Gemini構造化抽出)に置き換えた方が高速(実機診断で約19秒、
-    // grounding版は47秒以上)かつ根拠(出典URL・引用元本文)を検証可能で
-    // あることを確認した(experiment/destination-fix-then-vote)。
-    // destinationHintが無い(駅そのものが目的地)場合は対象外。
-    // destinationLinesには到着駅の全路線(lines)ではなく、今回実際に乗車した
-    // 路線(originLine)のみを渡す。到着駅の全路線を渡すと、目的地の公式情報が
-    // 案内している出口が今回の乗車路線とは無関係な別路線向けのものであっても
-    // 「一致」と誤判定されてしまう(実機確認: 西谷駅→ウエチャベ。東急東横線
-    // 到着なのに、渋谷駅の全路線リストに含まれる「京王井の頭線」が出口候補の
-    // viaHintと一致し、無関係な出口が強制採用された。destination-exit-search-
-    // pipeline.tsのpickBestCandidate()コメント参照)。
-    //
-    // 2026-07-21: 目的地の公式サイト検索(searchDestinationExitViaSerper)とは別に、
-    // 到着駅名+乗車路線での駅ガイド検索(searchArrivalGateForLine)も並列で実行する。
-    // 目的地の公式サイトは改札名まで案内していないことがほとんど(お店側は改札を
-    // 意識しない)ため、改札の検証はこれまで統合生成本体(generateUnifiedArrivalGuide)の
-    // AI自己判断に任せるしかなく、実機で実在しない改札名を創作する誤りが確認された
-    // (ユーザー指摘)。到着駅+乗車路線で検索すると「渋谷駅の道玄坂改札はどこ？」の
-    // ような第三者の駅ガイド記事がヒットし、改札を確認できる。destinationHintの
-    // 有無に関わらず(目的地がplace由来かstation由来かに関わらず)、到着駅+乗車路線が
-    // 分かっていれば改札は検証できるため、originLineが空文字でない限り常に実行する。
-    const [serperResult, arrivalGateResult] = await Promise.all([
-      destinationHint
-        ? searchDestinationExitViaSerper(
-            { serperApiKey: this.serperApiKey, jinaApiKey: this.jinaApiKey, geminiApiKey: this.geminiApiKey },
-            destinationHint,
-            destinationPlaceCoordinates,
-            [originLine]
-          )
-        : Promise.resolve(null),
-      originLine
-        ? searchArrivalGateForLine(
-            { serperApiKey: this.serperApiKey, jinaApiKey: this.jinaApiKey, geminiApiKey: this.geminiApiKey },
-            stationName,
-            originLine
-          )
-        : Promise.resolve(null),
-    ]);
-
-    // 出口: 目的地公式サイトが今回の路線と一致確認できていればそれを最優先。
-    // 一致確認できなかった場合、駅ガイド検索(arrivalGateResult)がexitHintを
-    // 返していれば、そちらは路線について確実に一致した情報源(searchArrivalGateForLine
-    // は不一致ならnullを返す設計)なのでそれを使う。どちらも無ければ、目的地
-    // 検索の不一致結果を参考情報として渡す(従来通り)。
-    const fixedExit =
-      serperResult && serperResult.matchedArrivalLine
-        ? {
-            name: serperResult.exit.name,
-            confidenceLevel: serperResult.exit.confidence.level,
-            matchedArrivalLine: true,
-          }
-        : arrivalGateResult && arrivalGateResult.exitHint
-          ? {
-              name: arrivalGateResult.exitHint,
-              confidenceLevel: arrivalGateResult.gate.confidence.level,
-              matchedArrivalLine: true,
-            }
-          : serperResult
-            ? {
-                name: serperResult.exit.name,
-                confidenceLevel: serperResult.exit.confidence.level,
-                matchedArrivalLine: false,
-              }
-            : null;
-
-    // 改札: 駅ガイド検索が今回の路線と一致確認できた場合のみ使う
-    // (searchArrivalGateForLineは不一致ならnullを返す設計のため、非nullなら
-    // 常に信頼してよい)。
-    const fixedGate = arrivalGateResult
-      ? { name: arrivalGateResult.gate.name, confidenceLevel: arrivalGateResult.gate.confidence.level }
-      : null;
-
-    const result = await generateUnifiedArrivalGuide(
-      this.geminiApiKey,
-      originStationName,
-      originLine,
-      originDirection,
+    // 2026-07-21: 経路生成(RouteProviderPort.findRailRoutes)・改札/出口検索
+    // (destination-exit-search-pipeline.ts・arrival-gate-search-pipeline.ts)・
+    // 統合生成(unified-arrival-guide-generation.ts)に分かれていた多段AI
+    // パイプラインを、単一のGemini Search Grounding呼び出し(single-call-
+    // navigator.ts)へ置き換えた(ユーザー判断、single-call-navigator.tsの
+    // JSDoc参照)。originStationIdが渡された場合、AiRouteAdapter.findRailRoutes
+    // と同じ生成結果をキャッシュキー経由で共有し、1リクエストでGeminiを2回
+    // 呼ばないようにする。originStationIdが渡されない(StationProviderPortの
+    // 既存実装が呼ぶ場合を想定した任意パラメータ)場合はoriginStationNameのみで
+    // 出発駅を組み立てる(位置情報なしのフォールバック)。
+    const originStation = originStationId ? await this.getStation(originStationId) : null;
+    const originStationForGuide: Station = originStation ?? {
+      stationId: originStationId ?? "",
+      stationName: originStationName,
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: 0,
+      longitude: 0,
+    };
+    const destinationStationForGuide: Station = {
+      stationId,
       stationName,
       operator,
       lines,
+      prefecture: "",
+      latitude: stationCoordinates?.lat ?? 0,
+      longitude: stationCoordinates?.lng ?? 0,
+    };
+
+    const cacheKey = buildSharedGuideCacheKey(
+      originStationForGuide.stationId || originStationName,
+      stationId,
       destinationHint,
-      stationCoordinates,
-      destinationPlaceCoordinates,
-      fixedExit,
-      fixedGate
+      destinationPlaceCoordinates
     );
-    if (!result) return null;
+    const guide = await getSharedSingleCallNavigatorGuide(cacheKey, () =>
+      generateSingleCallNavigatorGuide(
+        this.geminiApiKey,
+        originStationForGuide,
+        destinationStationForGuide,
+        destinationHint,
+        destinationPlaceCoordinates
+      )
+    );
+    if (!guide) return null;
 
     return {
-      boardingPosition: result.boardingPosition
+      boardingPosition: guide.boarding
         ? {
-            carNumber: result.boardingPosition.carNumber,
-            doorPosition: result.boardingPosition.doorPosition,
-            reason: result.boardingPosition.reason,
-            confidence: groundedAiConfidence(result.boardingPosition.confidenceLevel),
+            carNumber: guide.boarding.carNumber,
+            doorPosition: guide.boarding.doorPosition,
+            reason: guide.boarding.reason,
+            confidence: groundedAiConfidence(guide.boarding.confidenceLevel),
           }
         : null,
-      gate: result.gate
-        ? { name: result.gate.name, confidence: groundedAiConfidence(result.gate.confidenceLevel) }
+      gate: guide.gate
+        ? { name: guide.gate.name, confidence: groundedAiConfidence(guide.gate.confidenceLevel) }
         : null,
-      exit: result.exit
-        ? { name: result.exit.name, confidence: groundedAiConfidence(result.exit.confidenceLevel) }
+      exit: guide.exit
+        ? { name: guide.exit.name, confidence: groundedAiConfidence(guide.exit.confidenceLevel) }
         : null,
-      walkingSteps: result.walkingSteps.map((step) => ({
+      walkingSteps: guide.walkingSteps.map((step) => ({
         type: "public_passage",
         title: step.title,
         instruction: step.instruction,

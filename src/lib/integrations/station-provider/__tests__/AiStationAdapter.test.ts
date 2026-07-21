@@ -47,19 +47,15 @@ vi.mock("../arrival-guide-ai-generation", () => ({
   generateArrivalNarrativeSteps: (...args: unknown[]) => generateArrivalNarrativeSteps(...args),
 }));
 
-const generateUnifiedArrivalGuide = vi.fn();
-vi.mock("../unified-arrival-guide-generation", () => ({
-  generateUnifiedArrivalGuide: (...args: unknown[]) => generateUnifiedArrivalGuide(...args),
-}));
-
-const searchDestinationExitViaSerper = vi.fn(async (..._args: unknown[]) => null as unknown);
-vi.mock("@/lib/integrations/search/destination-exit-search-pipeline", () => ({
-  searchDestinationExitViaSerper: (...args: unknown[]) => searchDestinationExitViaSerper(...args),
-}));
-
-const searchArrivalGateForLine = vi.fn(async (..._args: unknown[]) => null as unknown);
-vi.mock("@/lib/integrations/search/arrival-gate-search-pipeline", () => ({
-  searchArrivalGateForLine: (...args: unknown[]) => searchArrivalGateForLine(...args),
+const generateSingleCallNavigatorGuide = vi.fn();
+vi.mock("@/lib/integrations/ai/single-call-navigator", () => ({
+  generateSingleCallNavigatorGuide: (...args: unknown[]) =>
+    generateSingleCallNavigatorGuide(...args),
+  buildSharedGuideCacheKey: (a: string, b: string, c: string | null) => `${a}::${b}::${c ?? ""}`,
+  // テストではキャッシュ挙動自体を検証しないため、generatorを素通しするだけの
+  // 単純な実装に差し替える(モジュール単位のキャッシュがテスト間で汚染しないようにする)。
+  getSharedSingleCallNavigatorGuide: (_key: string, generator: () => Promise<unknown>) =>
+    generator(),
 }));
 
 const searchStationsFromHeartRails = vi.fn(async (_query: string) => null as unknown);
@@ -597,22 +593,38 @@ describe("AiStationAdapter.getArrivalGuideNarrativeSteps", () => {
   });
 });
 
+
 describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   beforeEach(() => {
-    generateUnifiedArrivalGuide.mockReset();
-    searchDestinationExitViaSerper.mockReset();
-    searchDestinationExitViaSerper.mockResolvedValue(null);
-    searchArrivalGateForLine.mockReset();
-    searchArrivalGateForLine.mockResolvedValue(null);
+    generateSingleCallNavigatorGuide.mockReset();
+    decodeHeartRailsStationId.mockReset();
+    decodeHeartRailsStationId.mockReturnValue(null);
+    fetchNearestStationsFromHeartRails.mockReset();
+    fetchNearestStationsFromHeartRails.mockResolvedValue(null);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  test("出発駅名・乗車路線・方面・到着駅名・operator・lines・destinationHint・座標をそのまま生成関数へ引き継ぐ", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
+  const ORIGIN_DECODED = {
+    stationId: "st_nishiya",
+    stationName: "西谷駅",
+    operator: "",
+    lines: [],
+    prefecture: "神奈川県",
+    latitude: 35.4696,
+    longitude: 139.5679,
+  };
+
+  test("originStationIdが解決できる場合、出発駅の完全なStationと到着駅のStationを組み立てて生成関数へ渡す", async () => {
+    decodeHeartRailsStationId.mockReturnValue(ORIGIN_DECODED);
+    generateSingleCallNavigatorGuide.mockResolvedValue({
+      lines: ["相鉄本線"],
+      transferCount: 0,
+      estimatedMinutes: 10,
+      arrivalPlatformNumber: null,
+      boarding: null,
       gate: { name: "1F改札", confidenceLevel: "medium" },
       exit: { name: "五番街口", confidenceLevel: "medium" },
       walkingSteps: [],
@@ -629,290 +641,34 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       "横浜方面",
       "kawara CAFE&DINING 横浜店",
       { lat: 35.4662, lng: 139.6227 },
+      { lat: 35.4657, lng: 139.622 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorGuide).toHaveBeenCalledWith(
+      "test-key",
+      ORIGIN_DECODED,
+      {
+        stationId: "st_yokohama",
+        stationName: "横浜駅",
+        operator: "相鉄",
+        lines: ["相鉄本線"],
+        prefecture: "",
+        latitude: 35.4662,
+        longitude: 139.6227,
+      },
+      "kawara CAFE&DINING 横浜店",
       { lat: 35.4657, lng: 139.622 }
     );
-
-    expect(generateUnifiedArrivalGuide).toHaveBeenCalledWith(
-      "test-key",
-      "西谷駅",
-      "相鉄本線",
-      "横浜方面",
-      "横浜駅",
-      "相鉄",
-      ["相鉄本線"],
-      "kawara CAFE&DINING 横浜店",
-      { lat: 35.4662, lng: 139.6227 },
-      { lat: 35.4657, lng: 139.622 },
-      null,
-      null
-    );
   });
 
-  test("destinationHintがある場合、統合生成の前に専用検索(searchDestinationExitViaSerper)を呼び、確認できた出口をfixedExitとして渡す(2026-07-20 experiment/destination-fix-then-vote: Gemini groundingベースの専用検索は実機検証で再現性が低く、Serper検索パイプラインに置き換えた)", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
-      gate: null,
-      exit: null,
-      walkingSteps: [],
-    });
-    searchDestinationExitViaSerper.mockResolvedValue({
-      exit: {
-        name: "ハチ公口",
-        confidence: { level: "high", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 2 },
-      },
-      gateHint: "ハチ公改札",
-      matchedArrivalLine: true,
-    });
-    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
-
-    await adapter.getUnifiedArrivalGuide(
-      "st_shibuya",
-      "渋谷駅",
-      "東急",
-      ["東急東横線"],
-      "西谷駅",
-      "相鉄本線",
-      "横浜方面",
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587, lng: 139.7009 },
-      { lat: 35.6587716, lng: 139.6982764 }
-    );
-
-    // destinationLinesには到着駅の全路線(lines=["東急東横線"])ではなく、
-    // 今回実際に乗車した路線(originLine="相鉄本線")のみを渡す
-    // (2026-07-21 fix/exit-search-arrival-line-matching: 到着駅の全路線を
-    // 渡すと、無関係な候補まで一致判定されてしまう不具合があったため)。
-    expect(searchDestinationExitViaSerper).toHaveBeenCalledWith(
-      { serperApiKey: "serper-key", jinaApiKey: "jina-key", geminiApiKey: "test-key" },
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587716, lng: 139.6982764 },
-      ["相鉄本線"]
-    );
-    // searchArrivalGateForLineは到着駅名(stationName)+乗車路線(originLine)で呼ぶ
-    // (destinationHintの内容には依存しない)。
-    expect(searchArrivalGateForLine).toHaveBeenCalledWith(
-      { serperApiKey: "serper-key", jinaApiKey: "jina-key", geminiApiKey: "test-key" },
-      "渋谷駅",
-      "相鉄本線"
-    );
-    expect(generateUnifiedArrivalGuide).toHaveBeenCalledWith(
-      "test-key",
-      "西谷駅",
-      "相鉄本線",
-      "横浜方面",
-      "渋谷駅",
-      "東急",
-      ["東急東横線"],
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587, lng: 139.7009 },
-      { lat: 35.6587716, lng: 139.6982764 },
-      { name: "ハチ公口", confidenceLevel: "high", matchedArrivalLine: true },
-      null
-    );
-  });
-
-  test("駅ガイド検索(searchArrivalGateForLine)が路線一致した改札を返した場合、fixedGateとして渡す。目的地検索(fixedExit)が不一致でもfixedGateはそのまま採用する", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
-      gate: null,
-      exit: null,
-      walkingSteps: [],
-    });
-    searchDestinationExitViaSerper.mockResolvedValue(null);
-    searchArrivalGateForLine.mockResolvedValue({
-      gate: {
-        name: "道玄坂改札",
-        confidence: { level: "medium", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 1 },
-      },
-      exitHint: "A0出口",
-    });
-    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
-
-    await adapter.getUnifiedArrivalGuide(
-      "st_shibuya",
-      "渋谷駅",
-      "東急",
-      ["東急東横線"],
-      "西谷駅",
-      "東急東横線",
-      "渋谷方面",
-      null,
-      { lat: 35.6587, lng: 139.7009 },
-      null
-    );
-
-    const callArgs = generateUnifiedArrivalGuide.mock.calls[0];
-    // fixedExit(11番目の引数): 目的地検索が無い(destinationHintも無い)ため
-    // null、ただしarrivalGateResultのexitHintがあるためmatchedArrivalLine:trueとして採用される。
-    expect(callArgs[10]).toEqual({
-      name: "A0出口",
-      confidenceLevel: "medium",
-      matchedArrivalLine: true,
-    });
-    // fixedGate(12番目の引数)
-    expect(callArgs[11]).toEqual({ name: "道玄坂改札", confidenceLevel: "medium" });
-  });
-
-  test("目的地検索(matchedArrivalLine:true)と駅ガイド検索の両方が確認できた場合、両方をそのままfixedExit/fixedGateとして渡す", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
-      gate: null,
-      exit: null,
-      walkingSteps: [],
-    });
-    searchDestinationExitViaSerper.mockResolvedValue({
-      exit: {
-        name: "ハチ公口",
-        confidence: { level: "high", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 2 },
-      },
-      gateHint: null,
-      matchedArrivalLine: true,
-    });
-    searchArrivalGateForLine.mockResolvedValue({
-      gate: {
-        name: "道玄坂改札",
-        confidence: { level: "medium", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 1 },
-      },
-      exitHint: null,
-    });
-    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
-
-    await adapter.getUnifiedArrivalGuide(
-      "st_shibuya",
-      "渋谷駅",
-      "東急",
-      ["東急東横線"],
-      "西谷駅",
-      "東急東横線",
-      "渋谷方面",
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587, lng: 139.7009 },
-      { lat: 35.6587716, lng: 139.6982764 }
-    );
-
-    const callArgs = generateUnifiedArrivalGuide.mock.calls[0];
-    // 目的地検索がmatchedArrivalLine:trueなのでfixedExitはそちらを最優先。
-    expect(callArgs[10]).toEqual({ name: "ハチ公口", confidenceLevel: "high", matchedArrivalLine: true });
-    expect(callArgs[11]).toEqual({ name: "道玄坂改札", confidenceLevel: "medium" });
-  });
-
-  test("目的地検索・駅ガイド検索のどちらも確認できなかった場合、fixedExit・fixedGateともにnullを渡す", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
-      gate: null,
-      exit: null,
-      walkingSteps: [],
-    });
-    searchDestinationExitViaSerper.mockResolvedValue(null);
-    searchArrivalGateForLine.mockResolvedValue(null);
-    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
-
-    await adapter.getUnifiedArrivalGuide(
-      "st_shibuya",
-      "渋谷駅",
-      "東急",
-      ["東急東横線"],
-      "西谷駅",
-      "東急東横線",
-      "渋谷方面",
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587, lng: 139.7009 },
-      { lat: 35.6587716, lng: 139.6982764 }
-    );
-
-    const callArgs = generateUnifiedArrivalGuide.mock.calls[0];
-    expect(callArgs[10]).toBeNull();
-    expect(callArgs[11]).toBeNull();
-  });
-
-  test("searchDestinationExitViaSerperとsearchArrivalGateForLineは並列(Promise.all)で実行される(直列だと合計待ち時間が増えるため)", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
-      gate: null,
-      exit: null,
-      walkingSteps: [],
-    });
-    const callOrder: string[] = [];
-    searchDestinationExitViaSerper.mockImplementation(async () => {
-      callOrder.push("serper-start");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      callOrder.push("serper-end");
-      return null;
-    });
-    searchArrivalGateForLine.mockImplementation(async () => {
-      callOrder.push("gate-start");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      callOrder.push("gate-end");
-      return null;
-    });
-    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
-
-    await adapter.getUnifiedArrivalGuide(
-      "st_shibuya",
-      "渋谷駅",
-      "東急",
-      ["東急東横線"],
-      "西谷駅",
-      "東急東横線",
-      "渋谷方面",
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587, lng: 139.7009 },
-      { lat: 35.6587716, lng: 139.6982764 }
-    );
-
-    // 直列なら["serper-start","serper-end","gate-start","gate-end"]になるはず。
-    // 並列であれば両方のstartが先に来る。
-    expect(callOrder[0]).toBe("serper-start");
-    expect(callOrder[1]).toBe("gate-start");
-  });
-
-  test("専用検索がmatchedArrivalLine:falseを返した場合(乗車路線との一致が確認できなかった)、fixedExitにもmatchedArrivalLine:falseをそのまま伝播する(実機確認: 西谷駅→ウエチャベ。東急東横線到着なのに京王井の頭線側の出口案内しかなかったケース)", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
-      gate: null,
-      exit: null,
-      walkingSteps: [],
-    });
-    searchDestinationExitViaSerper.mockResolvedValue({
-      exit: {
-        name: "井の頭線西口",
-        confidence: { level: "medium", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 1 },
-      },
-      gateHint: null,
-      matchedArrivalLine: false,
-    });
-    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
-
-    await adapter.getUnifiedArrivalGuide(
-      "st_shibuya",
-      "渋谷駅",
-      "東急",
-      ["東急東横線", "京王井の頭線"],
-      "西谷駅",
-      "東急東横線",
-      "渋谷方面",
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587, lng: 139.7009 },
-      { lat: 35.6587716, lng: 139.6982764 }
-    );
-
-    expect(searchDestinationExitViaSerper).toHaveBeenCalledWith(
-      { serperApiKey: "serper-key", jinaApiKey: "jina-key", geminiApiKey: "test-key" },
-      "しゃぶしゃぶ×居酒屋 ウエチャベ",
-      { lat: 35.6587716, lng: 139.6982764 },
-      ["東急東横線"]
-    );
-    const fixedExitArg = generateUnifiedArrivalGuide.mock.calls[0][10];
-    expect(fixedExitArg).toEqual({
-      name: "井の頭線西口",
-      confidenceLevel: "medium",
-      matchedArrivalLine: false,
-    });
-  });
-
-  test("destinationHintが無い場合(駅そのものが目的地)は専用検索を呼ばない", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
+  test("originStationIdが渡されない場合、出発駅名のみの簡易Stationで生成関数を呼ぶ(フォールバック)", async () => {
+    generateSingleCallNavigatorGuide.mockResolvedValue({
+      lines: ["相鉄本線"],
+      transferCount: 0,
+      estimatedMinutes: 10,
+      arrivalPlatformNumber: null,
+      boarding: null,
       gate: null,
       exit: null,
       walkingSteps: [],
@@ -932,12 +688,56 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       null
     );
 
-    expect(searchDestinationExitViaSerper).not.toHaveBeenCalled();
+    const [, originArg] = generateSingleCallNavigatorGuide.mock.calls[0];
+    expect(originArg).toEqual({
+      stationId: "",
+      stationName: "西谷駅",
+      operator: "",
+      lines: [],
+      prefecture: "",
+      latitude: 0,
+      longitude: 0,
+    });
+  });
+
+  test("到着駅の座標が無い場合、緯度経度0でフォールバックする", async () => {
+    generateSingleCallNavigatorGuide.mockResolvedValue({
+      lines: ["相鉄本線"],
+      transferCount: 0,
+      estimatedMinutes: 10,
+      arrivalPlatformNumber: null,
+      boarding: null,
+      gate: null,
+      exit: null,
+      walkingSteps: [],
+    });
+    const adapter = new AiStationAdapter("test-key");
+
+    await adapter.getUnifiedArrivalGuide(
+      "st_yokohama",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      null,
+      null,
+      null
+    );
+
+    const [, , destinationArg] = generateSingleCallNavigatorGuide.mock.calls[0];
+    expect(destinationArg.latitude).toBe(0);
+    expect(destinationArg.longitude).toBe(0);
   });
 
   test("boardingPositionのconfidenceLevelをai_inferredの上限(medium)にキャップしたConfidenceへ変換する", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: {
+    generateSingleCallNavigatorGuide.mockResolvedValue({
+      lines: ["相鉄本線"],
+      transferCount: 0,
+      estimatedMinutes: 10,
+      arrivalPlatformNumber: null,
+      boarding: {
         carNumber: 6,
         doorPosition: "後方",
         reason: "1階改札への階段に近いため",
@@ -972,8 +772,12 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("boardingPositionがnullの場合はそのままnullとして返す", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
+    generateSingleCallNavigatorGuide.mockResolvedValue({
+      lines: ["相鉄本線"],
+      transferCount: 0,
+      estimatedMinutes: 10,
+      arrivalPlatformNumber: null,
+      boarding: null,
       gate: { name: "1F改札", confidenceLevel: "medium" },
       exit: { name: "五番街口", confidenceLevel: "medium" },
       walkingSteps: [],
@@ -997,8 +801,12 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("walkingStepsをGuideStep[](type: public_passage、provenance: ai_inferred)へ変換する", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue({
-      boardingPosition: null,
+    generateSingleCallNavigatorGuide.mockResolvedValue({
+      lines: ["相鉄本線"],
+      transferCount: 0,
+      estimatedMinutes: 10,
+      arrivalPlatformNumber: null,
+      boarding: null,
       gate: null,
       exit: null,
       walkingSteps: [
@@ -1039,7 +847,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("生成に失敗(null)した場合はnullを返す", async () => {
-    generateUnifiedArrivalGuide.mockResolvedValue(null);
+    generateSingleCallNavigatorGuide.mockResolvedValue(null);
     const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.getUnifiedArrivalGuide(

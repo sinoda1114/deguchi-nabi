@@ -38,8 +38,20 @@ export interface RailRouteCandidate {
 }
 
 export interface RouteProviderPort {
+  /**
+   * destinationHintは目的地施設名(place由来の目的地のみ)。単一呼び出し方式
+   * (single-call-navigator.ts)では、経路自体の検索と改札・出口の検索を1回の
+   * 検索セッションで行うため、目的地施設名が分かっていれば経路解決の時点から
+   * 渡す(2026-07-21追加、任意パラメータのため既存実装は無視してよい)。
+   *
+   * destinationPlaceCoordinatesは目的地施設自体の実座標(到着駅の中心座標とは
+   * 別物)。同名・支店違いの施設が複数存在する場合の曖昧性解消に使う
+   * (2026-07-21追加、/ai-review指摘対応)。
+   */
   findRailRoutes(
     originStationId: string,
-    destinationStationId: string
+    destinationStationId: string,
+    destinationHint?: string | null,
+    destinationPlaceCoordinates?: Coordinates | null
   ): Promise<RailRouteCandidate[]>;
 }
