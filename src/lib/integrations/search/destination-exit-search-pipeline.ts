@@ -93,7 +93,13 @@ function selectTopSources(
   });
 
   return deduped
-    .map((r) => scoreSearchSource({ url: r.link, title: r.title, publishedAt: r.date ?? null }))
+    .map((r) =>
+      scoreSearchSource(
+        { url: r.link, title: r.title, publishedAt: r.date ?? null },
+        new Date(),
+        { treatNonAggregatorAsLikelyOfficial: true }
+      )
+    )
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_ADOPTED_SOURCES);
 }

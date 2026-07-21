@@ -147,6 +147,84 @@ describe("scoreSearchSource", () => {
     expect(result.isOfficialDomain).toBe(false);
   });
 
+  test("treatNonAggregatorAsLikelyOfficial未指定(既定)では非公式・非ポータルドメインは加点されない(後方互換性)", () => {
+    const result = scoreSearchSource(
+      candidate({ url: "https://example-restaurant.jp/access" }),
+      now
+    );
+    expect(result.score).toBe(0);
+    expect(result.reasons.some((r) => r.includes("公式サイトの可能性"))).toBe(false);
+  });
+
+  test("treatNonAggregatorAsLikelyOfficial: false を明示指定しても既定と同じ(非公式・非ポータルドメインは加点されない)", () => {
+    const result = scoreSearchSource(
+      candidate({ url: "https://example-restaurant.jp/access" }),
+      now,
+      { treatNonAggregatorAsLikelyOfficial: false }
+    );
+    expect(result.score).toBe(0);
+  });
+
+  test("treatNonAggregatorAsLikelyOfficial: true 指定時、非公式・非ポータル・非低品質ドメインは加点される", () => {
+    const withOption = scoreSearchSource(
+      candidate({ url: "https://example-restaurant.jp/access" }),
+      now,
+      { treatNonAggregatorAsLikelyOfficial: true }
+    );
+    const withoutOption = scoreSearchSource(
+      candidate({ url: "https://example-restaurant.jp/access" }),
+      now
+    );
+    expect(withOption.score).toBeGreaterThan(withoutOption.score);
+    expect(
+      withOption.reasons.some((r) => r.includes("第三者ポータルではないため") && r.includes("公式サイトの可能性"))
+    ).toBe(true);
+  });
+
+  test("treatNonAggregatorAsLikelyOfficial: true 指定時でも、既知のグルメ/地図/SNSポータルドメインは加点されない", () => {
+    const aggregatorHosts = [
+      "https://s.tabelog.com/kanagawa/A1401/A140103/14000123/",
+      "https://r.gnavi.co.jp/abc123/",
+      "https://www.hotpepper.jp/strJ000123456/",
+      "https://gourmetplus.jp/shop/123",
+      "https://kaijosearch.com/kanto/F02847/access/",
+      "https://www.instagram.com/example_restaurant/",
+      "https://map.yahoo.co.jp/place?lat=1&lon=1",
+      "https://maps.google.com/?q=example",
+      "https://www.retty.me/area/PRE13/ARE2/SUB201/100012345/",
+      "https://www.tripadvisor.jp/Restaurant_Review-example",
+    ];
+    for (const url of aggregatorHosts) {
+      const result = scoreSearchSource(candidate({ url }), now, {
+        treatNonAggregatorAsLikelyOfficial: true,
+      });
+      expect(result.score).toBe(0);
+      expect(result.reasons.some((r) => r.includes("公式サイトの可能性"))).toBe(false);
+    }
+  });
+
+  test("treatNonAggregatorAsLikelyOfficial: true 指定時でも、既存のOFFICIAL_DOMAIN_PATTERNS該当ドメインは二重加点されない", () => {
+    const result = scoreSearchSource(
+      candidate({ url: "https://www.jreast.co.jp/estation/stations/123.html" }),
+      now,
+      { treatNonAggregatorAsLikelyOfficial: true }
+    );
+    expect(result.score).toBe(3);
+    expect(result.reasons.filter((r) => r.includes("公式ドメイン") || r.includes("公式サイトの可能性")).length).toBe(
+      1
+    );
+  });
+
+  test("treatNonAggregatorAsLikelyOfficial: true 指定時でも、低品質ドメインは従来通り減点のみで加点されない", () => {
+    const result = scoreSearchSource(
+      candidate({ url: "https://station-guide.hatenablog.com/entry/1" }),
+      now,
+      { treatNonAggregatorAsLikelyOfficial: true }
+    );
+    expect(result.score).toBe(-2);
+    expect(result.reasons.some((r) => r.includes("公式サイトの可能性"))).toBe(false);
+  });
+
   test("公式ドメイン+関連語+PDF+最新の全条件を満たすと最高スコアになる", () => {
     const best = scoreSearchSource(
       candidate({
