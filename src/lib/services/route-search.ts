@@ -22,7 +22,6 @@ import { haversineMeters } from "@/lib/geo/haversine";
 import { bearingDegrees, bearingDifferenceDegrees, compassLabel } from "@/lib/geo/bearing";
 import { worstConfidenceLevel } from "./confidence-engine";
 import { buildArrivalGuide } from "./arrival-guide";
-import { isGuideStepVisible } from "./guide-step-visibility";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 /**
@@ -51,6 +50,13 @@ const DURATION_TIE_THRESHOLD_MINUTES = 5;
  */
 export const NO_DEPARTURE_TIME_DISCLAIMER =
   "この案内は通常時の経路情報です。実際の到着番線・最適な乗車位置は、利用日時や運行状況によって異なる場合があります。";
+/**
+ * confidenceが"high"でない改札・出口セグメントのinstruction末尾に付ける注記。
+ * overview-field.ts の UNCERTAIN_NOTE / route-timeline-nodes.ts の
+ * UNCERTAIN_STEP_NOTE と同じ文言("未確認情報")に揃える(アプリ全体での
+ * 表記統一。3箇所で確認度の見せ方がバラバラだった問題への対応)。
+ */
+const UNCERTAIN_NOTE = "未確認情報";
 
 export type { Coordinates };
 
@@ -625,13 +631,15 @@ export async function buildTransferAndExitSegments(
           },
         ]
       : [],
-    // 具体的な改札名を確認できていない場合、「改札を出てください」のような
-    // 実行可能に見える定型文は表示しない(改札の実在自体は確実でも、目的地の
-    // 方角に実在するとまでは確認できていないため)。確認できない旨を明示し、
-    // 方角(あれば)は hasApproximateGuidance/approximateDirectionLabel 経由で
-    // 「推奨方向」として別途・一度だけ提示する(ユーザーフィードバックに基づき、
-    // 未確認の情報を定型文でごまかさない設計に変更)。
-    instruction: gate ? `${gate.name}へ向かってください。` : "改札は確認できません。",
+    // 改札自体が実在未確認(gate === null)の場合のみ「確認できません」と明示する。
+    // gateが実在する場合はconfidenceで隠さず必ず改札名を表示する。confidenceが
+    // "high"未満(実在は確認できたが検証度が低い)の場合のみ、末尾に
+    // UNCERTAIN_NOTEを付けて参考情報であることを伝える(隠す設計から、常に
+    // 出して確度を注記する設計への転換。実機検証でユーザーから「隠す」設計への
+    // 強い不満が出たことを受けた再設計)。
+    instruction: gate
+      ? `${gate.name}へ向かってください。${gate.confidence.level !== "high" ? `(${UNCERTAIN_NOTE})` : ""}`
+      : "改札は確認できません。",
     // 改札自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
     // 常にunavailable(確認不能)として扱う。lowは「実在は確認済みだが検証度が
     // 低い」ケース専用であり、未確認をlowとして扱うと過大な確信度になる。
@@ -640,31 +648,25 @@ export async function buildTransferAndExitSegments(
     warnings: [],
   };
 
-  // arrivalGuide.steps側(isGuideStepVisible)と同じ可視性基準で出口の表示可否を
-  // 判定する。street_exitは"high_risk"種別のためconfidence.levelがmedium以上
-  // でなければ非表示にする(改札後の進行方向・出口は逆方向へ誤誘導する実害が
-  // あるため)。ここで揃えないと、上部サマリー「利用出口」(arrivalGuide経由、
-  // RouteExitStat.tsx)は低confidenceの出口を「確認できません」と隠す一方、
-  // 下部「ルート」カードの出口ステップ(このexitSegment)だけがconfidenceを
-  // 見ずに出口名をそのまま表示してしまい、同一データソースなのに表示の
-  // 有無が矛盾する不具合があった(西谷駅→kawara CAFE&DINING横浜店の実機検証で
-  // 確認済み: confidence "low"の「相鉄口」が上部では非表示・下部では表示される
-  // 不整合が発生した)。
+  // exitが実在確認できている(exit !== null)場合は、confidenceで隠さず必ず
+  // 出口名を表示する。以前は"high_risk"種別としてconfidence.levelがmedium
+  // 未満なら非表示にしていたが、これが原因で改札・出口情報の大半が
+  // 「確認できません」表示になり、実機検証でユーザーから強い不満が出た。
+  // 第三者レビューの結論(guide-step-visibility.ts参照)を受け、「隠す」のでは
+  // なく「存在する情報は必ず出し、確度が高くなければ注記で伝える」設計に
+  // 転換した。上部サマリー「利用出口」(RouteExitStat.tsx、overview-field.ts
+  // 経由)・「ルートの流れ」タイムライン(route-timeline-nodes.ts)・この
+  // exitSegmentの3箇所とも同じ基準(exit非nullなら表示、confidence非highなら
+  // UNCERTAIN_NOTE注記)に揃えている。
   //
-  // exit変数自体はnullにしない: confidenceSummary.exit(computeConfidenceSummary
-  // 参照)やrecommendedExit/computeKeyInstructionは、この可視性基準(risk tier
-  // 込みの表示可否)とは独立に「出口自体は実在が確認できたか、その検証度は
-  // 何か」を表す既存の契約を持つ(gateセグメントのconfidenceコメント参照:
-  // lowは「実在は確認済みだが検証度が低い」ケース専用で、未確認(unavailable)
-  // とは意味が異なる)。ここでexitをnullへ書き換えると、実際にはlow
-  // confidenceで実在する出口を「出口情報が不足しています」(unavailable)扱いに
-  // 格上げしてしまい、confidenceSummary等の集計値が実態と乖離する。
-  // このexitSegmentのfacilities/instruction表示だけを可視性基準でゲートし、
-  // confidence自体は実際の値(exit.confidence)を維持する。
-  const isExitVisible = exit
-    ? isGuideStepVisible({ type: "street_exit", confidence: exit.confidence })
-    : false;
-
+  // exit変数自体はnullにしない(以前からの設計を維持): confidenceSummary.exit
+  // (computeConfidenceSummary参照)やrecommendedExit/computeKeyInstructionは
+  // 「出口自体は実在が確認できたか、その検証度は何か」を表す既存の契約を持つ
+  // (gateセグメントのconfidenceコメント参照: lowは「実在は確認済みだが検証度が
+  // 低い」ケース専用で、未確認(unavailable)とは意味が異なる)。ここでexitを
+  // nullへ書き換えると、実際にはlow confidenceで実在する出口を「出口情報が
+  // 不足しています」(unavailable)扱いに格上げしてしまい、confidenceSummary等の
+  // 集計値が実態と乖離する。
   const exitSegment: RouteSegment = {
     type: "exit",
     from: candidate.arrivalStationName,
@@ -673,26 +675,28 @@ export async function buildTransferAndExitSegments(
     direction: null,
     platform: null,
     boardingPosition: null,
-    facilities:
-      exit && isExitVisible
-        ? [
-            {
-              facilityType: exit.facilityType,
-              name: exit.name,
-              confidence: exit.confidence,
-            },
-          ]
-        : [],
-    // 具体的な出口名を確認できていない場合、方角(◯◯側)を出口名の代用として
-    // 表示しない。方角は hasApproximateGuidance/approximateDirectionLabel
-    // 経由で「推奨方向」として別途提示する(ユーザーフィードバックに基づき、
-    // 「南側」等を出口名の代わりに表示する設計をやめた)。
-    instruction:
-      exit && isExitVisible ? `${exit.name}から出てください。` : "出口は確認できません。",
+    facilities: exit
+      ? [
+          {
+            facilityType: exit.facilityType,
+            name: exit.name,
+            confidence: exit.confidence,
+          },
+        ]
+      : [],
+    // 具体的な出口名を確認できていない場合(exit === null)のみ「確認できません」
+    // と明示する。方角(◯◯側)を出口名の代用として表示しない設計は維持する
+    // (方角は hasApproximateGuidance/approximateDirectionLabel 経由で
+    // 「推奨方向」として別途提示する)。exitが実在する場合はconfidenceが
+    // "high"未満でも出口名をそのまま表示し、末尾にUNCERTAIN_NOTEを付けて
+    // 参考情報であることを伝える。
+    instruction: exit
+      ? `${exit.name}から出てください。${exit.confidence.level !== "high" ? `(${UNCERTAIN_NOTE})` : ""}`
+      : "出口は確認できません。",
     // 出口自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
-    // 常にunavailable(確認不能)として扱う。isExitVisibleがfalseでもexitが
-    // 実在する(=lowなど閾値未満)場合は、実際のconfidenceをそのまま保持する
-    // (上記コメント参照。confidenceSummary.exit等との整合を保つため)。
+    // 常にunavailable(確認不能)として扱う。exitが実在する場合は、実際の
+    // confidenceをそのまま保持する(上記コメント参照。confidenceSummary.exit
+    // 等との整合を保つため)。
     confidence: exit ? exit.confidence : unavailableConfidence("出口情報が不足しています"),
     sourceReferences: [],
     warnings: [],
