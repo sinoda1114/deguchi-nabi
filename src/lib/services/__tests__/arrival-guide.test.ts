@@ -145,7 +145,7 @@ describe("buildArrivalGuide", () => {
     expect(guide.steps[0].confidence.level).toBe("high");
   });
 
-  test("gate・exit両方確定(surveyed)・経路も非AI生成であればAI生成のナラティブステップをticket_gateとstreet_exitの間に挿入する", async () => {
+  test("gate・exit両方確定(surveyed)・経路も非AI生成であればAI生成のナラティブステップをticket_gate・street_exitの後に挿入する", async () => {
     const getArrivalGuideNarrativeSteps = vi
       .fn()
       .mockResolvedValue([guideStep({ type: "public_passage", title: "地下通路" })]);
@@ -163,7 +163,7 @@ describe("buildArrivalGuide", () => {
       { getArrivalGuideNarrativeSteps }
     );
 
-    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "public_passage", "street_exit"]);
+    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit", "public_passage"]);
     expect(getArrivalGuideNarrativeSteps).toHaveBeenCalledWith(
       "st_1",
       "テスト駅",
@@ -283,7 +283,7 @@ describe("buildArrivalGuide", () => {
       { getArrivalGuideNarrativeSteps }
     );
 
-    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "post_gate_direction", "street_exit"]);
+    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit", "post_gate_direction"]);
   });
 
   test("confidence:unavailableのステップは最終結果から除外する(isGuideStepVisibleによるフィルタ、実在確認すらできていないため)", async () => {
@@ -328,8 +328,8 @@ describe("buildArrivalGuide", () => {
       [unifiedStep]
     );
 
-    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "public_passage", "street_exit"]);
-    expect(guide.steps[1].title).toBe("統合生成ステップ");
+    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit", "public_passage"]);
+    expect(guide.steps[2].title).toBe("統合生成ステップ");
     expect(getArrivalGuideNarrativeSteps).not.toHaveBeenCalled();
   });
 

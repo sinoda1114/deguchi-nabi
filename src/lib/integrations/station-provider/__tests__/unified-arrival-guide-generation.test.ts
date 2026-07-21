@@ -33,6 +33,27 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(args[5]).toBe("gemini-3.5-flash");
   });
 
+  test("extractionInstructionに「目的地に到着」のような内容のない末尾ステップを含めない指示を含める(2026-07-21、ユーザー指摘: 目的地ピンと重複し、出口ノードとの並び順もあべこべに見える原因になっていた)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
+
+    await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "横浜駅",
+      "相鉄",
+      ["相鉄本線"],
+      null,
+      null,
+      null
+    );
+
+    const extractionInstruction = searchAndGenerateStructuredContent.mock.calls[0][2] as string;
+    expect(extractionInstruction).toContain("目的地に到着");
+    expect(extractionInstruction).toContain("含めないでください");
+  });
+
   test("gemini-3.1-flash-liteをextractionModelとして渡す(chore/pin-models-pattern-a: 検索能力を要求しない構造化抽出フェーズはコストの低いモデルで足りるかのA/B評価対象)", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({ walkingSteps: [] });
 
