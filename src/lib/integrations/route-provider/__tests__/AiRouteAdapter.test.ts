@@ -44,7 +44,6 @@ const GENERATED_GUIDE: SingleCallNavigatorGuide = {
   boarding: null,
   gate: null,
   exit: null,
-  walkingSteps: [],
 };
 
 function fakeStationProvider(stations: Record<string, Station | null>) {

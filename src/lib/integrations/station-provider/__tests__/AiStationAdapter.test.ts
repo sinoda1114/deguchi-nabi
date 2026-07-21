@@ -627,7 +627,6 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       boarding: null,
       gate: { name: "1F改札", confidenceLevel: "medium" },
       exit: { name: "五番街口", confidenceLevel: "medium" },
-      walkingSteps: [],
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -671,7 +670,6 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       boarding: null,
       gate: null,
       exit: null,
-      walkingSteps: [],
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -709,7 +707,6 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       boarding: null,
       gate: null,
       exit: null,
-      walkingSteps: [],
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -745,7 +742,6 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       },
       gate: { name: "1F改札", confidenceLevel: "high" },
       exit: { name: "五番街口", confidenceLevel: "high" },
-      walkingSteps: [],
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -780,7 +776,6 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       boarding: null,
       gate: { name: "1F改札", confidenceLevel: "medium" },
       exit: { name: "五番街口", confidenceLevel: "medium" },
-      walkingSteps: [],
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -800,7 +795,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     expect(result?.boardingPosition).toBeNull();
   });
 
-  test("walkingStepsをGuideStep[](type: public_passage、provenance: ai_inferred)へ変換する", async () => {
+  test("walkingStepsは常に空配列を返す(2026-07-21ユーザー判断: 出口から先の徒歩ナラティブは生成しない。実機で「右折」が実際は左折だった誤りが発覚したため)", async () => {
     generateSingleCallNavigatorGuide.mockResolvedValue({
       lines: ["相鉄本線"],
       transferCount: 0,
@@ -809,9 +804,6 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       boarding: null,
       gate: null,
       exit: null,
-      walkingSteps: [
-        { title: "見出し", instruction: "改札を出て直進してください。", confidenceLevel: "high" },
-      ],
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -828,22 +820,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       null
     );
 
-    expect(result?.walkingSteps).toEqual([
-      {
-        type: "public_passage",
-        title: "見出し",
-        instruction: "改札を出て直進してください。",
-        landmarks: [],
-        confidence: {
-          level: "medium",
-          reasons: ["AIによる推測情報(検索結果に基づく)。現地未確認のため参考程度に扱ってください。"],
-          verifiedAt: null,
-          expiresAt: null,
-          sourceCount: 0,
-        },
-        provenance: "ai_inferred",
-      },
-    ]);
+    expect(result?.walkingSteps).toEqual([]);
   });
 
   test("生成に失敗(null)した場合はnullを返す", async () => {

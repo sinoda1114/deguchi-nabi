@@ -298,14 +298,9 @@ export class AiStationAdapter implements StationProviderPort {
       exit: guide.exit
         ? { name: guide.exit.name, confidence: groundedAiConfidence(guide.exit.confidenceLevel) }
         : null,
-      walkingSteps: guide.walkingSteps.map((step) => ({
-        type: "public_passage",
-        title: step.title,
-        instruction: step.instruction,
-        landmarks: [],
-        confidence: groundedAiConfidence(step.confidenceLevel),
-        provenance: "ai_inferred",
-      })),
+      // 出口から目的地までの徒歩ナラティブ(左折・右折等)は生成しない
+      // (2026-07-21ユーザー判断、single-call-navigator.tsのJSDoc参照)。
+      walkingSteps: [],
     };
   }
 }

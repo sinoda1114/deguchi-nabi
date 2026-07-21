@@ -43,7 +43,6 @@ const VALID_RAW = {
   boardingDoorPosition: "1番ドア",
   boardingReason: "階段が近いため",
   boardingConfidence: "low",
-  walkingSteps: [{ title: "道玄坂を上る", instruction: "A1出口を出て道玄坂を上ってください。", confidence: "medium" }],
 };
 
 describe("buildNavigatorSearchPrompt", () => {
@@ -89,7 +88,6 @@ describe("generateSingleCallNavigatorGuide", () => {
       reason: "階段が近いため",
       confidenceLevel: "low",
     });
-    expect(result?.walkingSteps).toHaveLength(1);
   });
 
   test("号車が未確認(boardingCarNumber省略)の場合、boardingはnullになる(断定を避ける挙動の維持)", async () => {
@@ -117,7 +115,6 @@ describe("generateSingleCallNavigatorGuide", () => {
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result?.gate).toBeNull();
     expect(result?.exit).toBeNull();
-    expect(result?.walkingSteps).toEqual([]);
   });
 
   test("改札名は明記されているがconfidenceだけ欠けている場合、棄却せずlowで採用する(本番再現バグの回帰テスト: 西谷駅→kawara CAFE&DINING横浜店でgateNameは取れていたのにgateConfidence欠落で丸ごとnullになっていた)", async () => {
@@ -126,7 +123,6 @@ describe("generateSingleCallNavigatorGuide", () => {
       transferCount: 0,
       estimatedMinutes: 13,
       gate: { name: "1階改札（みなみ西口（相鉄口）側）" },
-      walkingSteps: [],
     });
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
@@ -211,7 +207,6 @@ describe("generateSingleCallNavigatorGuide", () => {
         lines: ["相鉄本線"],
         transferCount: 0,
         estimatedMinutes: 13,
-        walkingSteps: [],
       })
       .mockResolvedValueOnce(VALID_RAW);
 
@@ -225,7 +220,6 @@ describe("generateSingleCallNavigatorGuide", () => {
       lines: ["相鉄本線"],
       transferCount: 0,
       estimatedMinutes: 13,
-      walkingSteps: [],
     });
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
