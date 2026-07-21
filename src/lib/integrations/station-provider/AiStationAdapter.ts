@@ -4,6 +4,7 @@ import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import { generateUnifiedArrivalGuide } from "./unified-arrival-guide-generation";
 import { searchDestinationExitViaSerper } from "@/lib/integrations/search/destination-exit-search-pipeline";
+import { searchArrivalGateForLine } from "@/lib/integrations/search/arrival-gate-search-pipeline";
 import { groundedAiConfidence } from "./ai-generation";
 import {
   decodeHeartRailsStationId,
@@ -248,20 +249,65 @@ export class AiStationAdapter implements StationProviderPort {
     // 到着なのに、渋谷駅の全路線リストに含まれる「京王井の頭線」が出口候補の
     // viaHintと一致し、無関係な出口が強制採用された。destination-exit-search-
     // pipeline.tsのpickBestCandidate()コメント参照)。
-    const serperResult = destinationHint
-      ? await searchDestinationExitViaSerper(
-          { serperApiKey: this.serperApiKey, jinaApiKey: this.jinaApiKey, geminiApiKey: this.geminiApiKey },
-          destinationHint,
-          destinationPlaceCoordinates,
-          [originLine]
-        )
-      : null;
-    const fixedExit = serperResult
-      ? {
-          name: serperResult.exit.name,
-          confidenceLevel: serperResult.exit.confidence.level,
-          matchedArrivalLine: serperResult.matchedArrivalLine,
-        }
+    //
+    // 2026-07-21: 目的地の公式サイト検索(searchDestinationExitViaSerper)とは別に、
+    // 到着駅名+乗車路線での駅ガイド検索(searchArrivalGateForLine)も並列で実行する。
+    // 目的地の公式サイトは改札名まで案内していないことがほとんど(お店側は改札を
+    // 意識しない)ため、改札の検証はこれまで統合生成本体(generateUnifiedArrivalGuide)の
+    // AI自己判断に任せるしかなく、実機で実在しない改札名を創作する誤りが確認された
+    // (ユーザー指摘)。到着駅+乗車路線で検索すると「渋谷駅の道玄坂改札はどこ？」の
+    // ような第三者の駅ガイド記事がヒットし、改札を確認できる。destinationHintの
+    // 有無に関わらず(目的地がplace由来かstation由来かに関わらず)、到着駅+乗車路線が
+    // 分かっていれば改札は検証できるため、originLineが空文字でない限り常に実行する。
+    const [serperResult, arrivalGateResult] = await Promise.all([
+      destinationHint
+        ? searchDestinationExitViaSerper(
+            { serperApiKey: this.serperApiKey, jinaApiKey: this.jinaApiKey, geminiApiKey: this.geminiApiKey },
+            destinationHint,
+            destinationPlaceCoordinates,
+            [originLine]
+          )
+        : Promise.resolve(null),
+      originLine
+        ? searchArrivalGateForLine(
+            { serperApiKey: this.serperApiKey, jinaApiKey: this.jinaApiKey, geminiApiKey: this.geminiApiKey },
+            stationName,
+            originLine
+          )
+        : Promise.resolve(null),
+    ]);
+
+    // 出口: 目的地公式サイトが今回の路線と一致確認できていればそれを最優先。
+    // 一致確認できなかった場合、駅ガイド検索(arrivalGateResult)がexitHintを
+    // 返していれば、そちらは路線について確実に一致した情報源(searchArrivalGateForLine
+    // は不一致ならnullを返す設計)なのでそれを使う。どちらも無ければ、目的地
+    // 検索の不一致結果を参考情報として渡す(従来通り)。
+    const fixedExit =
+      serperResult && serperResult.matchedArrivalLine
+        ? {
+            name: serperResult.exit.name,
+            confidenceLevel: serperResult.exit.confidence.level,
+            matchedArrivalLine: true,
+          }
+        : arrivalGateResult && arrivalGateResult.exitHint
+          ? {
+              name: arrivalGateResult.exitHint,
+              confidenceLevel: arrivalGateResult.gate.confidence.level,
+              matchedArrivalLine: true,
+            }
+          : serperResult
+            ? {
+                name: serperResult.exit.name,
+                confidenceLevel: serperResult.exit.confidence.level,
+                matchedArrivalLine: false,
+              }
+            : null;
+
+    // 改札: 駅ガイド検索が今回の路線と一致確認できた場合のみ使う
+    // (searchArrivalGateForLineは不一致ならnullを返す設計のため、非nullなら
+    // 常に信頼してよい)。
+    const fixedGate = arrivalGateResult
+      ? { name: arrivalGateResult.gate.name, confidenceLevel: arrivalGateResult.gate.confidence.level }
       : null;
 
     const result = await generateUnifiedArrivalGuide(
@@ -275,7 +321,8 @@ export class AiStationAdapter implements StationProviderPort {
       destinationHint,
       stationCoordinates,
       destinationPlaceCoordinates,
-      fixedExit
+      fixedExit,
+      fixedGate
     );
     if (!result) return null;
 

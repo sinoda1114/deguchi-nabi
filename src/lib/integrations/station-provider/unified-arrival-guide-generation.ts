@@ -71,6 +71,18 @@ import { locationHint } from "./ai-generation";
  * 基準)を参照する不整合が3回中2回の頻度で再現した。出口を先に(目的地への
  * 近さで)決め、改札をその出口から逆引きさせることで、後続の号車判断も
  * 曖昧さの少ない改札を基準にできる。
+ *
+ * 2026-07-21: fixedGate(改札の事前確定情報)を追加した。従来fixedExitは目的地の
+ * 公式サイト検索(destination-exit-search-pipeline.ts)で確認できた出口を渡す
+ * 仕組みだったが、改札についてはこの関数(統合生成)のAI自己判断に任せるしか
+ * なく、実機で実在しない改札名を創作する誤りが確認された(ユーザー指摘)。
+ * 目的地の公式サイトは「渋谷駅から徒歩3分」のように改札名まで意識せず書かれて
+ * いることがほとんどで、改札の検証には別の情報源が必要だった。そこで、
+ * 到着駅名+乗車路線で検索する新パイプライン(arrival-gate-search-pipeline.ts)を
+ * 追加した。「渋谷駅の道玄坂改札はどこ？」のような第三者の駅ガイド記事は
+ * 路線ごとの改札・出口の対応関係を具体的に書いていることが多く、目的地の公式
+ * サイトより改札の確認に向いている。fixedExit・fixedGateの有無の組み合わせで
+ * プロンプトの指示を出し分ける(パターンA〜D。関数本体のコメント参照)。
  */
 
 const MODEL = "gemini-3.5-flash";
@@ -185,7 +197,8 @@ export async function generateUnifiedArrivalGuide(
     name: string;
     confidenceLevel: ConfidenceLevel;
     matchedArrivalLine: boolean;
-  } | null = null
+  } | null = null,
+  fixedGate: { name: string; confidenceLevel: ConfidenceLevel } | null = null
 ): Promise<UnifiedArrivalGuideResult | null> {
   const stationLabel = destinationOperator
     ? `${destinationStationName}駅(${destinationOperator}、${destinationLines.join("・")})${locationHint(stationCoordinates)}`
@@ -243,22 +256,62 @@ export async function generateUnifiedArrivalGuide(
   // matchedArrivalLineを持たせ、trueの場合のみ従来通り無条件で強制採用する。
   // falseの場合は出口を強制せず、参考情報として提示したうえでモデル自身に
   // 今回の乗車路線基準で出口を判断させる。
-  const fixedExitNote = fixedExit
-    ? fixedExit.matchedArrivalLine
-      ? `\n\n【出口は既に確定済み】\n目的地の公式情報の検索により、出口は既に「${fixedExit.name}」と判明しています。この出口名をそのまま採用してください(別の出口を提案しないでください)。あなたが行うべきなのは、この「${fixedExit.name}」に直接つながる、またはこの出口を利用する際に必ず通る改札名を、今回の乗車事業者(${originLine}を運行する会社)基準で選ぶことです。`
-      : `\n\n【出口に関する参考情報(要確認)】\n目的地の公式情報によると、出口の候補として「${fixedExit.name}」という案内がありますが、これが今回ご利用の${originLine}向けの情報かどうかは確認できていません(目的地の公式情報が特定の路線・改札を意識せずに書かれている可能性があります)。この情報を参考にしつつも、今回の${originLine}到着経路として実際に整合する出口を、今回の乗車事業者(${originLine}を運行する会社)基準で改めて判断してください。「${fixedExit.name}」が今回の到着経路と整合しない場合は、別の出口を採用してかまいません。`
-    : "";
+  // fixedExit・fixedGateの有無の組み合わせで、以下の4パターンにプロンプトの
+  // 指示を出し分ける。
+  //
+  // パターンA: fixedGateがあり、かつfixedExitもmatchedArrivalLine:trueで
+  //   確定している場合(出口・改札とも確定)。
+  // パターンB: fixedGateがあるが、fixedExitが無い、またはmatchedArrivalLine:false
+  //   の場合(改札のみ確定。出口はこの改札を起点に選ばせる — 出口→改札という
+  //   通常の依存方向とは逆になる)。
+  // パターンC: fixedGateが無く、fixedExitがmatchedArrivalLine:trueの場合
+  //   (既存の挙動、出口確定→改札はそこから逆引き)。
+  // パターンD: fixedGateもfixedExitの確定も無い場合(fixedExitが不一致の
+  //   参考情報のみ、または両方無し)。
+  const exitConfirmed = fixedExit !== null && fixedExit.matchedArrivalLine;
+  const gateOnlyConfirmed = fixedGate !== null && !exitConfirmed;
+  const bothConfirmed = fixedGate !== null && exitConfirmed;
+  const exitOnlyConfirmed = fixedGate === null && exitConfirmed;
+
+  let derivedFactsNote = "";
+  if (bothConfirmed && fixedExit !== null && fixedGate !== null) {
+    // パターンA
+    derivedFactsNote = `\n\n【出口・改札は既に確定済み】\n${originLine}をご利用の場合、出口は「${fixedExit.name}」、改札は「${fixedGate.name}」と判明しています。この2つをそのまま採用してください(別の出口・改札を提案しないでください)。あなたが行うべきなのは、この改札に到着ホームから最短で向かえる号車・ドア位置と、この改札からこの出口を経由して目的地までの徒歩ルートを決めることです。`;
+  } else if (gateOnlyConfirmed && fixedGate !== null) {
+    // パターンB
+    const referenceNote = fixedExit
+      ? ` 参考情報として、目的地の公式情報には出口「${fixedExit.name}」という案内もありますが、今回の${originLine}向けの情報かどうかは未確認です。`
+      : "";
+    derivedFactsNote = `\n\n【改札は既に確定済み】\n${originLine}をご利用の場合の改札は既に「${fixedGate.name}」と判明しています。この改札名をそのまま採用してください(別の改札を提案しないでください)。あなたが行うべきなのは、この「${fixedGate.name}」改札を出た先で目的地に最も直接的にたどり着ける出口を選ぶことです。${referenceNote}`;
+  } else if (exitOnlyConfirmed && fixedExit !== null) {
+    // パターンC(既存の挙動)
+    derivedFactsNote = `\n\n【出口は既に確定済み】\n目的地の公式情報の検索により、出口は既に「${fixedExit.name}」と判明しています。この出口名をそのまま採用してください(別の出口を提案しないでください)。あなたが行うべきなのは、この「${fixedExit.name}」に直接つながる、またはこの出口を利用する際に必ず通る改札名を、今回の乗車事業者(${originLine}を運行する会社)基準で選ぶことです。`;
+  } else if (fixedExit) {
+    // パターンD(fixedExitが不一致の参考情報のみ)
+    derivedFactsNote = `\n\n【出口に関する参考情報(要確認)】\n目的地の公式情報によると、出口の候補として「${fixedExit.name}」という案内がありますが、これが今回ご利用の${originLine}向けの情報かどうかは確認できていません(目的地の公式情報が特定の路線・改札を意識せずに書かれている可能性があります)。この情報を参考にしつつも、今回の${originLine}到着経路として実際に整合する出口を、今回の乗車事業者(${originLine}を運行する会社)基準で改めて判断してください。「${fixedExit.name}」が今回の到着経路と整合しない場合は、別の出口を採用してかまいません。`;
+  }
+  // パターンDでfixedExit自体も無い場合はderivedFactsNoteは空文字のまま。
+
+  // 「回答の考え方」セクションの依存関係の説明も、パターンBのみ「改札→出口」の
+  // 順に逆転させる(改札が既に確定していて出口をそこから選ぶため)。パターン
+  // A/C/Dは既存通り「出口→改札」の順。
+  const dependencyIntro = gateOnlyConfirmed
+    ? "以下の4項目のうち、改札は既に確定済みです。残りの項目は、確定済みの改札の結果を踏まえて決めてください(通常は出口を目的地への近さで先に決め改札を逆引きしますが、今回は改札が先に確定しているため依存の向きが逆になります)。"
+    : "以下の4項目は目的地から逆算した依存関係にあります。必ずこの順序で考え、後の項目は前の項目の結果を踏まえて決めてください(改札を先に単独で決めて、それに合わせて出口を選ぶという逆の順序にはしないでください)。";
+  const dependencyOrder = gateOnlyConfirmed
+    ? "改札(既に確定済み) → 出口(その改札を出た先で目的地に最も直接的にたどり着けるもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)"
+    : "出口(目的地に最も近い/最も直接的にたどり着けるもの) → 改札(その出口に直接つながる、またはその出口を利用する際に必ず通るもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)";
 
   const searchPrompt = `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStationName}駅」から${originLine}(${originDirection})に乗車し、「${destinationLabel}」へ向かうルートを知りたいと考えています。
 回答時には必ずインターネット検索を行い、最新かつ正確な乗車位置・改札・出口・徒歩ルート情報を取得し、出力前にファクトチェックを行います。
 
 【回答の考え方(重要)】
-以下の4項目は目的地から逆算した依存関係にあります。必ずこの順序で考え、後の項目は前の項目の結果を踏まえて決めてください(改札を先に単独で決めて、それに合わせて出口を選ぶという逆の順序にはしないでください)。
-出口(目的地に最も近い/最も直接的にたどり着けるもの) → 改札(その出口に直接つながる、またはその出口を利用する際に必ず通るもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)${fixedExitNote}
+${dependencyIntro}
+${dependencyOrder}${derivedFactsNote}
 
 【回答すべき情報】
 1. ${fixedExit && fixedExit.matchedArrivalLine ? `出口名は「${fixedExit.name}」で確定済みです(そのまま回答してください)` : destinationHint ? `${destinationLabel}に最も直接的にたどり着ける出口名(徒歩距離が最短になるものを優先してください)` : `${stationLabel}の主要な出口名`}
-2. 1の出口に直接つながる、またはその出口を利用する際に必ず通る改札名(1で決めた出口を起点に選んでください)
+2. ${fixedGate ? `改札名は「${fixedGate.name}」で確定済みです(そのまま回答してください)` : "1の出口に直接つながる、またはその出口を利用する際に必ず通る改札名(1で決めた出口を起点に選んでください)"}
 3. 2の改札を出て1の出口を通り、目的地までの徒歩ルート(目印を含む、簡潔に)
 4. ${originStationName}駅で${originLine}(${originDirection})に乗車する場合、2の改札に到着ホーム上の階段・エスカレーターで最短で向かえる号車・ドア位置(列車の進行方向・編成両数と照合して決めてください。到着番線や編成によって結果が変わる場合はその条件を含めてください)${operatorDisambiguationNote}
 
@@ -301,8 +354,15 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
           confidenceLevel: result.boardingConfidence,
         }
       : null;
-  const gate =
-    isNonEmptyText(result.gateName) && isValidConfidenceLevel(result.gateConfidence)
+  // fixedGateが渡されている場合は、抽出結果のgateNameより優先してそのまま
+  // 採用する(モデルが「改札名は確定済み」という指示に従わず別の改札を返した
+  // 場合の揺らぎを吸収するため。arrival-gate-search-pipeline.tsが不一致時に
+  // nullを返す設計のため、fixedGateが非nullなら常に今回の乗車路線と一致
+  // 確認済みであることが保証されている)。fixedGateが無い場合は、モデル自身が
+  // 検索して自己判定した結果(gateName/gateConfidence)を採用する。
+  const gate = fixedGate
+    ? { name: fixedGate.name, confidenceLevel: fixedGate.confidenceLevel }
+    : isNonEmptyText(result.gateName) && isValidConfidenceLevel(result.gateConfidence)
       ? { name: result.gateName, confidenceLevel: result.gateConfidence }
       : null;
   // fixedExitが渡され、かつ今回の乗車路線(originLine)との一致が確認できて
