@@ -932,7 +932,7 @@ describe("buildTransferAndExitSegments", () => {
     expect(getFacilities).not.toHaveBeenCalled();
   });
 
-  test("統合生成が出口を確認できなかった場合(gateのみ、または両方null)は、部分結果を「確認済み」扱いせず、かつ旧方式(getFacilities)へもフォールバックしない(/ai-review再指摘、Medium: exit未確認をexact tierとして誤判定しない。/security-review指摘、Medium: 課金AI呼び出しの二重発生を避ける)", async () => {
+  test("統合生成が出口を確認できず改札のみ確認できた場合、改札は採用しつつ出口のみ確認不能のまま返す。旧方式(getFacilities)へはフォールバックしない(2026-07-21修正: 単一呼び出し方式では改札・出口を独立して抽出するため、旧来の「exit未確認ならgateも握りつぶす」結合を撤廃した。実機発覚: 西谷駅→kawara CAFE&DINING横浜店で改札名は確信度高く抽出できていたのに出口が同じ応答内で未確認だっただけで改札まで「確認できません」になっていた不具合の回帰テスト)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       boardingPosition: null,
       gate: { name: "統合生成改札", confidence: highConfidence },
@@ -955,12 +955,72 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    // 統合生成のgateだけの部分結果は採用しない。旧方式(getFacilities)へも
-    // フォールバックしないため確認不能のままになる。
+    // 出口は未確認のまま。改札は独立して確認できているため採用する
+    // (存在する情報は必ず出す、隠さない方針)。旧方式(getFacilities)へは
+    // フォールバックしない。
+    expect(outcome.result.exit).toBeNull();
+    expect(outcome.result.gate?.name).toBe("統合生成改札");
+    expect(outcome.result.hasApproximateGuidance).toBe(false);
+    expect(getFacilities).not.toHaveBeenCalled();
+  });
+
+  test("統合生成が改札・出口とも確認できなかった場合は両方nullのまま返す(旧方式へのフォールバックはしない)", async () => {
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
+      gate: null,
+      exit: null,
+      walkingSteps: [],
+    }));
+    const getFacilities = vi.fn(async () => []);
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider([]),
+      getUnifiedArrivalGuide,
+      getFacilities,
+    };
+    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
+    const input = { ...BASE_INPUT, mode: "easy" as const };
+    const candidate = await resolveRouteCandidate(input, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
     expect(outcome.result.exit).toBeNull();
     expect(outcome.result.gate).toBeNull();
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(getFacilities).not.toHaveBeenCalled();
+  });
+
+  test("改札が確認できていれば、出口が未確認でもunifiedBoardingPosition(乗車位置)は失わない(2026-07-21修正: 判定条件をunified.exitからunified.gateへ変更。乗車位置は改札を基準に決まるため出口の有無とは無関係)", async () => {
+    const boardingPosition = {
+      carNumber: 6,
+      doorPosition: "後方",
+      reason: "改札への階段が近いため",
+      confidence: highConfidence,
+    };
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition,
+      gate: { name: "統合生成改札", confidence: highConfidence },
+      exit: null,
+      walkingSteps: [],
+    }));
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider([]),
+      getUnifiedArrivalGuide,
+    };
+    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
+    const input = { ...BASE_INPUT, mode: "easy" as const };
+    const candidate = await resolveRouteCandidate(input, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    expect(outcome.result.unifiedBoardingPosition?.carNumber).toBe(6);
   });
 
   test("easy モードではエスカレーターがあればエレベーターより優先して transfer の facilities に使う", async () => {

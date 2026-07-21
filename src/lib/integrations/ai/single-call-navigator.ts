@@ -58,6 +58,11 @@ export interface SingleCallNavigatorGuide {
   walkingSteps: { title: string; instruction: string; confidenceLevel: ConfidenceLevel }[];
 }
 
+interface RawFacility {
+  name?: unknown;
+  confidence?: unknown;
+}
+
 interface RawExtraction {
   lines?: unknown;
   transferCount?: unknown;
@@ -67,12 +72,27 @@ interface RawExtraction {
   boardingDoorPosition?: unknown;
   boardingReason?: unknown;
   boardingConfidence?: unknown;
-  gateName?: unknown;
-  gateConfidence?: unknown;
-  exitName?: unknown;
-  exitConfidence?: unknown;
+  gate?: RawFacility | null;
+  exit?: RawFacility | null;
   walkingSteps?: unknown;
 }
+
+// gate/exitはname+confidenceをネストしたオブジェクトにする(/production指摘、
+// 2026-07-21実機発覚: フラットな gateName/gateConfidence 構造では、モデルが
+// gateNameだけ返しgateConfidenceを省略するケースがあり、名前と確信度が
+// 両方揃っていないと採用しない検証ロジック(extractGate)によって、実際には
+// 明記されていた改札名が丸ごと棄却され「確認できません」表示になる不具合が
+// 発生した(西谷駅→kawara CAFE&DINING横浜店で再現)。ネストしたオブジェクトの
+// 内側でrequiredを指定することで、モデルがそのオブジェクトを含める場合は
+// name/confidence両方を一緒に埋めるよう構造的に誘導する。
+const FACILITY_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+  },
+  required: ["name", "confidence"],
+};
 
 const EXTRACTION_SCHEMA = {
   type: "object",
@@ -95,16 +115,14 @@ const EXTRACTION_SCHEMA = {
     boardingDoorPosition: { type: "string" },
     boardingReason: { type: "string" },
     boardingConfidence: { type: "string", enum: ["high", "medium", "low"] },
-    gateName: {
-      type: "string",
-      description: "改札名が断定されている場合のみ含める。未確認の場合は省略すること。",
+    gate: {
+      ...FACILITY_SCHEMA,
+      description: "改札名が断定されている場合のみ含める(name/confidence両方を必ず埋めること)。未確認の場合はgate自体を省略する。",
     },
-    gateConfidence: { type: "string", enum: ["high", "medium", "low"] },
-    exitName: {
-      type: "string",
-      description: "出口名が断定されている場合のみ含める。未確認の場合は省略すること。",
+    exit: {
+      ...FACILITY_SCHEMA,
+      description: "出口名が断定されている場合のみ含める(name/confidence両方を必ず埋めること)。未確認の場合はexit自体を省略する。",
     },
-    exitConfidence: { type: "string", enum: ["high", "medium", "low"] },
     walkingSteps: {
       type: "array",
       items: {
@@ -126,7 +144,8 @@ const EXTRACTION_INSTRUCTION = `以下の文章から、経路案内情報をJSO
 - transferCount・estimatedMinutes: 整数で抽出してください。
 - arrivalPlatformNumber: 到着番線が文中で確認できる場合のみ含めてください(不明なら省略)。
 - boardingCarNumber/boardingDoorPosition/boardingReason/boardingConfidence: 号車位置が断定されている場合のみ含めてください。文中で「未確認」「降車後は案内表示に従ってください」のように断定を避けている場合は、これらのフィールドを一切含めないでください。
-- gateName/gateConfidence、exitName/exitConfidence: 改札名・出口名が断定されている場合のみ含めてください。断定されていない場合は含めないでください。「最重要ポイント」で明言されていなくても、詳細情報・徒歩ルートの説明文中に固有の改札名・出口名(例:「A0出口」「道玄坂改札」)が明記されていれば、それを必ずgateName/exitNameとして抽出してください(本文中のどこか1箇所にでも明記されていれば抽出対象です)。
+- gate/exit: 改札名・出口名が断定されている場合のみ、{name, confidence}の両方を必ずセットで含めてください。片方だけ(名前はあるが確信度は書かない、等)は禁止です。断定されていない場合はgate/exit自体を省略してください。「最重要ポイント」で明言されていなくても、詳細情報・徒歩ルートの説明文中に固有の改札名・出口名(例:「A0出口」「道玄坂改札」)が明記されていれば、それを必ず抽出してください(本文中のどこか1箇所にでも明記されていれば抽出対象です)。
+- 改札を出た地点がそのまま出口(例:「1階改札」を出るとそこが「みなみ西口」)のように、改札名と出口名が同じ場所を指す場合でも、gate(改札名)とexit(出口名)の両方を省略せずそれぞれ記入してください。片方に統合しないでください。
 - walkingSteps: 徒歩ルートの各ステップをtitle(短い見出し)・instruction(詳しい説明)・confidence(自己申告のhigh/medium/low)の配列で抽出してください。
 本文に明記されていない情報を創作しないでください。confidenceは本文中の確信度の記述を参考に自己申告してください(不明な場合はlowとしてください)。`;
 
@@ -244,16 +263,28 @@ function extractBoarding(raw: RawExtraction): SingleCallNavigatorGuide["boarding
   };
 }
 
+/**
+ * name/confidenceがネストされたオブジェクトから改札・出口情報を取り出す共有処理。
+ * 名前が明記されているのにconfidenceだけ欠けている場合、丸ごと棄却すると
+ * 実在する情報が「確認できません」に化けてしまう不具合が実機で発生した
+ * (西谷駅→kawara CAFE&DINING横浜店で再現、gateNameは抽出できていたが
+ * gateConfidence欠落で全体がnullになっていた)。スキーマ側でname/confidenceを
+ * 同じオブジェクトのrequiredにしたことで発生頻度は下がる想定だが、防御的に
+ * confidence欠落時は"low"を補って名前自体は失わないようにする。
+ */
+function extractFacility(raw: RawFacility | null | undefined): { name: string; confidenceLevel: ConfidenceLevel } | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  if (!isNonEmptyBoundedText(raw.name, MAX_FACILITY_NAME_LENGTH)) return null;
+  const confidenceLevel = isValidConfidenceLevel(raw.confidence) ? raw.confidence : "low";
+  return { name: raw.name, confidenceLevel };
+}
+
 function extractGate(raw: RawExtraction): SingleCallNavigatorGuide["gate"] {
-  if (!isNonEmptyBoundedText(raw.gateName, MAX_FACILITY_NAME_LENGTH)) return null;
-  if (!isValidConfidenceLevel(raw.gateConfidence)) return null;
-  return { name: raw.gateName, confidenceLevel: raw.gateConfidence };
+  return extractFacility(raw.gate);
 }
 
 function extractExit(raw: RawExtraction): SingleCallNavigatorGuide["exit"] {
-  if (!isNonEmptyBoundedText(raw.exitName, MAX_FACILITY_NAME_LENGTH)) return null;
-  if (!isValidConfidenceLevel(raw.exitConfidence)) return null;
-  return { name: raw.exitName, confidenceLevel: raw.exitConfidence };
+  return extractFacility(raw.exit);
 }
 
 function extractWalkingSteps(raw: RawExtraction): SingleCallNavigatorGuide["walkingSteps"] {
@@ -356,14 +387,28 @@ async function attemptGenerateSingleCallNavigatorGuide(
 }
 
 /**
+ * 改札・出口が両方ともnull(未確認)の結果か判定する。この状態は本来最も
+ * ユーザーに見せたくない結果(乗換自体は成功したのに改札・出口だけ
+ * 「確認できません」になる)であり、実機検証で一定確率(3回中1回)で
+ * 発生することを確認したため、丸ごとnullの場合と同様に再試行の対象にする。
+ */
+function isGateAndExitBothUnconfirmed(guide: SingleCallNavigatorGuide): boolean {
+  return guide.gate === null && guide.exit === null;
+}
+
+/**
  * 出発駅・目的地から、経路(利用路線・乗換回数・所要時間)+改札+出口+乗車位置+
  * 徒歩ルートを単一のGemini Search Grounding呼び出し(検索1回+抽出1回)で
  * まとめて生成する(公開API)。
  *
- * 実処理はattemptGenerateSingleCallNavigatorGuide()に委譲し、結果がnullの
- * 場合のみ最大MAX_ATTEMPTS回まで丸ごと再試行する(destination-exit-search-
- * pipeline.ts・ai-route-generation.tsと同じ設計)。例外はここで捕捉せず、
- * 呼び出し元にそのまま伝播させる。
+ * 実処理はattemptGenerateSingleCallNavigatorGuide()に委譲する。丸ごとnullの
+ * 場合に加え、改札・出口が両方ともnull(未確認)の場合も最大MAX_ATTEMPTS回まで
+ * 再試行する(本番実機で発覚: 西谷駅→kawara CAFE&DINING横浜店で改札・出口が
+ * 両方未確認になるケースを実測。destination-exit-search-pipeline.ts・
+ * ai-route-generation.tsのnull時再試行と同じ設計をこのケースにも拡張した)。
+ * 再試行しても改善しなかった場合は、直近の結果(経路情報は取れているが
+ * 改札・出口が未確認)をそのまま返す(経路自体まで捨てない)。例外はここで
+ * 捕捉せず、呼び出し元にそのまま伝播させる。
  */
 export async function generateSingleCallNavigatorGuide(
   apiKey: string,
@@ -382,11 +427,15 @@ export async function generateSingleCallNavigatorGuide(
       destinationHint,
       destinationPlaceCoordinates
     );
-    if (result !== null) return result;
+    if (result !== null && !isGateAndExitBothUnconfirmed(result)) return result;
 
     if (attempt < MAX_ATTEMPTS) {
+      const reason =
+        result === null
+          ? "結果がnullだった"
+          : "改札・出口が両方とも未確認だった";
       console.warn(
-        `[single-call-navigator] ${attempt}回目の試行がnullだったため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
+        `[single-call-navigator] ${attempt}回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
       );
     }
   }
