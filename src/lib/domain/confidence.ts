@@ -37,8 +37,10 @@ export function lowConfidence(reason: string): Confidence {
 
 /**
  * 情報の「出所」。信頼度(検証度)とは直交する軸として持つ(アーキテクチャ相談に基づく)。
- * 由来を confidence に混ぜず分離することで、「AI由来か」を正確に判定でき、
- * 表示ゲート(guide-step-visibility.ts)を由来×信頼度×ステップ種別で組める。
+ * 由来を confidence に混ぜず分離することで、「AI由来か」を正確に判定できる
+ * (capConfidenceForProvenance等でprovenanceに応じたconfidenceの上限を適用する
+ * 際に使う)。表示可否そのもの(guide-step-visibility.ts)はconfidence.levelが
+ * "unavailable"かどうかのみで判定し、provenanceやステップ種別では判定しない。
  */
 export type Provenance = "surveyed" | "map_estimate" | "ai_inferred";
 

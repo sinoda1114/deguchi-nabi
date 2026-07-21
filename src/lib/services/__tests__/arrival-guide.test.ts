@@ -262,11 +262,35 @@ describe("buildArrivalGuide", () => {
     expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit"]);
   });
 
-  test("実害の大きい高リスクステップがconfidence:lowで返ってきた場合は最終結果から除外する(isGuideStepVisibleによるフィルタ)", async () => {
+  test("confidence:lowのステップは種別に関わらず除外せず表示する(isGuideStepVisibleによるフィルタはunavailableのみ対象)", async () => {
     const getArrivalGuideNarrativeSteps = vi.fn().mockResolvedValue([
       guideStep({
         type: "post_gate_direction",
         confidence: { level: "low", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 0 },
+      }),
+    ]);
+
+    const guide = await buildArrivalGuide(
+      baseResult({
+        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
+        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+      }),
+      "st_1",
+      "テスト駅",
+      null,
+      "easy",
+      false,
+      { getArrivalGuideNarrativeSteps }
+    );
+
+    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "post_gate_direction", "street_exit"]);
+  });
+
+  test("confidence:unavailableのステップは最終結果から除外する(isGuideStepVisibleによるフィルタ、実在確認すらできていないため)", async () => {
+    const getArrivalGuideNarrativeSteps = vi.fn().mockResolvedValue([
+      guideStep({
+        type: "post_gate_direction",
+        confidence: { level: "unavailable", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 0 },
       }),
     ]);
 

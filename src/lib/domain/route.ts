@@ -83,9 +83,11 @@ export type GuideStepType =
 
 /**
  * 到着駅内の1ステップ。confidence(検証度)とprovenance(出所)を直交させて持つ。
- * 誤った場合の実害が大きいステップ種別(post_gate_direction等)ほど、表示可否を
- * 厳しく判定する(guide-step-visibility.ts参照)。情報不足時にtitleを推測で
- * 埋めてはならない(埋められないステップはそもそも生成しない)。
+ * 表示可否はconfidence.levelが"unavailable"かどうかのみで判定する
+ * (guide-step-visibility.ts参照。ステップ種別による表示ゲートは設けない)。
+ * 情報不足時にtitleを推測で埋めてはならない(埋められないステップはそもそも
+ * 生成しない)。confidenceが"high"未満の情報は、隠さず表示した上で
+ * 「未確認情報」等の注記を付けてユーザーに確度を伝える(表示側の責務)。
  */
 export interface GuideStep {
   type: GuideStepType;
