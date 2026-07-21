@@ -22,7 +22,7 @@ import { RouteDiagramSectionSkeleton } from "@/components/result/RouteDiagramSec
 import { FacilitiesWarningBadges } from "@/components/result/FacilitiesWarningBadges";
 import { ConfidenceSummarySection } from "@/components/result/ConfidenceSummarySection";
 import { ConfidenceSummarySectionSkeleton } from "@/components/result/ConfidenceSummarySectionSkeleton";
-import { WarningBadge } from "@/components/diagram/WarningBadge";
+import { WarningBadgeList } from "@/components/diagram/WarningBadgeList";
 
 const DEFAULT_ACCESSIBILITY: AccessibilityCondition = {
   avoidStairs: false,
@@ -168,15 +168,12 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
             <RouteOverviewContent
               trainSegmentsPromise={trainSegmentsPromise}
               facilitiesPromise={facilitiesPromise}
-              mode={mode}
               transferCount={candidate.transferCount}
             />
           </Suspense>
         }
       />
-      {candidate.routeWarnings.map((w, i) => (
-        <WarningBadge key={i} text={w} />
-      ))}
+      <WarningBadgeList texts={candidate.routeWarnings} />
       <Suspense fallback={null}>
         <FacilitiesWarningBadges facilitiesPromise={facilitiesPromise} />
       </Suspense>

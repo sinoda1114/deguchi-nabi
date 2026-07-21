@@ -17,11 +17,13 @@ import type { GuideStep } from "@/lib/domain/route";
  * 2. 「隠す」のではなく「存在する情報は必ず出す、確度が高くなければ参考情報
  *    である旨をバッジ/注記で伝える」に転換すべき
  *
- * confidenceが"high"でない情報への注記("未確認情報")は、表示側
- * (overview-field.ts の UNCERTAIN_NOTE、route-timeline-nodes.ts の
- * UNCERTAIN_STEP_NOTE、route-search.ts のセグメントinstruction)がそれぞれ
- * 付与する。この関数はあくまで「表示するかどうか」だけを判定し、確認度の
- * 見せ方には関与しない。
+ * 以前はconfidenceが"high"でない情報に「未確認情報」という注記を表示側
+ * (overview-field.ts / route-timeline-nodes.ts / route-search.ts の
+ * セグメントinstruction)で付与していたが、この注記テキスト自体は
+ * ユーザーから不要と判断され削除した(2026-07-21)。「値自体は隠さず
+ * 表示する」という本関数の判定方針(confidenceで隠すのはunavailableの
+ * ときだけ)は変更していない。この関数はあくまで「表示するかどうか」
+ * だけを判定し、確認度の見せ方には関与しない。
  */
 export function isGuideStepVisible(step: Pick<GuideStep, "confidence">): boolean {
   return step.confidence.level !== "unavailable";

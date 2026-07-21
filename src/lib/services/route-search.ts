@@ -50,14 +50,6 @@ const DURATION_TIE_THRESHOLD_MINUTES = 5;
  */
 export const NO_DEPARTURE_TIME_DISCLAIMER =
   "この案内は通常時の経路情報です。実際の到着番線・最適な乗車位置は、利用日時や運行状況によって異なる場合があります。";
-/**
- * confidenceが"high"でない改札・出口セグメントのinstruction末尾に付ける注記。
- * overview-field.ts の UNCERTAIN_NOTE / route-timeline-nodes.ts の
- * UNCERTAIN_STEP_NOTE と同じ文言("未確認情報")に揃える(アプリ全体での
- * 表記統一。3箇所で確認度の見せ方がバラバラだった問題への対応)。
- */
-const UNCERTAIN_NOTE = "未確認情報";
-
 export type { Coordinates };
 
 export interface RouteSearchInput {
@@ -342,7 +334,7 @@ export async function resolveRouteCandidate(
   const routeWarnings = [
     ...(chosen.isAiGenerated
       ? [
-          "利用路線・所要時間はAI(Web検索結果)による推測です。運行状況の変更等により実際と異なる場合があります。",
+          "利用路線・所要時間はWeb検索結果による推測です。運行状況の変更等により実際と異なる場合があります。",
         ]
       : []),
     NO_DEPARTURE_TIME_DISCLAIMER,
@@ -632,14 +624,12 @@ export async function buildTransferAndExitSegments(
         ]
       : [],
     // 改札自体が実在未確認(gate === null)の場合のみ「確認できません」と明示する。
-    // gateが実在する場合はconfidenceで隠さず必ず改札名を表示する。confidenceが
-    // "high"未満(実在は確認できたが検証度が低い)の場合のみ、末尾に
-    // UNCERTAIN_NOTEを付けて参考情報であることを伝える(隠す設計から、常に
-    // 出して確度を注記する設計への転換。実機検証でユーザーから「隠す」設計への
-    // 強い不満が出たことを受けた再設計)。
-    instruction: gate
-      ? `${gate.name}へ向かってください。${gate.confidence.level !== "high" ? `(${UNCERTAIN_NOTE})` : ""}`
-      : "改札は確認できません。",
+    // gateが実在する場合はconfidenceで隠さず必ず改札名を表示する(隠す設計から、
+    // 常に値を出す設計への転換。実機検証でユーザーから「隠す」設計への強い不満が
+    // 出たことを受けた再設計)。以前はconfidenceが"high"未満の場合に末尾へ
+    // 「未確認情報」の注記を付けていたが、この注記テキスト自体はユーザーから
+    // 不要と判断され削除した(値を隠さず表示する方針は維持している)。
+    instruction: gate ? `${gate.name}へ向かってください。` : "改札は確認できません。",
     // 改札自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
     // 常にunavailable(確認不能)として扱う。lowは「実在は確認済みだが検証度が
     // 低い」ケース専用であり、未確認をlowとして扱うと過大な確信度になる。
@@ -653,11 +643,12 @@ export async function buildTransferAndExitSegments(
   // 未満なら非表示にしていたが、これが原因で改札・出口情報の大半が
   // 「確認できません」表示になり、実機検証でユーザーから強い不満が出た。
   // 第三者レビューの結論(guide-step-visibility.ts参照)を受け、「隠す」のでは
-  // なく「存在する情報は必ず出し、確度が高くなければ注記で伝える」設計に
-  // 転換した。上部サマリー「利用出口」(RouteExitStat.tsx、overview-field.ts
-  // 経由)・「ルートの流れ」タイムライン(route-timeline-nodes.ts)・この
-  // exitSegmentの3箇所とも同じ基準(exit非nullなら表示、confidence非highなら
-  // UNCERTAIN_NOTE注記)に揃えている。
+  // なく「存在する情報は必ず出す」設計に転換した。上部サマリー「利用出口」
+  // (RouteExitStat.tsx、overview-field.ts経由)・「ルートの流れ」タイムライン
+  // (route-timeline-nodes.ts)・このexitSegmentの3箇所とも同じ基準
+  // (exit非nullなら表示、confidenceでは隠さない)に揃えている。以前はconfidenceが
+  // "high"未満の場合に「未確認情報」の注記も付けていたが、この注記テキスト自体は
+  // ユーザーから不要と判断され削除した(値を隠さず表示する方針は維持している)。
   //
   // exit変数自体はnullにしない(以前からの設計を維持): confidenceSummary.exit
   // (computeConfidenceSummary参照)やrecommendedExit/computeKeyInstructionは
@@ -688,11 +679,8 @@ export async function buildTransferAndExitSegments(
     // と明示する。方角(◯◯側)を出口名の代用として表示しない設計は維持する
     // (方角は hasApproximateGuidance/approximateDirectionLabel 経由で
     // 「推奨方向」として別途提示する)。exitが実在する場合はconfidenceが
-    // "high"未満でも出口名をそのまま表示し、末尾にUNCERTAIN_NOTEを付けて
-    // 参考情報であることを伝える。
-    instruction: exit
-      ? `${exit.name}から出てください。${exit.confidence.level !== "high" ? `(${UNCERTAIN_NOTE})` : ""}`
-      : "出口は確認できません。",
+    // "high"未満でも出口名をそのまま表示する(注記テキストは削除済み)。
+    instruction: exit ? `${exit.name}から出てください。` : "出口は確認できません。",
     // 出口自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
     // 常にunavailable(確認不能)として扱う。exitが実在する場合は、実際の
     // confidenceをそのまま保持する(上記コメント参照。confidenceSummary.exit

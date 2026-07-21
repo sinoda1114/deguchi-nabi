@@ -533,7 +533,7 @@ describe("resolveRouteCandidate", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.routeWarnings.length).toBeGreaterThan(0);
-    expect(result.routeWarnings[0]).toContain("AI");
+    expect(result.routeWarnings[0]).toContain("Web検索結果");
     // 出発時刻未指定の免責文言は、AI生成警告と併存して常に含まれる。
     expect(result.routeWarnings).toContain(NO_DEPARTURE_TIME_DISCLAIMER);
   });
@@ -1330,10 +1330,12 @@ describe("buildTransferAndExitSegments", () => {
   // confidence "low"の出口を返した際、confidenceベースの表示ゲートが原因で
   // 改札・出口情報の大半が「確認できません」表示になり、ユーザーから強い
   // 不満が出た。第三者レビューを受け、「隠す」のではなく「存在する情報は
-  // 必ず出し、確度が高くなければ注記(未確認情報)で伝える」設計に転換した。
+  // 必ず出す」設計に転換した(以前はここに加えてconfidenceが"high"未満の
+  // 場合にinstructionへ「未確認情報」の注記も付けていたが、この注記テキスト
+  // 自体はユーザーから不要と判断され削除した)。
   // exitSegment/transferSegmentとも、exit/gateが実在する限りconfidenceで
-  // 隠さず、confidenceが"high"未満の場合のみinstructionに注記を付ける回帰テスト。
-  describe("出口・改札のconfidenceによる注記付与(隠さない設計への転換、回帰テスト)", () => {
+  // 値自体は隠さないことを確認する回帰テスト。
+  describe("出口・改札のconfidenceによる表示(隠さない設計、回帰テスト)", () => {
     // 方角格下げ(resolveExitRecommendationのbearingチェック)を発生させないため、
     // 出口座標とdestinationCoordinatesを完全に一致させる(EAST_EXITと同じ手法)。
     const EXIT_COORDINATES: Coordinates = { lat: 0, lng: 0.01 };
@@ -1370,7 +1372,7 @@ describe("buildTransferAndExitSegments", () => {
 
     const GATE_FOR_CONF_TEST = buildGateFacility(highConfidence);
 
-    test("confidenceがlowの出口は、隠さず表示した上でinstructionに出口名と「未確認情報」の両方を含める", async () => {
+    test("confidenceがlowの出口も、隠さず出口名を表示する(「未確認情報」の注記は付けない)", async () => {
       const lowExit = buildExitFacility(lowConfidenceValue);
       const deps: RouteSearchDeps = {
         routeProvider: buildRouteProvider(true),
@@ -1396,9 +1398,10 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.result.exit?.name).toBe("相鉄口");
       expect(outcome.result.exit?.confidence.level).toBe("low");
 
-      // 隠さず出口名を表示し、confidenceが"high"未満のため注記を付ける。
+      // 隠さず出口名を表示する。confidenceが"high"未満でも注記は付けない
+      // (注記テキストはユーザーから不要と判断され削除した)。
       expect(outcome.result.exitSegment.instruction).toContain("相鉄口");
-      expect(outcome.result.exitSegment.instruction).toContain("未確認情報");
+      expect(outcome.result.exitSegment.instruction).not.toContain("未確認情報");
       expect(outcome.result.exitSegment.instruction).not.toBe("出口は確認できません。");
       expect(outcome.result.exitSegment.facilities).toEqual([
         { facilityType: "exit", name: "相鉄口", confidence: lowConfidenceValue },
@@ -1408,7 +1411,7 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.result.exitSegment.confidence.level).toBe("low");
     });
 
-    test("confidenceがmediumの出口も、隠さず表示した上でinstructionに「未確認情報」の注記を付ける", async () => {
+    test("confidenceがmediumの出口も、隠さず出口名を表示する(「未確認情報」の注記は付けない)", async () => {
       const mediumExit = buildExitFacility(mediumConfidence);
       const deps: RouteSearchDeps = {
         routeProvider: buildRouteProvider(true),
@@ -1428,7 +1431,7 @@ describe("buildTransferAndExitSegments", () => {
       if (!outcome.ok) return;
 
       expect(outcome.result.exitSegment.instruction).toContain("相鉄口");
-      expect(outcome.result.exitSegment.instruction).toContain("未確認情報");
+      expect(outcome.result.exitSegment.instruction).not.toContain("未確認情報");
       expect(outcome.result.exitSegment.facilities).toEqual([
         { facilityType: "exit", name: "相鉄口", confidence: mediumConfidence },
       ]);
@@ -1480,7 +1483,7 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.result.exitSegment.confidence.level).toBe("unavailable");
     });
 
-    test("confidenceがlowの改札は、隠さず表示した上でinstructionに改札名と「未確認情報」の両方を含める", async () => {
+    test("confidenceがlowの改札も、隠さず改札名を表示する(「未確認情報」の注記は付けない)", async () => {
       const highExitForGateTest = buildExitFacility(highConfidence);
       const lowGate = buildGateFacility(lowConfidenceValue);
       const deps: RouteSearchDeps = {
@@ -1503,7 +1506,7 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.result.gate?.name).toBe("テスト改札");
       expect(outcome.result.gate?.confidence.level).toBe("low");
       expect(outcome.result.transferSegment.instruction).toContain("テスト改札");
-      expect(outcome.result.transferSegment.instruction).toContain("未確認情報");
+      expect(outcome.result.transferSegment.instruction).not.toContain("未確認情報");
       // transferSegment.confidence自体は実際の値(low)を維持する。
       expect(outcome.result.transferSegment.confidence.level).toBe("low");
     });

@@ -93,7 +93,7 @@ describe("RouteGateStat", () => {
     expect(html).not.toContain("南側");
   });
 
-  test("confidenceがhigh以外の場合、「未確認情報」の注記を表示する", async () => {
+  test("confidenceがhigh以外でも改札名自体は隠さず表示する(注記は付けない)", async () => {
     const element = await RouteGateStat({
       facilitiesPromise: Promise.resolve(
         okResult({
@@ -115,7 +115,7 @@ describe("RouteGateStat", () => {
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("西改札");
-    expect(html).toContain("未確認情報");
+    expect(html).not.toContain("未確認情報");
   });
 
   test("facilitiesがok:falseの場合は確認できない旨を表示する", async () => {

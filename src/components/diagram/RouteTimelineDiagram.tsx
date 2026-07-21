@@ -46,7 +46,7 @@ const NODE_FOREGROUND: Record<RouteTimelineIcon, string> = {
  * 経路全体を一目で把握できる縦タイムライン。出発駅→乗車→到着駅→出口→目的地を
  * SVGアイコン付きのノードと接続線でつなぐ(「ルート全体が見えない、今どこで
  * あと何駅か分からない」というフィードバックへの対応)。詳細情報は持たず、
- * 全体像の把握に徹する(詳細はRouteDiagram/SegmentDetailToggleで確認する)。
+ * 全体像の把握に徹する(詳細はRouteDiagram/SegmentDetailで確認する)。
  */
 export function RouteTimelineDiagram({ nodes }: RouteTimelineDiagramProps) {
   return (

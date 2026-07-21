@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import type { RouteMode, RouteSegment } from "@/lib/domain/route";
+import type { RouteSegment } from "@/lib/domain/route";
 import type { FacilitiesSearchResult } from "@/lib/services/route-search";
 import { FacilityIcon } from "@/components/diagram/FacilityIcon";
 import { RouteBoardingStat } from "@/components/result/RouteBoardingStat";
@@ -8,18 +8,15 @@ import { RouteGateStat } from "@/components/result/RouteGateStat";
 import { RouteGateStatSkeleton } from "@/components/result/RouteGateStatSkeleton";
 import { RouteExitStat } from "@/components/result/RouteExitStat";
 import { RouteExitStatSkeleton } from "@/components/result/RouteExitStatSkeleton";
-import { RouteEaseScoreStat } from "@/components/result/RouteEaseScoreStat";
-import { RouteEaseScoreStatSkeleton } from "@/components/result/RouteEaseScoreStatSkeleton";
 
 interface RouteOverviewContentProps {
   trainSegmentsPromise: Promise<RouteSegment[]>;
   facilitiesPromise: Promise<FacilitiesSearchResult>;
-  mode: RouteMode;
   transferCount: number;
 }
 
 /**
- * サマリーカードの中身(乗車位置・利用改札・利用出口・乗換回数・迷いにくさ)。
+ * サマリーカードの中身(乗車位置・利用改札・利用出口・乗換回数)。
  * 「1号車前方」のような一番重要な情報が小さく埋もれていたとのフィードバックを
  * 受け、画面最上部で一番大きく表示する。改札(ticket_gate)と出口(street_exit)は
  * 別項目として分離し、方角は出口名の代わりに使わない(ユーザーフィードバックに
@@ -34,7 +31,6 @@ interface RouteOverviewContentProps {
 export function RouteOverviewContent({
   trainSegmentsPromise,
   facilitiesPromise,
-  mode,
   transferCount,
 }: RouteOverviewContentProps) {
   return (
@@ -51,15 +47,6 @@ export function RouteOverviewContent({
       <div className="col-span-3 flex items-center gap-1.5 text-sm font-semibold">
         <FacilityIcon type="passage" className="h-4 w-4" />
         乗換{transferCount}回
-      </div>
-      <div className="col-span-3">
-        <Suspense fallback={<RouteEaseScoreStatSkeleton />}>
-          <RouteEaseScoreStat
-            trainSegmentsPromise={trainSegmentsPromise}
-            facilitiesPromise={facilitiesPromise}
-            mode={mode}
-          />
-        </Suspense>
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import { StationNode } from "./StationNode";
 import { DirectionArrow } from "./DirectionArrow";
 import { FacilityIcon } from "./FacilityIcon";
 import { WarningBadge } from "./WarningBadge";
-import { SegmentDetailToggle } from "./SegmentDetailToggle";
+import { SegmentDetail } from "./SegmentDetail";
 
 interface RouteDiagramProps {
   segments: RouteSegment[];
@@ -82,7 +82,7 @@ export function RouteDiagram({ segments }: RouteDiagramProps) {
             {segment.warnings.map((w, wi) => (
               <WarningBadge key={wi} text={w} />
             ))}
-            <SegmentDetailToggle segment={segment} />
+            <SegmentDetail segment={segment} />
           </StationNode>
         </div>
       ))}

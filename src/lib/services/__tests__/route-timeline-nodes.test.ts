@@ -167,7 +167,7 @@ describe("buildRouteTimelineNodes", () => {
     expect(nodes.find((n) => n.label.startsWith("推奨方向"))?.icon).toBe("direction");
   });
 
-  test("confidenceがhigh以外のステップには「未確認情報」の注記を付ける(調査済み情報と見分けがつかなくなる問題への対応)", () => {
+  test("confidenceがhigh以外のステップでもラベル(値)自体は隠さず表示し、subには注記を付けない", () => {
     const nodes = buildRouteTimelineNodes(
       [buildTrainSegment()],
       buildFacilities({
@@ -190,7 +190,8 @@ describe("buildRouteTimelineNodes", () => {
     );
     const gateNode = nodes.find((n) => n.label === "西改札");
     const exitNode = nodes.find((n) => n.label === "A1出口");
-    expect(gateNode?.sub).toBe("未確認情報");
+    expect(gateNode?.label).toBe("西改札");
+    expect(gateNode?.sub).toBeNull();
     expect(exitNode?.sub).toBeNull();
   });
 

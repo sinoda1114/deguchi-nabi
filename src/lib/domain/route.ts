@@ -86,8 +86,9 @@ export type GuideStepType =
  * 表示可否はconfidence.levelが"unavailable"かどうかのみで判定する
  * (guide-step-visibility.ts参照。ステップ種別による表示ゲートは設けない)。
  * 情報不足時にtitleを推測で埋めてはならない(埋められないステップはそもそも
- * 生成しない)。confidenceが"high"未満の情報は、隠さず表示した上で
- * 「未確認情報」等の注記を付けてユーザーに確度を伝える(表示側の責務)。
+ * 生成しない)。confidenceが"high"未満の情報も、隠さず値自体は表示する
+ * (表示側の責務)。以前は確度を伝える注記("未確認情報")も併せて表示側で
+ * 付けていたが、この注記テキスト自体はユーザーから不要と判断され削除した。
  */
 export interface GuideStep {
   type: GuideStepType;

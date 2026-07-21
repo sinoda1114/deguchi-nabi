@@ -18,14 +18,6 @@ export interface RouteTimelineNode {
 }
 
 /**
- * confidenceが"high"でないステップに付ける注記。改札後の詳細ステップは
- * ticket_gate(低リスク種別)であっても low で表示されうるため
- * (guide-step-visibility.ts参照)、見た目だけでは調査済み情報と区別が
- * つかなくなる問題があった(AIレビュー指摘)。
- */
-const UNCERTAIN_STEP_NOTE = "未確認情報";
-
-/**
  * GuideStepType ごとのアイコン対応。網羅的なRecordにすることで、将来
  * GuideStepTypeが増えた際にここへの追記漏れをコンパイルエラーで検知する
  * (guide-step-visibility.tsのfail-closed設計と同じ考え方)。
@@ -46,7 +38,7 @@ const GUIDE_STEP_ICON: Record<GuideStepType, RouteTimelineIcon> = {
  * 経路全体を一目で把握できる縦タイムライン(RouteTimelineDiagram)用のノード列を
  * 組み立てる。「駅でスマホを2〜3秒見ただけで次の行動が分かる」ことを優先し、
  * 号車・出口以外の詳細(路線名・信頼度等)はここでは持たない(詳細は
- * RouteDiagram/SegmentDetailToggle側で確認する設計)。
+ * RouteDiagram/SegmentDetail側で確認する設計)。
  *
  * 号車情報(sub)は各区間の乗車駅(segment.from)のノードに付与する。到着駅
  * (segment.to)側に付けると「その駅で乗るべき号車」に読めてしまい、乗換を
@@ -80,7 +72,7 @@ export function buildRouteTimelineNodes(
     nodes.push({
       label: step.title,
       icon: GUIDE_STEP_ICON[step.type],
-      sub: step.confidence.level === "high" ? null : UNCERTAIN_STEP_NOTE,
+      sub: null,
     });
   });
 
