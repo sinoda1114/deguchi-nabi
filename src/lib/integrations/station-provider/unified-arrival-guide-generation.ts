@@ -181,7 +181,11 @@ export async function generateUnifiedArrivalGuide(
   destinationHint: string | null,
   stationCoordinates: Coordinates | null,
   destinationPlaceCoordinates: Coordinates | null,
-  fixedExit: { name: string; confidenceLevel: ConfidenceLevel } | null = null
+  fixedExit: {
+    name: string;
+    confidenceLevel: ConfidenceLevel;
+    matchedArrivalLine: boolean;
+  } | null = null
 ): Promise<UnifiedArrivalGuideResult | null> {
   const stationLabel = destinationOperator
     ? `${destinationStationName}駅(${destinationOperator}、${destinationLines.join("・")})${locationHint(stationCoordinates)}`
@@ -226,8 +230,23 @@ export async function generateUnifiedArrivalGuide(
   // 今回の乗車路線(originLine)の運行会社と無関係な改札名(例: 東急利用者なのに
   // 京王井の頭線側の改札)を拾ってしまうリスクがあるため。改札は事業者の
   // 整合性を保てるこの関数(統合生成)側で、確定した出口を起点に選ばせる。
+  //
+  // 2026-07-21 fix/exit-search-arrival-line-matching: 上記の「改札まで機械的に
+  // 固定しない」設計思想は、当初は出口自体には適用されておらず、fixedExitは
+  // 常に無条件で強制採用されていた。実機確認(西谷駅→しゃぶしゃぶ×居酒屋
+  // ウエチャベ)で、東急東横線で渋谷駅に到着したにもかかわらず、目的地の
+  // 公式サイトが京王井の頭線利用者向けの「井の頭線西口」しか案内しておらず、
+  // それが実在しない「道玄坂改札→井の頭線西口」という組み合わせとして誤って
+  // 採用される不具合が確認された。改札と同じリスク(目的地の公開情報が
+  // 特定の路線・鉄道会社を意識せずに書かれている)は出口にも及ぶため、
+  // fixedExitに今回の乗車路線(originLine)との一致が確認できたかどうかを表す
+  // matchedArrivalLineを持たせ、trueの場合のみ従来通り無条件で強制採用する。
+  // falseの場合は出口を強制せず、参考情報として提示したうえでモデル自身に
+  // 今回の乗車路線基準で出口を判断させる。
   const fixedExitNote = fixedExit
-    ? `\n\n【出口は既に確定済み】\n目的地の公式情報の検索により、出口は既に「${fixedExit.name}」と判明しています。この出口名をそのまま採用してください(別の出口を提案しないでください)。あなたが行うべきなのは、この「${fixedExit.name}」に直接つながる、またはこの出口を利用する際に必ず通る改札名を、今回の乗車事業者(${originLine}を運行する会社)基準で選ぶことです。`
+    ? fixedExit.matchedArrivalLine
+      ? `\n\n【出口は既に確定済み】\n目的地の公式情報の検索により、出口は既に「${fixedExit.name}」と判明しています。この出口名をそのまま採用してください(別の出口を提案しないでください)。あなたが行うべきなのは、この「${fixedExit.name}」に直接つながる、またはこの出口を利用する際に必ず通る改札名を、今回の乗車事業者(${originLine}を運行する会社)基準で選ぶことです。`
+      : `\n\n【出口に関する参考情報(要確認)】\n目的地の公式情報によると、出口の候補として「${fixedExit.name}」という案内がありますが、これが今回ご利用の${originLine}向けの情報かどうかは確認できていません(目的地の公式情報が特定の路線・改札を意識せずに書かれている可能性があります)。この情報を参考にしつつも、今回の${originLine}到着経路として実際に整合する出口を、今回の乗車事業者(${originLine}を運行する会社)基準で改めて判断してください。「${fixedExit.name}」が今回の到着経路と整合しない場合は、別の出口を採用してかまいません。`
     : "";
 
   const searchPrompt = `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStationName}駅」から${originLine}(${originDirection})に乗車し、「${destinationLabel}」へ向かうルートを知りたいと考えています。
@@ -238,7 +257,7 @@ export async function generateUnifiedArrivalGuide(
 出口(目的地に最も近い/最も直接的にたどり着けるもの) → 改札(その出口に直接つながる、またはその出口を利用する際に必ず通るもの) → その出口を経由する徒歩ルート → 乗車位置(その改札に最短で着ける号車)${fixedExitNote}
 
 【回答すべき情報】
-1. ${fixedExit ? `出口名は「${fixedExit.name}」で確定済みです(そのまま回答してください)` : destinationHint ? `${destinationLabel}に最も直接的にたどり着ける出口名(徒歩距離が最短になるものを優先してください)` : `${stationLabel}の主要な出口名`}
+1. ${fixedExit && fixedExit.matchedArrivalLine ? `出口名は「${fixedExit.name}」で確定済みです(そのまま回答してください)` : destinationHint ? `${destinationLabel}に最も直接的にたどり着ける出口名(徒歩距離が最短になるものを優先してください)` : `${stationLabel}の主要な出口名`}
 2. 1の出口に直接つながる、またはその出口を利用する際に必ず通る改札名(1で決めた出口を起点に選んでください)
 3. 2の改札を出て1の出口を通り、目的地までの徒歩ルート(目印を含む、簡潔に)
 4. ${originStationName}駅で${originLine}(${originDirection})に乗車する場合、2の改札に到着ホーム上の階段・エスカレーターで最短で向かえる号車・ドア位置(列車の進行方向・編成両数と照合して決めてください。到着番線や編成によって結果が変わる場合はその条件を含めてください)${operatorDisambiguationNote}
@@ -286,14 +305,22 @@ boardingReasonには、到着番線や編成によって結果が変わる場合
     isNonEmptyText(result.gateName) && isValidConfidenceLevel(result.gateConfidence)
       ? { name: result.gateName, confidenceLevel: result.gateConfidence }
       : null;
-  // fixedExitが渡された場合は、抽出結果のexitNameより優先してそのまま採用する
-  // (モデルが「出口名は確定済み」という指示に従わず別の出口を返した場合の
-  // 揺らぎを吸収するため。改札はfixedExit起点で選ばせた抽出結果をそのまま使う)。
-  const exit = fixedExit
-    ? fixedExit
-    : isNonEmptyText(result.exitName) && isValidConfidenceLevel(result.exitConfidence)
-      ? { name: result.exitName, confidenceLevel: result.exitConfidence }
-      : null;
+  // fixedExitが渡され、かつ今回の乗車路線(originLine)との一致が確認できて
+  // いる(matchedArrivalLine: true)場合のみ、抽出結果のexitNameより優先して
+  // そのまま採用する(モデルが「出口名は確定済み」という指示に従わず別の
+  // 出口を返した場合の揺らぎを吸収するため。改札はfixedExit起点で選ばせた
+  // 抽出結果をそのまま使う)。matchedArrivalLineがfalse、またはfixedExit自体
+  // が無い場合は、モデル自身が今回の乗車路線基準で自己判定した結果
+  // (exitName/exitConfidence)を採用する。fixedExitへのフォールバックは
+  // しない(乗車路線との一致が確認できない出口を、モデルの自己判定が
+  // 失敗したという理由だけで採用するのは、この修正が防ごうとしている
+  // 誤判定そのものになるため)。
+  const exit =
+    fixedExit && fixedExit.matchedArrivalLine
+      ? { name: fixedExit.name, confidenceLevel: fixedExit.confidenceLevel }
+      : isNonEmptyText(result.exitName) && isValidConfidenceLevel(result.exitConfidence)
+        ? { name: result.exitName, confidenceLevel: result.exitConfidence }
+        : null;
   const walkingSteps = Array.isArray(result.walkingSteps)
     ? result.walkingSteps
         .filter(isValidWalkingStep)

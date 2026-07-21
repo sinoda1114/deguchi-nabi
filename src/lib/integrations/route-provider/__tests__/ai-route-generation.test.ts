@@ -127,4 +127,57 @@ describe("generateRailRoute", () => {
     const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
     expect(result?.segments[0].platformId).toBe("");
   });
+
+  test("路線名に縮退生成の反復パターンが含まれる場合は無効として扱い、最終的にnullを返す", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      lines: ["瘉鉄改戳版最改版甘鉄改戳版最改版・瘉鉄改戳版最改版甘鉄改戳版最改版"],
+      transferCount: 2,
+      estimatedMinutes: 120,
+    });
+
+    const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+    expect(result).toBeNull();
+  });
+
+  test("1回目が反復パターンで無効・2回目が正常な結果の場合、2回目の結果を返す(リトライが機能する)", async () => {
+    searchAndGenerateStructuredContent
+      .mockResolvedValueOnce({
+        lines: ["瘉鉄改戳版最改版甘鉄改戳版最改版・瘉鉄改戳版最改版甘鉄改戳版最改版"],
+        transferCount: 2,
+        estimatedMinutes: 120,
+      })
+      .mockResolvedValueOnce({
+        lines: ["JR東海道新幹線"],
+        transferCount: 2,
+        estimatedMinutes: 120,
+      });
+
+    const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+    expect(result?.segments[0].line).toBe("JR東海道新幹線");
+    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(2);
+  });
+
+  test("2回とも反復パターンで無効な場合、最終的にnullを返し3回目は試行しない", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      lines: ["瘉鉄改戳版最改版甘鉄改戳版最改版・瘉鉄改戳版最改版甘鉄改戳版最改版"],
+      transferCount: 2,
+      estimatedMinutes: 120,
+    });
+
+    const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+    expect(result).toBeNull();
+    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(2);
+  });
+
+  test("1回目で正常な結果が返る場合、2回目(リトライ)は呼ばれない(無駄なAPI呼び出しをしない)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      lines: ["JR東海道新幹線"],
+      transferCount: 2,
+      estimatedMinutes: 120,
+    });
+
+    const result = await generateRailRoute("key", NISHIYA, NAGOYA_KOKUSAI_CENTER);
+    expect(result).not.toBeNull();
+    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(1);
+  });
 });

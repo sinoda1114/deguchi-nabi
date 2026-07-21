@@ -51,7 +51,7 @@ describe("searchDestinationExitViaSerper", () => {
     expect(result).not.toBeNull();
   });
 
-  test("複数系統の候補がある場合、destinationLinesと一致するviaHintの候補を優先して選ぶ", async () => {
+  test("複数系統の候補がある場合、destinationLinesと一致するviaHintの候補を優先して選び、matchedArrivalLine:trueを返す", async () => {
     serperSearch.mockResolvedValue(RESULTS);
     fetchPageAsMarkdown.mockResolvedValue("本文");
     generateStructuredContent.mockResolvedValue({
@@ -66,14 +66,15 @@ describe("searchDestinationExitViaSerper", () => {
       KEYS,
       "しゃぶしゃぶ×居酒屋 ウエチャベ",
       { lat: 35.6587716, lng: 139.6982764 },
-      ["東急東横線", "東京メトロ副都心線"]
+      ["東急東横線"]
     );
 
     expect(result?.exit.name).toBe("A0出口");
     expect(result?.gateHint).toBe("道玄坂改札");
+    expect(result?.matchedArrivalLine).toBe(true);
   });
 
-  test("destinationLinesと一致するviaHintが無い場合は先頭の候補にフォールバックする", async () => {
+  test("destinationLinesと一致するviaHintが無い場合は先頭の候補にフォールバックし、matchedArrivalLine:falseを返す(実機確認: 西谷駅→ウエチャベで東急東横線到着なのに京王井の頭線側の出口しか案内されていないケース)", async () => {
     serperSearch.mockResolvedValue(RESULTS);
     fetchPageAsMarkdown.mockResolvedValue("本文");
     generateStructuredContent.mockResolvedValue({
@@ -91,9 +92,10 @@ describe("searchDestinationExitViaSerper", () => {
     );
 
     expect(result?.exit.name).toBe("井の頭線西口");
+    expect(result?.matchedArrivalLine).toBe(false);
   });
 
-  test("viaHintが空文字の候補のみの場合(単一系統しか案内していない目的地)はそのまま採用する", async () => {
+  test("viaHintが空文字の候補のみの場合(単一系統しか案内していない目的地)はそのまま採用しつつmatchedArrivalLine:falseを返す", async () => {
     serperSearch.mockResolvedValue(RESULTS);
     fetchPageAsMarkdown.mockResolvedValue("本文");
     generateStructuredContent.mockResolvedValue({
@@ -109,6 +111,52 @@ describe("searchDestinationExitViaSerper", () => {
 
     expect(result?.exit.name).toBe("みなみ西口（相鉄口）");
     expect(result?.gateHint).toBe("相鉄線1階改札");
+    // viaHintが空文字なのでこの候補自体との積極的な一致確認はできていない
+    // (先頭フォールバック)。呼び出し元はmatchedArrivalLine:falseとして扱う。
+    expect(result?.matchedArrivalLine).toBe(false);
+  });
+
+  test("路線名の表記ゆれ(「相鉄本線」と「相鉄線」)を正規化して一致させ、matchedArrivalLine:trueを返す", async () => {
+    serperSearch.mockResolvedValue(RESULTS);
+    fetchPageAsMarkdown.mockResolvedValue("本文");
+    generateStructuredContent.mockResolvedValue({
+      candidates: [{ viaHint: "相鉄線", exitName: "みなみ西口（相鉄口）", gateName: "相鉄線1階改札" }],
+    });
+
+    // 呼び出し元(originLine)は「相鉄本線」、候補のviaHintは「相鉄線」という
+    // 表記ゆれがあるケース。
+    const result = await searchDestinationExitViaSerper(
+      KEYS,
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4640221, lng: 139.6200651 },
+      ["相鉄本線"]
+    );
+
+    expect(result?.exit.name).toBe("みなみ西口（相鉄口）");
+    expect(result?.matchedArrivalLine).toBe(true);
+  });
+
+  test("destinationLines(originLine)が空文字の場合、空文字が全候補に誤って一致しない(潜在バグ防止)", async () => {
+    serperSearch.mockResolvedValue(RESULTS);
+    fetchPageAsMarkdown.mockResolvedValue("本文");
+    generateStructuredContent.mockResolvedValue({
+      candidates: [
+        { viaHint: "京王井の頭線", exitName: "井の頭線西口", gateName: null },
+        { viaHint: "JR", exitName: "ハチ公口", gateName: "ハチ公改札" },
+      ],
+    });
+
+    const result = await searchDestinationExitViaSerper(
+      KEYS,
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587716, lng: 139.6982764 },
+      [""]
+    );
+
+    // 空文字は比較対象から除外されるため、先頭の候補にフォールバックしつつ
+    // matchedArrivalLine:falseになる(空文字が全候補と誤って一致することはない)。
+    expect(result?.exit.name).toBe("井の頭線西口");
+    expect(result?.matchedArrivalLine).toBe(false);
   });
 
   test("検索結果が0件の場合はnullを返す(フォールバック余地を残す)", async () => {
