@@ -12,7 +12,7 @@ interface RouteOverviewCardProps {
   canSave: boolean;
   estimatedDurationMinutes: number | null;
   /**
-   * 号車・出口・乗換回数・迷いにくさの概要部分。号車・改札・出口情報の
+   * 号車・出口・乗換回数の概要部分。号車・改札・出口情報の
    * 解決を待つ必要があるため、呼び出し元(page.tsx)が
    * <Suspense><RouteOverviewContent .../></Suspense> を渡す。
    */

@@ -71,19 +71,18 @@ const OK_RESULT: FacilitiesSearchResult = {
 };
 
 /**
- * RouteOverviewContent は乗車位置・改札・出口・迷いにくさをそれぞれ独立した
- * Suspense境界(RouteBoardingStat/RouteGateStat/RouteExitStat/RouteEaseScoreStat)に
+ * RouteOverviewContent は乗車位置・改札・出口をそれぞれ独立した
+ * Suspense境界(RouteBoardingStat/RouteGateStat/RouteExitStat)に
  * 委譲するレイアウト専用コンポーネントになった。各欄の実データ描画は
  * それぞれの単体テスト(RouteBoardingStat.test.tsx/RouteGateStat.test.tsx/
  * RouteExitStat.test.tsx等)で検証済みのため、ここでは「乗換回数(Promise不要で
  * 同期表示)とレイアウトが崩れていないこと」のみ検証する。
  */
 describe("RouteOverviewContent", () => {
-  test("乗換回数を同期表示する(乗車位置・改札・出口・迷いにくさの解決は待たない)", () => {
+  test("乗換回数を同期表示する(乗車位置・改札・出口の解決は待たない)", () => {
     const element = RouteOverviewContent({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
-      mode: "easy",
       transferCount: 2,
     });
     const html = renderToStaticMarkup(element);
