@@ -47,8 +47,14 @@ const MIN_CONFIDENCE_RANK_BY_RISK_TIER: Record<RiskTier, number> = {
  * confidenceがAI自己申告のまま渡されることを前提にしない: GuideStep生成側は
  * capConfidenceForProvenance(confidence.ts)でprovenanceに応じた上限を適用した
  * 後のconfidenceをここに渡す責務を持つ。
+ *
+ * 引数はGuideStep全体ではなく type/confidence のみのPickにしている
+ * (route-search.ts側でStationFacility由来の出口情報を判定する際、GuideStepの
+ * 他フィールド(title/instruction/landmarks/provenance)を持たない疑似オブジェクトを
+ * 組み立てて渡せるようにするため。判定ロジック自体はtype/confidenceしか
+ * 参照しないため、シグネチャを狭めるだけで挙動は変わらない)。
  */
-export function isGuideStepVisible(step: GuideStep): boolean {
+export function isGuideStepVisible(step: Pick<GuideStep, "type" | "confidence">): boolean {
   if (step.confidence.level === "unavailable") return false;
 
   const tier = STEP_RISK_TIER[step.type];
