@@ -185,7 +185,7 @@ describe("generateUnifiedArrivalGuide", () => {
       "kawara CAFE&DINING 横浜店",
       { lat: 35.4662, lng: 139.6227 },
       { lat: 35.4657, lng: 139.622 },
-      { name: "みなみ西口（相鉄口）", confidenceLevel: "high" }
+      { name: "みなみ西口（相鉄口）", confidenceLevel: "high", matchedArrivalLine: true }
     );
 
     const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
@@ -194,7 +194,7 @@ describe("generateUnifiedArrivalGuide", () => {
     expect(searchPrompt).toContain('出口名は「みなみ西口（相鉄口）」で確定済みです');
   });
 
-  test("fixedExitが渡された場合、抽出結果のexitNameより優先してfixedExitをそのまま採用する", async () => {
+  test("fixedExitが渡された場合(matchedArrivalLine:true)、抽出結果のexitNameより優先してfixedExitをそのまま採用する", async () => {
     searchAndGenerateStructuredContent.mockResolvedValue({
       gateName: "東急 ハチ公改札",
       gateConfidence: "medium",
@@ -214,11 +214,70 @@ describe("generateUnifiedArrivalGuide", () => {
       "しゃぶしゃぶ×居酒屋 ウエチャベ",
       { lat: 35.6587, lng: 139.7009 },
       { lat: 35.6587716, lng: 139.6982764 },
-      { name: "ハチ公口", confidenceLevel: "high" }
+      { name: "ハチ公口", confidenceLevel: "high", matchedArrivalLine: true }
     );
 
     expect(result?.exit).toEqual({ name: "ハチ公口", confidenceLevel: "high" });
     expect(result?.gate).toEqual({ name: "東急 ハチ公改札", confidenceLevel: "medium" });
+  });
+
+  test("fixedExitのmatchedArrivalLineがfalseの場合(今回の乗車路線との一致が未確認)、出口は強制採用せずモデル自身の自己判定結果(exitName/exitConfidence)を採用する。プロンプトには参考情報の文言が含まれ、「確定済み」文言は含まれない(2026-07-21 fix/exit-search-arrival-line-matching: 実機確認で、東急東横線到着なのに目的地の公式情報が京王井の頭線側の出口しか案内しておらず、それが実在しない組み合わせとして誤って強制採用される不具合があったため)", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      gateName: "道玄坂改札",
+      gateConfidence: "medium",
+      exitName: "A0出口",
+      exitConfidence: "medium",
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "東急東横線",
+      "渋谷方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線", "京王井の頭線"],
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 },
+      { name: "井の頭線西口", confidenceLevel: "medium", matchedArrivalLine: false }
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("出口に関する参考情報(要確認)");
+    expect(searchPrompt).toContain("井の頭線西口");
+    expect(searchPrompt).not.toContain("出口は既に「井の頭線西口」と判明しています");
+    expect(searchPrompt).not.toContain('出口名は「井の頭線西口」で確定済みです');
+
+    // fixedExitではなく、モデル自身の自己判定結果(exitName/exitConfidence)が採用される。
+    expect(result?.exit).toEqual({ name: "A0出口", confidenceLevel: "medium" });
+    expect(result?.gate).toEqual({ name: "道玄坂改札", confidenceLevel: "medium" });
+  });
+
+  test("fixedExitのmatchedArrivalLineがfalseで、かつモデルの自己判定も失敗(exitName無し)の場合、fixedExitへフォールバックせずexitはnullになる", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      gateName: "道玄坂改札",
+      gateConfidence: "medium",
+      // exitNameを省略(モデルが自己判定に確信を持てなかったケース)
+      walkingSteps: [],
+    });
+
+    const result = await generateUnifiedArrivalGuide(
+      "key",
+      "西谷駅",
+      "東急東横線",
+      "渋谷方面",
+      "渋谷駅",
+      "東急",
+      ["東急東横線", "京王井の頭線"],
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 },
+      { name: "井の頭線西口", confidenceLevel: "medium", matchedArrivalLine: false }
+    );
+
+    expect(result?.exit).toBeNull();
   });
 
   test("fixedExitが無い場合(専用検索で見つからなかった)は従来通りこの関数自身が出口を選ぶ", async () => {

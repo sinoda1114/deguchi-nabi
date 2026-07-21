@@ -241,16 +241,27 @@ export class AiStationAdapter implements StationProviderPort {
     // grounding版は47秒以上)かつ根拠(出典URL・引用元本文)を検証可能で
     // あることを確認した(experiment/destination-fix-then-vote)。
     // destinationHintが無い(駅そのものが目的地)場合は対象外。
+    // destinationLinesには到着駅の全路線(lines)ではなく、今回実際に乗車した
+    // 路線(originLine)のみを渡す。到着駅の全路線を渡すと、目的地の公式情報が
+    // 案内している出口が今回の乗車路線とは無関係な別路線向けのものであっても
+    // 「一致」と誤判定されてしまう(実機確認: 西谷駅→ウエチャベ。東急東横線
+    // 到着なのに、渋谷駅の全路線リストに含まれる「京王井の頭線」が出口候補の
+    // viaHintと一致し、無関係な出口が強制採用された。destination-exit-search-
+    // pipeline.tsのpickBestCandidate()コメント参照)。
     const serperResult = destinationHint
       ? await searchDestinationExitViaSerper(
           { serperApiKey: this.serperApiKey, jinaApiKey: this.jinaApiKey, geminiApiKey: this.geminiApiKey },
           destinationHint,
           destinationPlaceCoordinates,
-          lines
+          [originLine]
         )
       : null;
     const fixedExit = serperResult
-      ? { name: serperResult.exit.name, confidenceLevel: serperResult.exit.confidence.level }
+      ? {
+          name: serperResult.exit.name,
+          confidenceLevel: serperResult.exit.confidence.level,
+          matchedArrivalLine: serperResult.matchedArrivalLine,
+        }
       : null;
 
     const result = await generateUnifiedArrivalGuide(

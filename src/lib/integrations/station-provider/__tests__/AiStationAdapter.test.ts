@@ -653,6 +653,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
         confidence: { level: "high", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 2 },
       },
       gateHint: "ハチ公改札",
+      matchedArrivalLine: true,
     });
     const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
 
@@ -669,11 +670,15 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       { lat: 35.6587716, lng: 139.6982764 }
     );
 
+    // destinationLinesには到着駅の全路線(lines=["東急東横線"])ではなく、
+    // 今回実際に乗車した路線(originLine="相鉄本線")のみを渡す
+    // (2026-07-21 fix/exit-search-arrival-line-matching: 到着駅の全路線を
+    // 渡すと、無関係な候補まで一致判定されてしまう不具合があったため)。
     expect(searchDestinationExitViaSerper).toHaveBeenCalledWith(
       { serperApiKey: "serper-key", jinaApiKey: "jina-key", geminiApiKey: "test-key" },
       "しゃぶしゃぶ×居酒屋 ウエチャベ",
       { lat: 35.6587716, lng: 139.6982764 },
-      ["東急東横線"]
+      ["相鉄本線"]
     );
     expect(generateUnifiedArrivalGuide).toHaveBeenCalledWith(
       "test-key",
@@ -686,8 +691,52 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       "しゃぶしゃぶ×居酒屋 ウエチャベ",
       { lat: 35.6587, lng: 139.7009 },
       { lat: 35.6587716, lng: 139.6982764 },
-      { name: "ハチ公口", confidenceLevel: "high" }
+      { name: "ハチ公口", confidenceLevel: "high", matchedArrivalLine: true }
     );
+  });
+
+  test("専用検索がmatchedArrivalLine:falseを返した場合(乗車路線との一致が確認できなかった)、fixedExitにもmatchedArrivalLine:falseをそのまま伝播する(実機確認: 西谷駅→ウエチャベ。東急東横線到着なのに京王井の頭線側の出口案内しかなかったケース)", async () => {
+    generateUnifiedArrivalGuide.mockResolvedValue({
+      boardingPosition: null,
+      gate: null,
+      exit: null,
+      walkingSteps: [],
+    });
+    searchDestinationExitViaSerper.mockResolvedValue({
+      exit: {
+        name: "井の頭線西口",
+        confidence: { level: "medium", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 1 },
+      },
+      gateHint: null,
+      matchedArrivalLine: false,
+    });
+    const adapter = new AiStationAdapter("test-key", "serper-key", "jina-key");
+
+    await adapter.getUnifiedArrivalGuide(
+      "st_shibuya",
+      "渋谷駅",
+      "東急",
+      ["東急東横線", "京王井の頭線"],
+      "西谷駅",
+      "東急東横線",
+      "渋谷方面",
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587, lng: 139.7009 },
+      { lat: 35.6587716, lng: 139.6982764 }
+    );
+
+    expect(searchDestinationExitViaSerper).toHaveBeenCalledWith(
+      { serperApiKey: "serper-key", jinaApiKey: "jina-key", geminiApiKey: "test-key" },
+      "しゃぶしゃぶ×居酒屋 ウエチャベ",
+      { lat: 35.6587716, lng: 139.6982764 },
+      ["東急東横線"]
+    );
+    const fixedExitArg = generateUnifiedArrivalGuide.mock.calls[0][10];
+    expect(fixedExitArg).toEqual({
+      name: "井の頭線西口",
+      confidenceLevel: "medium",
+      matchedArrivalLine: false,
+    });
   });
 
   test("destinationHintが無い場合(駅そのものが目的地)は専用検索を呼ばない", async () => {
