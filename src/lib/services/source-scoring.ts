@@ -73,6 +73,33 @@ export const LOW_QUALITY_DOMAIN_PATTERNS: RegExp[] = [
   /(^|\.)blogspot\.com$/i,
 ];
 
+/**
+ * グルメ/地図/SNS等の第三者ポータル(アグリゲーター)ドメインパターン。
+ * 目的地(飲食店等の一般ビジネス)の公式サイトドメインは個別列挙が非現実的なため
+ * 網羅できないが、「よく知られた第三者ポータルではない」ことを消去法的な
+ * シグナルとして使う(scoreSearchSourceのtreatNonAggregatorAsLikelyOfficial
+ * オプション参照)。過剰検出を避けるため、明確に第三者ポータルと判別できる
+ * ドメインのみを対象にする。
+ */
+export const AGGREGATOR_DOMAIN_PATTERNS: RegExp[] = [
+  /(^|\.)tabelog\.com$/i,
+  /(^|\.)gnavi\.co\.jp$/i,
+  /(^|\.)hotpepper\.jp$/i,
+  /(^|\.)gourmetplus\.jp$/i,
+  /(^|\.)kaijosearch\.com$/i,
+  /(^|\.)instagram\.com$/i,
+  /(^|\.)facebook\.com$/i,
+  /(^|\.)twitter\.com$/i,
+  /(^|\.)x\.com$/i,
+  /(^|\.)map\.yahoo\.co\.jp$/i,
+  /(^|\.)maps\.google\.(com|co\.jp)$/i,
+  /(^|\.)google\.com$/i,
+  /(^|\.)retty\.me$/i,
+  /(^|\.)tripadvisor\.(com|jp)$/i,
+  /(^|\.)ekitan\.com$/i,
+  /(^|\.)ozmall\.co\.jp$/i,
+];
+
 /** タイトルに含まれると「駅の出口・構内案内に関連している」とみなす語。 */
 const RELEVANT_TITLE_KEYWORDS = [
   "構内図",
@@ -90,6 +117,13 @@ const RELEVANT_TITLE_KEYWORD_SCORE = 2;
 const PDF_SCORE = 1;
 const RECENT_SCORE = 1;
 const LOW_QUALITY_DOMAIN_PENALTY = -2;
+/**
+ * treatNonAggregatorAsLikelyOfficial オプション有効時、公式ドメインリストにも
+ * 低品質ドメインリストにもアグリゲーターリストにも該当しないドメインに与える加点。
+ * 目的地(飲食店等)の公式サイトを個別列挙できない制約の下での消去法的シグナルのため、
+ * 確定的なOFFICIAL_DOMAIN_SCOREより弱めに設定する。
+ */
+const DESTINATION_LIKELY_OFFICIAL_SCORE = 2;
 
 /** 発行日がこの年数以内なら「新しい」とみなす。 */
 const RECENT_THRESHOLD_YEARS = 2;
@@ -123,6 +157,11 @@ export function isLowQualityDomain(hostname: string): boolean {
   return LOW_QUALITY_DOMAIN_PATTERNS.some((pattern) => pattern.test(hostname));
 }
 
+/** ホスト名が既知のグルメ/地図/SNS等の第三者ポータルドメインに一致するか判定する。 */
+export function isAggregatorDomain(hostname: string): boolean {
+  return AGGREGATOR_DOMAIN_PATTERNS.some((pattern) => pattern.test(hostname));
+}
+
 function containsRelevantKeyword(title: string): boolean {
   return RELEVANT_TITLE_KEYWORDS.some((keyword) => title.includes(keyword));
 }
@@ -144,13 +183,30 @@ function isRecent(publishedAt: string | null, now: Date): boolean {
   return diffMs <= thresholdMs;
 }
 
+export interface ScoreSearchSourceOptions {
+  /**
+   * true の場合、公式ドメインリスト・低品質ドメインリスト・アグリゲーター
+   * (グルメ/地図/SNS等の第三者ポータル)ドメインリストのいずれにも該当しない
+   * ドメインを「目的地の公式サイトの可能性が高い」とみなして加点する。
+   * 目的地(飲食店等の一般ビジネス)の公式ドメインは個別列挙が非現実的なため、
+   * 消去法での近似判定として使う。
+   *
+   * 既定は false。facilities-search-pipeline.ts (駅設備検索、鉄道会社の公式
+   * ドメインのみを対象とする既存設計)の挙動には一切影響しない
+   * (destination-exit-search-pipeline.ts のみが true を渡す)。
+   */
+  treatNonAggregatorAsLikelyOfficial?: boolean;
+}
+
 /**
  * 検索結果1件を採点する。now は「発行日が新しいか」の基準時刻で、
  * テスト容易性のため呼び出し側から注入できるようにしている(既定は現在時刻)。
+ * options は既定で全項目 false/undefined 相当となり、既存呼び出し元の挙動を変えない。
  */
 export function scoreSearchSource(
   candidate: SearchSourceCandidate,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: ScoreSearchSourceOptions = {}
 ): ScoredSearchSource {
   const reasons: string[] = [];
   let score = 0;
@@ -158,13 +214,23 @@ export function scoreSearchSource(
   const parsedUrl = safeParseUrl(candidate.url);
   const hostname = parsedUrl?.hostname ?? "";
   const officialDomain = hostname !== "" && isOfficialDomain(hostname);
+  const lowQualityDomain = hostname !== "" && !officialDomain && isLowQualityDomain(hostname);
+  const aggregatorDomain =
+    hostname !== "" && !officialDomain && !lowQualityDomain && isAggregatorDomain(hostname);
 
   if (officialDomain) {
     score += OFFICIAL_DOMAIN_SCORE;
     reasons.push(`公式ドメイン (${hostname})`);
-  } else if (hostname !== "" && isLowQualityDomain(hostname)) {
+  } else if (lowQualityDomain) {
     score += LOW_QUALITY_DOMAIN_PENALTY;
     reasons.push(`まとめサイト・個人ブログの可能性があるドメイン (${hostname})`);
+  } else if (
+    options.treatNonAggregatorAsLikelyOfficial === true &&
+    hostname !== "" &&
+    !aggregatorDomain
+  ) {
+    score += DESTINATION_LIKELY_OFFICIAL_SCORE;
+    reasons.push(`第三者ポータルではないため、目的地の公式サイトの可能性が高い (${hostname})`);
   }
 
   if (containsRelevantKeyword(candidate.title)) {
