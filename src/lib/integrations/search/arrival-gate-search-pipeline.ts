@@ -87,7 +87,13 @@ function isValidCandidate(value: unknown): value is ArrivalGateCandidate {
   return (
     isNonEmptyText(c.gateName) &&
     (c.viaHint === undefined || c.viaHint === null || typeof c.viaHint === "string") &&
-    (c.exitHint === undefined || c.exitHint === null || typeof c.exitHint === "string")
+    // exitHintもgateNameと同じ長さ上限を適用する(/security-review指摘: コメントで
+    // 「出口ヒントにも上限を設け」と書きながら実装ではtypeofのみのチェックになっており、
+    // 異常に長い/不審な文字列がそのままfixedExit.nameとして後段プロンプトへ
+    // 流れ込みうる検証漏れがあった)。空文字列は許容されないため、明記されていない
+    // 場合はundefined/nullを渡す(isNonEmptyTextはundefined/nullをそもそも受け付けず
+    // falseを返すため、下のoptional-chain分岐で明示的に許容する)。
+    (c.exitHint === undefined || c.exitHint === null || isNonEmptyText(c.exitHint))
   );
 }
 

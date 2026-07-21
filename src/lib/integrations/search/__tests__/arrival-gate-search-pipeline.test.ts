@@ -47,6 +47,32 @@ describe("searchArrivalGateForLine", () => {
     expect(result?.exitHint).toBe("A0出口");
   });
 
+  test("exitHintが異常に長い(200文字超)候補は無効として除外される(/security-review指摘の回帰テスト)", async () => {
+    serperSearch.mockResolvedValue(RESULTS);
+    fetchPageAsMarkdown.mockResolvedValue("本文");
+    generateStructuredContent.mockResolvedValue({
+      candidates: [
+        { viaHint: "東急東横線", gateName: "異常に長いexitHint", exitHint: "あ".repeat(201) },
+      ],
+    });
+
+    const result = await searchArrivalGateForLine(KEYS, "渋谷駅", "東急東横線");
+
+    expect(result).toBeNull();
+  });
+
+  test("exitHintが空文字の候補は無効として除外される", async () => {
+    serperSearch.mockResolvedValue(RESULTS);
+    fetchPageAsMarkdown.mockResolvedValue("本文");
+    generateStructuredContent.mockResolvedValue({
+      candidates: [{ viaHint: "東急東横線", gateName: "空文字exitHint", exitHint: "" }],
+    });
+
+    const result = await searchArrivalGateForLine(KEYS, "渋谷駅", "東急東横線");
+
+    expect(result).toBeNull();
+  });
+
   test("URLスコアリングにtreatNonAggregatorAsLikelyOfficialを渡さない(destination-exit-search-pipeline.tsとは異なり、駅の一般情報検索のため目的地公式サイト向けヒューリスティックは不要)", async () => {
     // scoreSearchSourceの実装は差し替えず、公式ドメインでもアグリゲーターでも
     // ない一般ブログ的URLがscore>0になるかどうかで間接的に検証する。
