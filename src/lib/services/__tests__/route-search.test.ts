@@ -30,6 +30,22 @@ const highConfidence: Confidence = {
   sourceCount: 2,
 };
 
+const mediumConfidence: Confidence = {
+  level: "medium",
+  reasons: [],
+  verifiedAt: null,
+  expiresAt: null,
+  sourceCount: 1,
+};
+
+const lowConfidenceValue: Confidence = {
+  level: "low",
+  reasons: ["Web検索結果のみで裏付けが弱い"],
+  verifiedAt: null,
+  expiresAt: null,
+  sourceCount: 1,
+};
+
 const STATIONS: Record<string, Station> = {
   origin: {
     stationId: "origin",
@@ -1307,6 +1323,153 @@ describe("buildTransferAndExitSegments", () => {
 
       // 方角チェックをスキップした結果、単純に座標が最も近い出口(東口)が選ばれる
       expect(outcome.result.exit?.name).toBe("東口");
+    });
+  });
+
+  // 実機検証(西谷駅→kawara CAFE&DINING横浜店)で、目的地出口検索パイプラインが
+  // confidence "low"の出口を返した際、上部サマリー「利用出口」(arrivalGuide経由、
+  // isGuideStepVisibleでlowを非表示)と下部「ルート」カードの出口ステップ
+  // (exitSegment、当時はconfidenceを見ずに常に表示)とで表示の有無が矛盾する
+  // 不具合が発生した。exitSegmentもisGuideStepVisibleと同じ可視性基準
+  // (street_exit=high_risk=medium以上)でゲートし、両者の表示基準を揃える回帰テスト。
+  describe("出口のconfidenceによる表示ゲート(isGuideStepVisibleとの整合、回帰テスト)", () => {
+    // 方角格下げ(resolveExitRecommendationのbearingチェック)を発生させないため、
+    // 出口座標とdestinationCoordinatesを完全に一致させる(EAST_EXITと同じ手法)。
+    const EXIT_COORDINATES: Coordinates = { lat: 0, lng: 0.01 };
+
+    function buildExitFacility(confidence: Confidence): StationFacility {
+      return {
+        facilityId: "exit_conf_gate_test",
+        stationId: "destination",
+        facilityType: "exit",
+        name: "相鉄口",
+        level: "1F",
+        accessible: true,
+        coordinates: EXIT_COORDINATES,
+        connectedGateId: "gate_conf_gate_test",
+        confidence,
+        verifiedAt: null,
+      };
+    }
+
+    const GATE_FOR_CONF_TEST: StationFacility = {
+      facilityId: "gate_conf_gate_test",
+      stationId: "destination",
+      facilityType: "gate",
+      name: "テスト改札",
+      level: "1F",
+      accessible: true,
+      coordinates: null,
+      connectedGateId: null,
+      confidence: highConfidence,
+      verifiedAt: null,
+    };
+
+    test("confidenceがlowの出口は、上部サマリーと同じ基準でexitSegmentからも隠す(名前を表示しない)", async () => {
+      const lowExit = buildExitFacility(lowConfidenceValue);
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([lowExit, GATE_FOR_CONF_TEST]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: EXIT_COORDINATES,
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      // 出口自体は実在が確認できている(座標一致・low confidence)ため、
+      // exit変数自体はnullにしない。confidenceSummary.exit等が「実在するが
+      // 検証度が低い」を正しく表せるようにするため、実際のconfidenceを保持する
+      // (unavailableへ格上げしない)。
+      expect(outcome.result.exit?.name).toBe("相鉄口");
+      expect(outcome.result.exit?.confidence.level).toBe("low");
+
+      // isGuideStepVisible基準(street_exit=high_risk=medium以上)を満たさない
+      // ため、exitSegmentの表示は「確認できません」側にフォールバックする。
+      expect(outcome.result.exitSegment.instruction).toBe("出口は確認できません。");
+      expect(outcome.result.exitSegment.instruction).not.toContain("相鉄口");
+      expect(outcome.result.exitSegment.facilities).toEqual([]);
+
+      // exitSegment.confidence自体は実際の値(low)を維持する(unavailableに
+      // 格上げしない。「実在は確認済みだが検証度が低い」を正しく表すため)。
+      expect(outcome.result.exitSegment.confidence.level).toBe("low");
+    });
+
+    test("confidenceがmediumの出口は、従来通りexitSegmentに名前を表示する", async () => {
+      const mediumExit = buildExitFacility(mediumConfidence);
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([mediumExit, GATE_FOR_CONF_TEST]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: EXIT_COORDINATES,
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      expect(outcome.result.exitSegment.instruction).toBe("相鉄口から出てください。");
+      expect(outcome.result.exitSegment.facilities).toEqual([
+        { facilityType: "exit", name: "相鉄口", confidence: mediumConfidence },
+      ]);
+    });
+
+    test("confidenceがhighの出口は、従来通りexitSegmentに名前を表示する(既存の正常系)", async () => {
+      const highExit = buildExitFacility(highConfidence);
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([highExit, GATE_FOR_CONF_TEST]),
+      };
+      const input = {
+        ...BASE_INPUT,
+        mode: "easy" as const,
+        destinationCoordinates: EXIT_COORDINATES,
+      };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      expect(outcome.result.exitSegment.instruction).toBe("相鉄口から出てください。");
+      expect(outcome.result.exitSegment.facilities).toEqual([
+        { facilityType: "exit", name: "相鉄口", confidence: highConfidence },
+      ]);
+    });
+
+    test("出口がnull(元から確認できていない)場合は従来通り「出口は確認できません。」のまま(既存分岐の維持)", async () => {
+      const deps: RouteSearchDeps = {
+        routeProvider: buildRouteProvider(true),
+        stationProvider: buildStationProvider([]),
+      };
+      const input = { ...BASE_INPUT, mode: "easy" as const };
+      const candidate = await resolveRouteCandidate(input, deps);
+      expect(candidate.ok).toBe(true);
+      if (!candidate.ok) return;
+
+      const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+
+      expect(outcome.result.exit).toBeNull();
+      expect(outcome.result.exitSegment.instruction).toBe("出口は確認できません。");
+      expect(outcome.result.exitSegment.facilities).toEqual([]);
+      expect(outcome.result.exitSegment.confidence.level).toBe("unavailable");
     });
   });
 });
