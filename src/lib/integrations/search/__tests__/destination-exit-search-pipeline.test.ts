@@ -169,4 +169,62 @@ describe("searchDestinationExitViaSerper", () => {
 
     expect(result).toBeNull();
   });
+
+  test("1回目の本文取得が全滅してnull相当になっても、2回目が成功すれば結果を返す(丸ごと再試行)", async () => {
+    serperSearch.mockResolvedValue(RESULTS);
+    // 1回目はJina本文取得が全滅→null、2回目は成功する。
+    fetchPageAsMarkdown.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValue("本文");
+    generateStructuredContent.mockResolvedValue({
+      candidates: [{ viaHint: "", exitName: "相鉄口", gateName: null }],
+    });
+
+    const result = await searchDestinationExitViaSerper(
+      KEYS,
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4640221, lng: 139.6200651 },
+      ["相鉄本線"]
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.exit.name).toBe("相鉄口");
+    // serperSearchはquery2件×2試行=4回、fetchPageAsMarkdownはadopted件数(RESULTS2件)×2試行=4回呼ばれる想定。
+    expect(serperSearch).toHaveBeenCalledTimes(4);
+  });
+
+  test("2回とも本文取得が全滅する場合は最終的にnullを返し、3回目は試行しない", async () => {
+    serperSearch.mockResolvedValue(RESULTS);
+    fetchPageAsMarkdown.mockResolvedValue(null);
+
+    const result = await searchDestinationExitViaSerper(
+      KEYS,
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4640221, lng: 139.6200651 },
+      ["相鉄本線"]
+    );
+
+    expect(result).toBeNull();
+    // MAX_ATTEMPTS=2回分のみ試行される(query2件×2試行=4回で頭打ち、3回目=5回目以降は呼ばれない)。
+    expect(serperSearch).toHaveBeenCalledTimes(4);
+    expect(generateStructuredContent).not.toHaveBeenCalled();
+  });
+
+  test("1回目で成功する場合は2回目(リトライ)を呼ばない(無駄なAPI呼び出しをしない)", async () => {
+    serperSearch.mockResolvedValue(RESULTS);
+    fetchPageAsMarkdown.mockResolvedValue("本文");
+    generateStructuredContent.mockResolvedValue({
+      candidates: [{ viaHint: "", exitName: "相鉄口", gateName: null }],
+    });
+
+    const result = await searchDestinationExitViaSerper(
+      KEYS,
+      "kawara CAFE&DINING 横浜店",
+      { lat: 35.4640221, lng: 139.6200651 },
+      ["相鉄本線"]
+    );
+
+    expect(result?.exit.name).toBe("相鉄口");
+    // query2件のみ(=1試行分)。リトライされていれば4回になるはず。
+    expect(serperSearch).toHaveBeenCalledTimes(2);
+    expect(generateStructuredContent).toHaveBeenCalledTimes(1);
+  });
 });
