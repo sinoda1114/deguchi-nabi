@@ -27,6 +27,13 @@ import { deriveSourceConfidence } from "@/lib/services/source-confidence";
 const MAX_ADOPTED_SOURCES = 5;
 const EXTRACTION_MODEL = "gemini-3.5-flash";
 
+// 実機検証(2026-07)で、Serper検索→Jina本文取得→Gemini抽出という多段パイプラインの
+// どこか1段がネットワーク瞬断・API一時エラー等で失敗すると、検索結果自体は
+// 存在するのに即nullを返してしまう再現性の低さが確認された。結果がnullの場合のみ、
+// 丸ごと1回だけ再試行する(合計最大2試行)。検索結果が本当に存在しない場合は
+// 再試行しても無駄だが、コストは小さく、ネットワーク/API起因の失敗を拾える見込みが高い。
+const MAX_ATTEMPTS = 2;
+
 export interface DestinationExitSearchKeys {
   serperApiKey: string;
   jinaApiKey: string | null;
@@ -129,7 +136,11 @@ function pickBestCandidate(
   return matched ?? candidates[0];
 }
 
-export async function searchDestinationExitViaSerper(
+/**
+ * searchDestinationExitViaSerper()の実処理1回分。ロジック本体はここに閉じ込め、
+ * 公開関数側でnull時のみ再試行するラッパーにする。
+ */
+async function attemptSearchDestinationExitViaSerper(
   keys: DestinationExitSearchKeys,
   destinationHint: string,
   _destinationCoordinates: Coordinates | null,
@@ -181,4 +192,38 @@ export async function searchDestinationExitViaSerper(
     exit: { name: best.exitName, confidence },
     gateHint: best.gateName ?? null,
   };
+}
+
+/**
+ * 目的地の最寄り出口をSerper検索パイプラインで確認する(公開API)。
+ *
+ * 実処理はattemptSearchDestinationExitViaSerper()に委譲し、結果がnullだった
+ * 場合のみ最大MAX_ATTEMPTS回まで丸ごと再試行する。例外はここで捕捉せず、
+ * 呼び出し元にそのまま伝播させる(内部関数の既存の例外方針を変えない)。
+ */
+export async function searchDestinationExitViaSerper(
+  keys: DestinationExitSearchKeys,
+  destinationHint: string,
+  destinationCoordinates: Coordinates | null,
+  destinationLines: string[]
+): Promise<{ exit: { name: string; confidence: Confidence }; gateHint: string | null } | null> {
+  let result: Awaited<ReturnType<typeof attemptSearchDestinationExitViaSerper>> = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    result = await attemptSearchDestinationExitViaSerper(
+      keys,
+      destinationHint,
+      destinationCoordinates,
+      destinationLines
+    );
+    if (result !== null) return result;
+
+    if (attempt < MAX_ATTEMPTS) {
+      console.warn(
+        `[destination-exit-search-pipeline] ${attempt}回目の試行がnullだったため再試行します: destinationHint=${destinationHint}`
+      );
+    }
+  }
+
+  return result;
 }
