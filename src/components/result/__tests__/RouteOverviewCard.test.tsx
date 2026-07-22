@@ -14,6 +14,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={39}
+        walkingMinutes={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -34,6 +35,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={39}
+        walkingMinutes={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -51,6 +53,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={null}
+        walkingMinutes={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -68,6 +71,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={39}
+        walkingMinutes={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -85,9 +89,48 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={true}
         estimatedDurationMinutes={39}
+        walkingMinutes={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
     expect(html).toContain("ルートを保存");
+  });
+
+  test("walkingMinutesがある場合、乗車時間+徒歩時間の合計目安を表示する", () => {
+    const html = renderToStaticMarkup(
+      <RouteOverviewCard
+        mode="easy"
+        routeId="route_1"
+        originName="出発駅"
+        destinationName="到着駅"
+        originStationId="origin"
+        destinationStationId="destination"
+        canSave={false}
+        estimatedDurationMinutes={10}
+        walkingMinutes={3}
+        overviewContentNode={<span>テスト概要</span>}
+      />
+    );
+    expect(html).toContain("約13分");
+    expect(html).toContain("乗車約10分");
+    expect(html).toContain("到着駅からの徒歩目安約3分");
+  });
+
+  test("walkingMinutesがnullの場合、合計目安は表示しない(乗車時間のみ)", () => {
+    const html = renderToStaticMarkup(
+      <RouteOverviewCard
+        mode="easy"
+        routeId="route_1"
+        originName="出発駅"
+        destinationName="到着駅"
+        originStationId="origin"
+        destinationStationId="destination"
+        canSave={false}
+        estimatedDurationMinutes={10}
+        walkingMinutes={null}
+        overviewContentNode={<span>テスト概要</span>}
+      />
+    );
+    expect(html).not.toContain("目的地到着まで");
   });
 });

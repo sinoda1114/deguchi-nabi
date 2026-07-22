@@ -7,6 +7,8 @@ import {
   computeConfidenceSummary,
   computeKeyInstruction,
   sortCandidatesByMode,
+  approximateWalkingDistanceMeters,
+  estimateWalkingMinutes,
   NO_DEPARTURE_TIME_DISCLAIMER,
 } from "@/lib/services/route-search";
 import type { RouteSearchDeps, UnifiedBoardingPosition } from "@/lib/services/route-search";
@@ -1827,6 +1829,44 @@ describe("computeKeyInstruction", () => {
 
     const keyInstruction = computeKeyInstruction(trainSegments, outcome.result);
     expect(keyInstruction.text).toContain("出口は確認できません(推奨方向: 北側)");
+  });
+});
+
+describe("estimateWalkingMinutes", () => {
+  test("距離を徒歩分速80m/分で割り、端数を切り上げる", () => {
+    expect(estimateWalkingMinutes(160)).toBe(2);
+    expect(estimateWalkingMinutes(161)).toBe(3);
+    expect(estimateWalkingMinutes(80)).toBe(1);
+  });
+
+  test("距離がnullの場合はnullを返す(距離不明を0分と誤って断定しない)", () => {
+    expect(estimateWalkingMinutes(null)).toBeNull();
+  });
+
+  test("距離が0以下の場合はnullを返す", () => {
+    expect(estimateWalkingMinutes(0)).toBeNull();
+    expect(estimateWalkingMinutes(-10)).toBeNull();
+  });
+
+  test("1分未満の距離でも最低1分に切り上げる(0分表示による誤解を避ける)", () => {
+    expect(estimateWalkingMinutes(1)).toBe(1);
+  });
+});
+
+describe("approximateWalkingDistanceMeters", () => {
+  test("到着駅座標と目的地座標から直線距離を算出する", () => {
+    const arrival: Coordinates = { lat: 35.0, lng: 139.0 };
+    const destination: Coordinates = { lat: 35.001, lng: 139.0 };
+    const expected = haversineMeters(35.0, 139.0, 35.001, 139.0);
+    expect(approximateWalkingDistanceMeters(arrival, destination)).toBeCloseTo(expected, 5);
+  });
+
+  test("到着駅座標が無い場合はnullを返す", () => {
+    expect(approximateWalkingDistanceMeters(null, { lat: 35.0, lng: 139.0 })).toBeNull();
+  });
+
+  test("目的地座標が無い場合はnullを返す", () => {
+    expect(approximateWalkingDistanceMeters({ lat: 35.0, lng: 139.0 }, null)).toBeNull();
   });
 });
 

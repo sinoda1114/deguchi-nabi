@@ -84,6 +84,7 @@ describe("RouteOverviewContent", () => {
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
       transferCount: 2,
+      destinationCoordinates: null,
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("乗換2回");
