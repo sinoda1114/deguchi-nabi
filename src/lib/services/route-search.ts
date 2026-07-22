@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type {
   AccessibilityCondition,
   ArrivalGuide,
@@ -13,6 +12,8 @@ import type {
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
 import type { Confidence } from "@/lib/domain/confidence";
 import { unavailableConfidence } from "@/lib/domain/confidence";
+import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
+import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
 import type {
   RailRouteCandidate,
   RouteProviderPort,
@@ -20,7 +21,7 @@ import type {
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import { haversineMeters } from "@/lib/geo/haversine";
 import { bearingDegrees, bearingDifferenceDegrees, compassLabel } from "@/lib/geo/bearing";
-import { worstConfidenceLevel } from "./confidence-engine";
+import { combinedFacilityConfidence, worstConfidenceLevel } from "./confidence-engine";
 import { buildArrivalGuide } from "./arrival-guide";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -137,32 +138,6 @@ function pickGateForExit(
     if (linkedGate) return linkedGate;
   }
   return pickFacility(facilities, "gate");
-}
-
-/**
- * 統合生成(unified-arrival-guide-generation.ts)が返すgate/exitを、既存の
- * StationFacility型へ変換する。座標を持たない(coordinates: null)ため、
- * この関数の戻り値を既存のresolveExitRecommendation(座標ベース選定)には
- * 通さず、直接transferSegment/exitSegmentの構築に使う。
- */
-function toUnifiedStationFacility(
-  facilityType: "gate" | "exit",
-  stationId: string,
-  facility: { name: string; confidence: StationFacility["confidence"] }
-): StationFacility {
-  return {
-    facilityId: randomUUID(),
-    stationId,
-    facilityType,
-    name: facility.name,
-    level: "",
-    accessible: false,
-    coordinates: null,
-    connectedGateId: null,
-    confidence: facility.confidence,
-    verifiedAt: null,
-    provenance: "ai_inferred",
-  };
 }
 
 export type ExitRecommendationTier = "exact" | "approximate" | "unavailable";
@@ -447,14 +422,25 @@ export interface FacilitiesBuildSuccess {
   transferSegment: RouteSegment;
   exitSegment: RouteSegment;
   recommendedExit: string;
-  gate: StationFacility | null;
-  exit: StationFacility | null;
+  /**
+   * 改札・出口の3状態(confirmed/alternatives/unavailable、2026-07-22追加)。
+   * gate/exitを個別のStationFacility|nullで持つ設計から置き換えた。「Aまたは
+   * B」のように2択には絞れているが1つに断定できない情報を、alternatives
+   * 状態として隠さず保持する(Fable 5・Codexの独立レビューで一致した結論)。
+   */
+  facilityRecommendation: FacilityRecommendation;
   elevator: StationFacility | null;
   /**
    * 出口・改札が方角のみの案内(tier: "approximate")に格下げされたか。
    * ページ上部で1回だけ注記を出すために使う(segment単位では繰り返さない)。
    */
   hasApproximateGuidance: boolean;
+  /**
+   * facilityRecommendation.state === "alternatives" かどうか。
+   * ページ上部で1回だけ「複数候補があります」の注記を出すために使う
+   * (FacilitiesWarningBadges.tsx参照。hasApproximateGuidanceと同じ設計)。
+   */
+  hasAlternativesGuidance: boolean;
   /**
    * hasApproximateGuidanceがtrueの場合のみ、目的地の方角(8方位ラベル)。
    * 改札名・出口名の代わりには使わない、あくまで「推奨方向」として独立に
@@ -569,8 +555,7 @@ export async function buildTransferAndExitSegments(
     }
   }
 
-  let exit: StationFacility | null;
-  let gate: StationFacility | null;
+  let facilityRecommendation: FacilityRecommendation;
   let unifiedWalkingSteps: GuideStep[] | null = null;
   let recommendation: ExitRecommendation;
 
@@ -579,22 +564,16 @@ export async function buildTransferAndExitSegments(
     // 方式(single-call-navigator.ts)へ移行後、旧「exitが確認できた場合のみ
     // gateも採用する」ロジックのままだと、改札名だけ確信度高く抽出できていても
     // 出口が同じ応答内でたまたま未確認だった場合にgateごと丸ごと「確認できません」
-    // にしてしまう不具合が発生した(西谷駅→kawara CAFE&DINING横浜店で再現:
-    // gate="1階改札口（みなみ西口方面）"は抽出できていたのにexitがnullだった
-    // ためgate自体もnull化されていた)。旧方式では改札を出口から逆引きする
-    // 設計だったため両者を結合する意味があったが、単一呼び出し方式では改札・
-    // 出口は同じ検索セッションから独立した事実として抽出されるため、
-    // 「存在する情報は必ず出す、隠さない」という既定方針(下記exitSegmentの
-    // コメント参照)を改札・出口の組み合わせ判定にも一貫して適用する。
-    exit = unified.exit
-      ? toUnifiedStationFacility("exit", input.destinationStationId, unified.exit)
-      : null;
-    gate = unified.gate
-      ? toUnifiedStationFacility("gate", input.destinationStationId, unified.gate)
-      : null;
+    // にしてしまう不具合が発生した(西谷駅→kawara CAFE&DINING横浜店で再現)。
+    // 単一呼び出し方式では改札・出口は同じ検索セッションから独立した事実として
+    // 抽出されるため、「存在する情報は必ず出す、隠さない」という既定方針を
+    // 改札・出口の組み合わせ判定にも一貫して適用する(facility自体が既に
+    // single-call-navigator.tsでこの方針に沿って3状態判定済み)。
+    facilityRecommendation = unified.facility;
     unifiedWalkingSteps = unified.walkingSteps;
-    recommendation = exit
-      ? { tier: "exact", exit, destinationDirectionLabel: null }
+    const hasExit = facilityCandidatesOf(facilityRecommendation, (pair) => pair.exit).length > 0;
+    recommendation = hasExit
+      ? { tier: "exact", exit: null, destinationDirectionLabel: null }
       : { tier: "unavailable", exit: null, destinationDirectionLabel: null };
   } else if (canTryUnified) {
     // 統合生成を試みたが出口を確認できなかった場合、旧方式(getFacilities、
@@ -607,8 +586,7 @@ export async function buildTransferAndExitSegments(
     // 考え方を踏襲する。旧方式にフォールバックしても、座標を持たないAI生成
     // facilityでは同じ理由でほぼ確実に「確認できません」に落ちるため、
     // 追加コストに見合うだけの効果も期待しにくい)。
-    exit = null;
-    gate = null;
+    facilityRecommendation = { state: "unavailable", reason: "改札・出口の情報が確認できませんでした" };
     recommendation = { tier: "unavailable", exit: null, destinationDirectionLabel: null };
   } else {
     const arrivalFacilities = await deps.stationProvider.getFacilities(
@@ -622,16 +600,30 @@ export async function buildTransferAndExitSegments(
     // 中心座標は resolveRouteCandidate で取得済みの candidate から再利用し、
     // ここでの再フェッチは行わない(Promise共有時の重複取得を防ぐため)。
     // exitが確定しなかった場合、gateも「未確定の出口に紐づく改札」を
-    // 確信度高く名指しできないため、出口が無ければgateも無しとする。
+    // 確信度高く名指しできないため、出口が無ければgateも無しとする。この
+    // 座標ベース経路は複数候補を扱わないため、confirmed/unavailableのみになる
+    // (alternativesはunified(AI検索)経路でのみ発生する)。
     recommendation = resolveExitRecommendation(
       arrivalFacilities,
       input.destinationCoordinates,
       candidate.arrivalStationCoordinates
     );
-    exit = recommendation.exit;
-    gate = exit ? pickGateForExit(arrivalFacilities, exit) : null;
+    const exit = recommendation.exit;
+    const gate = exit ? pickGateForExit(arrivalFacilities, exit) : null;
     elevator = pickFacility(arrivalFacilities, "elevator");
     escalator = pickFacility(arrivalFacilities, "escalator");
+    facilityRecommendation = exit
+      ? {
+          state: "confirmed",
+          pair: {
+            gate: gate
+              ? { name: gate.name, confidence: gate.confidence, provenance: gate.provenance }
+              : null,
+            exit: { name: exit.name, confidence: exit.confidence, provenance: exit.provenance },
+            reason: null,
+          },
+        }
+      : { state: "unavailable", reason: "出口情報が不足しています" };
   }
 
   if (input.mode === "accessible" && !elevator) {
@@ -645,12 +637,21 @@ export async function buildTransferAndExitSegments(
   const accessFacility =
     input.mode === "accessible" ? elevator : escalator ?? elevator;
 
+  const gateFacilities = facilityCandidatesOf(facilityRecommendation, (pair) => pair.gate);
+  const gateNames = gateFacilities.map((f) => f.name);
+  const gateIsAlternatives = facilityRecommendation.state === "alternatives" && gateFacilities.length > 1;
+
+  // 改札自体が実在未確認(gateNames.length === 0)の場合のみ「確認できません」と
+  // 明示する。実在する場合はconfidenceで隠さず必ず改札名を表示する(隠す設計から、
+  // 常に値を出す設計への転換。実機検証でユーザーから「隠す」設計への強い不満が
+  // 出たことを受けた再設計)。alternatives(複数候補)の場合は候補名を"/"区切りで
+  // 列挙し、「いずれか」であることを明示する(先頭候補を暗黙の推奨に見せない)。
   const transferSegment: RouteSegment = {
     type: "transfer",
     from: candidate.arrivalStationName,
     to: candidate.arrivalStationName,
     line: null,
-    direction: gate ? `${gate.name}方面` : null,
+    direction: gateNames.length > 0 ? `${gateNames.join(" / ")}方面` : null,
     platform: null,
     boardingPosition: null,
     facilities: accessFacility
@@ -662,41 +663,37 @@ export async function buildTransferAndExitSegments(
           },
         ]
       : [],
-    // 改札自体が実在未確認(gate === null)の場合のみ「確認できません」と明示する。
-    // gateが実在する場合はconfidenceで隠さず必ず改札名を表示する(隠す設計から、
-    // 常に値を出す設計への転換。実機検証でユーザーから「隠す」設計への強い不満が
-    // 出たことを受けた再設計)。以前はconfidenceが"high"未満の場合に末尾へ
-    // 「未確認情報」の注記を付けていたが、この注記テキスト自体はユーザーから
-    // 不要と判断され削除した(値を隠さず表示する方針は維持している)。
-    instruction: gate ? `${gate.name}へ向かってください。` : "改札は確認できません。",
-    // 改札自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
-    // 常にunavailable(確認不能)として扱う。lowは「実在は確認済みだが検証度が
-    // 低い」ケース専用であり、未確認をlowとして扱うと過大な確信度になる。
-    confidence: gate ? gate.confidence : unavailableConfidence("改札情報が不足しています"),
+    instruction:
+      gateNames.length === 0
+        ? "改札は確認できません。"
+        : gateIsAlternatives
+          ? `利用できる改札: ${gateNames.join(" / ")}(いずれか。現地の案内表示でご確認ください)。`
+          : `${gateNames[0]}へ向かってください。`,
+    // 改札自体が未確定(実在するかどうか未確認)の場合は、常にunavailable
+    // (確認不能)として扱う。lowは「実在は確認済みだが検証度が低い」ケース専用
+    // であり、未確認をlowとして扱うと過大な確信度になる。
+    confidence:
+      gateFacilities.length === 0
+        ? unavailableConfidence("改札情報が不足しています")
+        : combinedFacilityConfidence(gateFacilities.map((f) => f.confidence)),
     sourceReferences: [],
     warnings: [],
   };
 
-  // exitが実在確認できている(exit !== null)場合は、confidenceで隠さず必ず
-  // 出口名を表示する。以前は"high_risk"種別としてconfidence.levelがmedium
-  // 未満なら非表示にしていたが、これが原因で改札・出口情報の大半が
-  // 「確認できません」表示になり、実機検証でユーザーから強い不満が出た。
-  // 第三者レビューの結論(guide-step-visibility.ts参照)を受け、「隠す」のでは
-  // なく「存在する情報は必ず出す」設計に転換した。上部サマリー「利用出口」
-  // (RouteExitStat.tsx、overview-field.ts経由)・「ルートの流れ」タイムライン
-  // (route-timeline-nodes.ts)・このexitSegmentの3箇所とも同じ基準
-  // (exit非nullなら表示、confidenceでは隠さない)に揃えている。以前はconfidenceが
-  // "high"未満の場合に「未確認情報」の注記も付けていたが、この注記テキスト自体は
-  // ユーザーから不要と判断され削除した(値を隠さず表示する方針は維持している)。
-  //
-  // exit変数自体はnullにしない(以前からの設計を維持): confidenceSummary.exit
-  // (computeConfidenceSummary参照)やrecommendedExit/computeKeyInstructionは
-  // 「出口自体は実在が確認できたか、その検証度は何か」を表す既存の契約を持つ
-  // (gateセグメントのconfidenceコメント参照: lowは「実在は確認済みだが検証度が
-  // 低い」ケース専用で、未確認(unavailable)とは意味が異なる)。ここでexitを
-  // nullへ書き換えると、実際にはlow confidenceで実在する出口を「出口情報が
-  // 不足しています」(unavailable)扱いに格上げしてしまい、confidenceSummary等の
-  // 集計値が実態と乖離する。
+  // exitが実在確認できている場合は、confidenceで隠さず必ず出口名を表示する。
+  // 以前は"high_risk"種別としてconfidence.levelがmedium未満なら非表示にして
+  // いたが、これが原因で改札・出口情報の大半が「確認できません」表示になり、
+  // 実機検証でユーザーから強い不満が出た。第三者レビューの結論
+  // (guide-step-visibility.ts参照)を受け、「隠す」のではなく「存在する情報は
+  // 必ず出す」設計に転換した。上部サマリー「利用出口」(RouteExitStat.tsx、
+  // overview-field.ts経由)・「ルートの流れ」タイムライン(route-timeline-
+  // nodes.ts)・このexitSegmentの3箇所とも同じ基準(実在すれば表示、confidence
+  // では隠さない)に揃えている。alternatives(複数候補)の場合も同様に全候補を
+  // 隠さず列挙する(2026-07-22、「AまたはB」を丸ごと非表示にしていた問題への対応)。
+  const exitFacilities = facilityCandidatesOf(facilityRecommendation, (pair) => pair.exit);
+  const exitNames = exitFacilities.map((f) => f.name);
+  const exitIsAlternatives = facilityRecommendation.state === "alternatives" && exitFacilities.length > 1;
+
   const exitSegment: RouteSegment = {
     type: "exit",
     from: candidate.arrivalStationName,
@@ -705,56 +702,67 @@ export async function buildTransferAndExitSegments(
     direction: null,
     platform: null,
     boardingPosition: null,
-    facilities: exit
-      ? [
-          {
-            facilityType: exit.facilityType,
-            name: exit.name,
-            confidence: exit.confidence,
-          },
-        ]
-      : [],
-    // 具体的な出口名を確認できていない場合(exit === null)のみ「確認できません」
-    // と明示する。方角(◯◯側)を出口名の代用として表示しない設計は維持する
-    // (方角は hasApproximateGuidance/approximateDirectionLabel 経由で
-    // 「推奨方向」として別途提示する)。exitが実在する場合はconfidenceが
-    // "high"未満でも出口名をそのまま表示する(注記テキストは削除済み)。
-    instruction: exit ? `${exit.name}から出てください。` : "出口は確認できません。",
-    // 出口自体が未確定(実在するかどうか未確認)の場合は、tierに関わらず
-    // 常にunavailable(確認不能)として扱う。exitが実在する場合は、実際の
-    // confidenceをそのまま保持する(上記コメント参照。confidenceSummary.exit
-    // 等との整合を保つため)。
-    confidence: exit ? exit.confidence : unavailableConfidence("出口情報が不足しています"),
+    facilities: exitFacilities.map((f) => ({
+      facilityType: "exit" as const,
+      name: f.name,
+      confidence: f.confidence,
+    })),
+    // 具体的な出口名を確認できていない場合のみ「確認できません」と明示する。
+    // 方角(◯◯側)を出口名の代用として表示しない設計は維持する(方角は
+    // hasApproximateGuidance/approximateDirectionLabel経由で「推奨方向」として
+    // 別途提示する)。
+    instruction:
+      exitNames.length === 0
+        ? "出口は確認できません。"
+        : exitIsAlternatives
+          ? `利用できる出口: ${exitNames.join(" / ")}(いずれか。現地の案内表示でご確認ください)。`
+          : `${exitNames[0]}から出てください。`,
+    // 出口自体が未確定(実在するかどうか未確認)の場合は、常にunavailable
+    // (確認不能)として扱う。実在する場合は、実際のconfidenceをそのまま
+    // 保持する(confidenceSummary.exit等との整合を保つため)。
+    confidence:
+      exitFacilities.length === 0
+        ? unavailableConfidence("出口情報が不足しています")
+        : combinedFacilityConfidence(exitFacilities.map((f) => f.confidence)),
     sourceReferences: [],
     warnings: [],
   };
 
   // 方角(◯◯側)を出口名の代用にしない。実際の出口名を確認できなければ
-  // 「確認できません」と明示する。
-  const recommendedExit = exit?.name ?? "確認できません";
+  // 「確認できません」と明示する。alternatives時は「A / B(いずれか)」と表示する。
+  const recommendedExit =
+    exitNames.length === 0
+      ? "確認できません"
+      : exitIsAlternatives
+        ? `${exitNames.join(" / ")}(いずれか)`
+        : exitNames[0];
 
   // 統合生成使用時はrecommendationを常にtier: "exact"として組み立てているため
   // (上記参照)、この判定は自動的にfalseになる。
   const hasApproximateGuidance = recommendation.tier === "approximate";
+  const hasAlternativesGuidance = facilityRecommendation.state === "alternatives";
 
   const resultWithoutArrivalGuide: Omit<FacilitiesBuildSuccess, "arrivalGuide"> = {
     transferSegment,
     exitSegment,
     recommendedExit,
-    gate,
-    exit,
+    facilityRecommendation,
     elevator,
     hasApproximateGuidance,
+    hasAlternativesGuidance,
     approximateDirectionLabel: hasApproximateGuidance ? recommendation.destinationDirectionLabel : null,
     // 統合生成がgateを基準に決めた乗車位置(2026-07-20追加)。buildTrainSegments
     // 側の独立した乗車位置生成(getBoardingPosition)と不整合が起きないよう、
     // これが取れている場合はそちらを優先させる(searchRouteGuide参照)。
-    // 判定条件はunified.exitではなくunified.gateにする(2026-07-21修正:
-    // 乗車位置は「gateを基準に決めた」ものであり出口の有無とは無関係。
-    // 単一呼び出し方式では改札・出口が独立して抽出されるため、旧来の
-    // exit依存の判定のままだと出口未確認の場合に乗車位置まで無関係に
-    // 捨ててしまっていた)。
-    unifiedBoardingPosition: unified && unified.gate ? unified.boardingPosition : null,
+    // gateFacilities(重複排除済み)が1件のときのみ採用する(2026-07-22修正:
+    // alternatives(複数候補)の場合、どの改札を基準にした号車か一意に定まらない
+    // ため、単一断定の号車を案内すると不適切な組合せになりうる。Codexレビュー
+    // 指摘のガードレール: 号車は候補ごとに紐付けられない限り単一の断定的な
+    // 案内文に接続しない。判定はfacilityRecommendation.stateではなく重複排除後の
+    // gateFacilities件数で行う: 「改札A+出口X」「改札A+出口Y」のように出口だけ
+    // 複数(state="alternatives")でも改札自体は実質1択のケースでは、号車を
+    // 不要に握りつぶさない/ai-review指摘、Codex参照)。
+    unifiedBoardingPosition: unified && gateFacilities.length === 1 ? unified.boardingPosition : null,
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
@@ -785,13 +793,19 @@ export function computeConfidenceSummary(
   facilities: FacilitiesBuildSuccess,
   mode: RouteMode
 ): RouteConfidenceSummary {
+  const gateConfidences = facilityCandidatesOf(facilities.facilityRecommendation, (p) => p.gate).map(
+    (f) => f.confidence
+  );
+  const exitConfidences = facilityCandidatesOf(facilities.facilityRecommendation, (p) => p.exit).map(
+    (f) => f.confidence
+  );
   return {
     boardingPosition: worstConfidenceLevel(
       trainSegments.map((s) => s.confidence)
     ),
     transferGuide: worstConfidenceLevel([facilities.transferSegment.confidence]),
-    gate: facilities.gate?.confidence.level ?? "unavailable",
-    exit: facilities.exit?.confidence.level ?? "unavailable",
+    gate: worstConfidenceLevel(gateConfidences),
+    exit: worstConfidenceLevel(exitConfidences),
     accessibility:
       mode === "accessible" ? facilities.elevator?.confidence.level ?? "unavailable" : null,
   };
@@ -807,18 +821,25 @@ export function computeKeyInstruction(
   const firstBoarding = trainSegments.find((s) => s.boardingPosition);
 
   const directionLabel = facilities.approximateDirectionLabel;
+  const gateNames = facilityCandidatesOf(facilities.facilityRecommendation, (p) => p.gate).map(
+    (f) => f.name
+  );
+  const exitNames = facilityCandidatesOf(facilities.facilityRecommendation, (p) => p.exit).map(
+    (f) => f.name
+  );
 
   // 改札・出口は具体的な名称が確認できた場合のみ名指しする。方角
   // (directionLabel)は改札名・出口名の代わりには使わず、出口が未確認の
   // 場合にのみ「推奨方向」として付記する(ユーザーフィードバックに基づき、
-  // 「南側」等を出口名の代用にしない設計へ変更)。
+  // 「南側」等を出口名の代用にしない設計へ変更)。複数候補(alternatives)の
+  // 場合は"/"区切りで全候補名を列挙する。
   const keyInstructionParts = [
     firstBoarding?.boardingPosition
       ? `${firstBoarding.boardingPosition.carNumber}号車付近に乗車`
       : "乗車位置は確認できません",
-    facilities.gate ? `${facilities.gate.name}` : "改札は確認できません",
-    facilities.exit
-      ? `${facilities.exit.name}へ`
+    gateNames.length > 0 ? gateNames.join(" / ") : "改札は確認できません",
+    exitNames.length > 0
+      ? `${exitNames.join(" / ")}へ`
       : directionLabel
         ? `出口は確認できません(推奨方向: ${directionLabel}側)`
         : "出口は確認できません",

@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { buildArrivalGuide } from "@/lib/services/arrival-guide";
 import type { FacilitiesBuildSuccess } from "@/lib/services/route-search";
-import type { StationFacility } from "@/lib/domain/station";
+import type { FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
 import type { Confidence } from "@/lib/domain/confidence";
 import type { GuideStep } from "@/lib/domain/route";
 
@@ -13,32 +13,30 @@ const highConfidence: Confidence = {
   sourceCount: 1,
 };
 
-type BaseResult = Pick<FacilitiesBuildSuccess, "gate" | "exit" | "approximateDirectionLabel">;
+type BaseResult = Pick<FacilitiesBuildSuccess, "facilityRecommendation" | "approximateDirectionLabel">;
 
 function baseResult(overrides: Partial<BaseResult> = {}): BaseResult {
   return {
-    gate: null,
-    exit: null,
+    facilityRecommendation: { state: "unavailable", reason: "test" },
     approximateDirectionLabel: null,
     ...overrides,
   };
 }
 
-function facility(overrides: Partial<StationFacility> = {}): StationFacility {
+function namedFacility(overrides: Partial<NamedFacility> = {}): NamedFacility {
   return {
-    facilityId: "fac_1",
-    stationId: "st_1",
-    facilityType: "gate",
     name: "南改札",
-    level: "地上1階",
-    accessible: true,
-    coordinates: null,
-    connectedGateId: null,
     confidence: highConfidence,
-    verifiedAt: "2026-01-01T00:00:00.000Z",
     provenance: "surveyed",
     ...overrides,
   };
+}
+
+function confirmed(
+  gate: NamedFacility | null,
+  exit: NamedFacility | null
+): FacilityRecommendation {
+  return { state: "confirmed", pair: { gate, exit, reason: null } };
 }
 
 function guideStep(overrides: Partial<GuideStep> = {}): GuideStep {
@@ -57,8 +55,10 @@ describe("buildArrivalGuide", () => {
   test("gateとexitが両方確定していれば ticket_gate → street_exit の順でステップを組み立てる", async () => {
     const guide = await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityId: "fac_gate", facilityType: "gate", name: "南改札" }),
-        exit: facility({ facilityId: "fac_exit", facilityType: "exit", name: "A7出口" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札" }),
+          namedFacility({ name: "A7出口" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -75,7 +75,7 @@ describe("buildArrivalGuide", () => {
 
   test("gateがnullの場合はticket_gateステップを生成しない(推測で埋めない)", async () => {
     const guide = await buildArrivalGuide(
-      baseResult({ exit: facility({ facilityType: "exit", name: "A7出口" }) }),
+      baseResult({ facilityRecommendation: confirmed(null, namedFacility({ name: "A7出口" })) }),
       "st_1",
       "テスト駅",
       null,
@@ -89,6 +89,31 @@ describe("buildArrivalGuide", () => {
   test("gate・exitともnullでもクラッシュせず空のstepsを返す", async () => {
     const guide = await buildArrivalGuide(baseResult(), "st_1", "テスト駅", null, "easy", false, {});
     expect(guide.steps).toEqual([]);
+  });
+
+  test("複数候補(alternatives)の場合、titleを全候補名の連結にし、いずれかであることを明示する", async () => {
+    const guide = await buildArrivalGuide(
+      baseResult({
+        facilityRecommendation: {
+          state: "alternatives",
+          pairs: [
+            { gate: null, exit: namedFacility({ name: "みなみ西口" }), reason: null },
+            { gate: null, exit: namedFacility({ name: "5番街方面出口" }), reason: null },
+          ],
+        },
+      }),
+      "st_1",
+      "テスト駅",
+      null,
+      "easy",
+      false,
+      {}
+    );
+
+    expect(guide.steps).toHaveLength(1);
+    expect(guide.steps[0].type).toBe("street_exit");
+    expect(guide.steps[0].title).toBe("みなみ西口 / 5番街方面出口");
+    expect(guide.steps[0].instruction).toContain("いずれか");
   });
 
   test("approximateDirectionLabelをdestinationDirectionへそのまま引き継ぐ", async () => {
@@ -106,7 +131,12 @@ describe("buildArrivalGuide", () => {
 
   test("facility.provenanceがai_inferredの場合、confidence:highでもmediumに格下げする", async () => {
     const guide = await buildArrivalGuide(
-      baseResult({ gate: facility({ provenance: "ai_inferred", confidence: highConfidence }) }),
+      baseResult({
+        facilityRecommendation: confirmed(
+          namedFacility({ provenance: "ai_inferred", confidence: highConfidence }),
+          null
+        ),
+      }),
       "st_1",
       "テスト駅",
       null,
@@ -120,7 +150,12 @@ describe("buildArrivalGuide", () => {
 
   test("facility.provenance未設定の場合は安全側のai_inferredとして扱う(medium格下げ)", async () => {
     const guide = await buildArrivalGuide(
-      baseResult({ gate: facility({ provenance: undefined, confidence: highConfidence }) }),
+      baseResult({
+        facilityRecommendation: confirmed(
+          namedFacility({ provenance: undefined, confidence: highConfidence }),
+          null
+        ),
+      }),
       "st_1",
       "テスト駅",
       null,
@@ -134,7 +169,12 @@ describe("buildArrivalGuide", () => {
 
   test("facility.provenanceがsurveyedならconfidence:highをそのまま維持する", async () => {
     const guide = await buildArrivalGuide(
-      baseResult({ gate: facility({ provenance: "surveyed", confidence: highConfidence }) }),
+      baseResult({
+        facilityRecommendation: confirmed(
+          namedFacility({ provenance: "surveyed", confidence: highConfidence }),
+          null
+        ),
+      }),
       "st_1",
       "テスト駅",
       null,
@@ -152,8 +192,10 @@ describe("buildArrivalGuide", () => {
 
     const guide = await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "surveyed" }),
+          namedFacility({ name: "A7出口", provenance: "surveyed" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -177,7 +219,7 @@ describe("buildArrivalGuide", () => {
     const getArrivalGuideNarrativeSteps = vi.fn().mockResolvedValue([]);
 
     await buildArrivalGuide(
-      baseResult({ exit: facility({ facilityType: "exit", name: "A7出口" }) }),
+      baseResult({ facilityRecommendation: confirmed(null, namedFacility({ name: "A7出口" })) }),
       "st_1",
       "テスト駅",
       null,
@@ -194,8 +236,10 @@ describe("buildArrivalGuide", () => {
 
     await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "surveyed" }),
+          namedFacility({ name: "A7出口", provenance: "surveyed" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -213,8 +257,10 @@ describe("buildArrivalGuide", () => {
 
     await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "ai_inferred" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "ai_inferred" }),
+          namedFacility({ name: "A7出口", provenance: "surveyed" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -232,8 +278,10 @@ describe("buildArrivalGuide", () => {
 
     await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "surveyed" }),
+          namedFacility({ name: "A7出口", provenance: "surveyed" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -249,8 +297,10 @@ describe("buildArrivalGuide", () => {
   test("stationProviderがgetArrivalGuideNarrativeStepsを実装していなくてもクラッシュしない", async () => {
     const guide = await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "surveyed" }),
+          namedFacility({ name: "A7出口", provenance: "surveyed" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -272,8 +322,10 @@ describe("buildArrivalGuide", () => {
 
     const guide = await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "surveyed" }),
+          namedFacility({ name: "A7出口", provenance: "surveyed" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -296,8 +348,10 @@ describe("buildArrivalGuide", () => {
 
     const guide = await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "surveyed" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "surveyed" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "surveyed" }),
+          namedFacility({ name: "A7出口", provenance: "surveyed" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -316,8 +370,10 @@ describe("buildArrivalGuide", () => {
 
     const guide = await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "統合改札", provenance: "ai_inferred" }),
-        exit: facility({ facilityType: "exit", name: "統合出口", provenance: "ai_inferred" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "統合改札", provenance: "ai_inferred" }),
+          namedFacility({ name: "統合出口", provenance: "ai_inferred" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -338,8 +394,10 @@ describe("buildArrivalGuide", () => {
 
     const guide = await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "統合改札", provenance: "ai_inferred" }),
-        exit: facility({ facilityType: "exit", name: "統合出口", provenance: "ai_inferred" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "統合改札", provenance: "ai_inferred" }),
+          namedFacility({ name: "統合出口", provenance: "ai_inferred" })
+        ),
       }),
       "st_1",
       "テスト駅",
@@ -359,8 +417,10 @@ describe("buildArrivalGuide", () => {
 
     await buildArrivalGuide(
       baseResult({
-        gate: facility({ facilityType: "gate", name: "南改札", provenance: "ai_inferred" }),
-        exit: facility({ facilityType: "exit", name: "A7出口", provenance: "ai_inferred" }),
+        facilityRecommendation: confirmed(
+          namedFacility({ name: "南改札", provenance: "ai_inferred" }),
+          namedFacility({ name: "A7出口", provenance: "ai_inferred" })
+        ),
       }),
       "st_1",
       "テスト駅",

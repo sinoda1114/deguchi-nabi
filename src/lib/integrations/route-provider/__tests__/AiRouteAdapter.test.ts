@@ -42,8 +42,7 @@ const GENERATED_GUIDE: SingleCallNavigatorGuide = {
   estimatedMinutes: 15,
   arrivalPlatformNumber: null,
   boarding: null,
-  gate: null,
-  exit: null,
+  facility: { state: "unavailable", reason: "test" },
 };
 
 function fakeStationProvider(stations: Record<string, Station | null>) {

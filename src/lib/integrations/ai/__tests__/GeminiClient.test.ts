@@ -3,6 +3,7 @@ import {
   generateStructuredContent,
   searchAndGenerateStructuredContent,
   searchAndGenerateStructuredContentWithImage,
+  searchAndGenerateStructuredContentWithSearchText,
 } from "../GeminiClient";
 
 function jsonResponse(body: unknown) {
@@ -153,6 +154,94 @@ describe("callGemini のタイムアウト設定", () => {
       "extract",
       {},
       { data: "base64imagedata", mimeType: "image/png" },
+      "gemini-3.5-flash"
+    );
+
+    expect(result).toBeNull();
+  });
+});
+
+describe("searchAndGenerateStructuredContentWithSearchText", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  test("抽出結果と検索フェーズの生テキストの両方を返す(逐語一致検証用)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [
+            {
+              content: { parts: [{ text: "検索結果の生テキスト" }] },
+              groundingMetadata: { webSearchQueries: ["q1"] },
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: '{"lines":["相鉄本線"]}' }] } }],
+        })
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await searchAndGenerateStructuredContentWithSearchText(
+      "key",
+      "search prompt",
+      "extract",
+      {},
+      "gemini-3.5-flash"
+    );
+
+    expect(result).toEqual({
+      data: { lines: ["相鉄本線"] },
+      searchText: "検索結果の生テキスト",
+    });
+  });
+
+  test("検索が実行されなかった場合はnullを返す", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse({ candidates: [{ content: { parts: [{ text: "テキスト" }] } }] })
+    ) as unknown as typeof fetch;
+
+    const result = await searchAndGenerateStructuredContentWithSearchText(
+      "key",
+      "search prompt",
+      "extract",
+      {},
+      "gemini-3.5-flash"
+    );
+
+    expect(result).toBeNull();
+  });
+
+  test("抽出フェーズが失敗(不正なJSON等)した場合もnullを返す", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [
+            {
+              content: { parts: [{ text: "検索結果テキスト" }] },
+              groundingMetadata: { webSearchQueries: ["q1"] },
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ candidates: [{ content: { parts: [{ text: "not json" }] } }] })
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await searchAndGenerateStructuredContentWithSearchText(
+      "key",
+      "search prompt",
+      "extract",
+      {},
       "gemini-3.5-flash"
     );
 

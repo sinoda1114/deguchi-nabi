@@ -7,7 +7,7 @@ import {
   generateSingleCallNavigatorGuide,
   getSharedSingleCallNavigatorGuide,
 } from "@/lib/integrations/ai/single-call-navigator";
-import { groundedAiConfidence } from "./ai-generation";
+import { groundedAiConfidence, resolveFacilityRecommendationConfidence } from "./ai-generation";
 import {
   decodeHeartRailsStationId,
   fetchNearestStationsFromHeartRails,
@@ -292,12 +292,7 @@ export class AiStationAdapter implements StationProviderPort {
             confidence: groundedAiConfidence(guide.boarding.confidenceLevel),
           }
         : null,
-      gate: guide.gate
-        ? { name: guide.gate.name, confidence: groundedAiConfidence(guide.gate.confidenceLevel) }
-        : null,
-      exit: guide.exit
-        ? { name: guide.exit.name, confidence: groundedAiConfidence(guide.exit.confidenceLevel) }
-        : null,
+      facility: resolveFacilityRecommendationConfidence(guide.facility),
       // 出口から目的地までの徒歩ナラティブ(左折・右折等)は生成しない
       // (2026-07-21ユーザー判断、single-call-navigator.tsのJSDoc参照)。
       walkingSteps: [],

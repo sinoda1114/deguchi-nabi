@@ -8,6 +8,8 @@ import type {
 import type { Confidence, ConfidenceLevel } from "@/lib/domain/confidence";
 import { capConfidenceForProvenance } from "@/lib/domain/confidence";
 import { searchAndGenerateStructuredContent } from "@/lib/integrations/ai/GeminiClient";
+import type { FacilityPair, FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
+import type { RawFacilityPair, RawFacilityRecommendation, RawNamedFacility } from "@/lib/integrations/ai/single-call-navigator";
 
 const AI_GENERATED_REASON =
   "AIによる推測情報(検索結果に基づく)。現地未確認のため参考程度に扱ってください。";
@@ -45,6 +47,42 @@ export function groundedAiConfidence(selfReportedLevel: ConfidenceLevel): Confid
     expiresAt: null,
     sourceCount: 0,
   };
+}
+
+function resolveNamedFacility(raw: RawNamedFacility | null): NamedFacility | null {
+  if (!raw) return null;
+  return {
+    name: raw.name,
+    confidence: groundedAiConfidence(raw.confidenceLevel),
+    provenance: "ai_inferred",
+  };
+}
+
+function resolveFacilityPair(raw: RawFacilityPair): FacilityPair<NamedFacility> {
+  return {
+    gate: resolveNamedFacility(raw.gate),
+    exit: resolveNamedFacility(raw.exit),
+    reason: raw.reason,
+  };
+}
+
+/**
+ * single-call-navigator.tsが返す生の3状態(自己申告のConfidenceLevelのみ)を、
+ * 検証度Confidenceオブジェクトへ解決した3状態へ変換する。stateそのもの
+ * (confirmed/alternatives/unavailable)は生成層で既に確定しているためここでは
+ * 変えず、内側のconfidenceLevel→Confidence変換(groundedAiConfidence、
+ * ai_inferred上限medium)だけを行う。
+ */
+export function resolveFacilityRecommendationConfidence(
+  raw: RawFacilityRecommendation
+): FacilityRecommendation<NamedFacility> {
+  if (raw.state === "confirmed") {
+    return { state: "confirmed", pair: resolveFacilityPair(raw.pair) };
+  }
+  if (raw.state === "alternatives") {
+    return { state: "alternatives", pairs: raw.pairs.map(resolveFacilityPair) };
+  }
+  return raw;
 }
 
 /**

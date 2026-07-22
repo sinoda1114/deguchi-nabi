@@ -642,8 +642,11 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.result.transferSegment.type).toBe("transfer");
     expect(outcome.result.exitSegment.type).toBe("exit");
     expect(outcome.result.recommendedExit).toBe("A1出口");
-    expect(outcome.result.gate?.name).toBe("中央改札");
-    expect(outcome.result.exit?.name).toBe("A1出口");
+    expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+    if (outcome.result.facilityRecommendation.state === "confirmed") {
+      expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("中央改札");
+      expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("A1出口");
+    }
     expect(outcome.result.elevator?.name).toBe("中央エレベーター");
   });
 
@@ -743,8 +746,14 @@ describe("buildTransferAndExitSegments", () => {
   test("easyモードかつ経路が非AI生成の場合、統合生成(getUnifiedArrivalGuide)を試し結果を採用する(council議論2026-07-20)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       boardingPosition: null,
-      gate: { name: "統合生成改札", confidence: highConfidence },
-      exit: { name: "統合生成出口", confidence: highConfidence },
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "統合生成改札", confidence: highConfidence },
+          exit: { name: "統合生成出口", confidence: highConfidence },
+          reason: null,
+        },
+      },
       walkingSteps: [
         {
           type: "public_passage" as const,
@@ -786,8 +795,11 @@ describe("buildTransferAndExitSegments", () => {
       null,
       "origin"
     );
-    expect(outcome.result.gate?.name).toBe("統合生成改札");
-    expect(outcome.result.exit?.name).toBe("統合生成出口");
+    expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+    if (outcome.result.facilityRecommendation.state === "confirmed") {
+      expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("統合生成改札");
+      expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("統合生成出口");
+    }
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(outcome.result.arrivalGuide.steps.some((s) => s.title === "見出し")).toBe(true);
   });
@@ -813,8 +825,7 @@ describe("buildTransferAndExitSegments", () => {
     ]);
     const getUnifiedArrivalGuide = vi.fn(async (..._args: unknown[]) => ({
       boardingPosition: null,
-      gate: null,
-      exit: null,
+      facility: { state: "unavailable" as const, reason: "test" },
       walkingSteps: [],
     }));
     const deps: RouteSearchDeps = {
@@ -864,8 +875,14 @@ describe("buildTransferAndExitSegments", () => {
   test("経路自体がAI生成の場合でも統合生成を呼ぶ(fixture外ルートは経路自体がAI生成になるため、ここを止めると常に「確認できません」に落ちる。IPレートリミットで総リクエスト数は上限があるため、1リクエストあたりのAI呼び出しが最大2系統になるコスト増は許容する)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       boardingPosition: null,
-      gate: { name: "統合生成改札", confidence: highConfidence },
-      exit: { name: "統合生成出口", confidence: highConfidence },
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "統合生成改札", confidence: highConfidence },
+          exit: { name: "統合生成出口", confidence: highConfidence },
+          reason: null,
+        },
+      },
       walkingSteps: [],
     }));
     const stationProvider: StationProviderPort = {
@@ -906,7 +923,10 @@ describe("buildTransferAndExitSegments", () => {
     expect(getUnifiedArrivalGuide).toHaveBeenCalled();
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    expect(outcome.result.exit?.name).toBe("統合生成出口");
+    expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+    if (outcome.result.facilityRecommendation.state === "confirmed") {
+      expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("統合生成出口");
+    }
   });
 
   test("統合生成がnullを返した場合は旧方式(getFacilities)へフォールバックせず確認不能のまま返す(/security-review指摘、Medium: フォールバックすると1リクエストで統合生成+旧方式の計4回の課金AI呼び出しが発生しレートリミットの実効性が下がるため)", async () => {
@@ -927,16 +947,21 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    expect(outcome.result.exit).toBeNull();
-    expect(outcome.result.gate).toBeNull();
+    expect(outcome.result.facilityRecommendation.state).toBe("unavailable");
     expect(getFacilities).not.toHaveBeenCalled();
   });
 
   test("統合生成が出口を確認できず改札のみ確認できた場合、改札は採用しつつ出口のみ確認不能のまま返す。旧方式(getFacilities)へはフォールバックしない(2026-07-21修正: 単一呼び出し方式では改札・出口を独立して抽出するため、旧来の「exit未確認ならgateも握りつぶす」結合を撤廃した。実機発覚: 西谷駅→kawara CAFE&DINING横浜店で改札名は確信度高く抽出できていたのに出口が同じ応答内で未確認だっただけで改札まで「確認できません」になっていた不具合の回帰テスト)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       boardingPosition: null,
-      gate: { name: "統合生成改札", confidence: highConfidence },
-      exit: null,
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "統合生成改札", confidence: highConfidence },
+          exit: null,
+          reason: null,
+        },
+      },
       walkingSteps: [],
     }));
     const getFacilities = vi.fn(async () => []);
@@ -958,8 +983,11 @@ describe("buildTransferAndExitSegments", () => {
     // 出口は未確認のまま。改札は独立して確認できているため採用する
     // (存在する情報は必ず出す、隠さない方針)。旧方式(getFacilities)へは
     // フォールバックしない。
-    expect(outcome.result.exit).toBeNull();
-    expect(outcome.result.gate?.name).toBe("統合生成改札");
+    expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+    if (outcome.result.facilityRecommendation.state === "confirmed") {
+      expect(outcome.result.facilityRecommendation.pair.exit).toBeNull();
+      expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("統合生成改札");
+    }
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(getFacilities).not.toHaveBeenCalled();
   });
@@ -967,8 +995,7 @@ describe("buildTransferAndExitSegments", () => {
   test("統合生成が改札・出口とも確認できなかった場合は両方nullのまま返す(旧方式へのフォールバックはしない)", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       boardingPosition: null,
-      gate: null,
-      exit: null,
+      facility: { state: "unavailable" as const, reason: "改札・出口の情報が確認できませんでした" },
       walkingSteps: [],
     }));
     const getFacilities = vi.fn(async () => []);
@@ -987,8 +1014,7 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    expect(outcome.result.exit).toBeNull();
-    expect(outcome.result.gate).toBeNull();
+    expect(outcome.result.facilityRecommendation.state).toBe("unavailable");
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(getFacilities).not.toHaveBeenCalled();
   });
@@ -1002,8 +1028,14 @@ describe("buildTransferAndExitSegments", () => {
     };
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       boardingPosition,
-      gate: { name: "統合生成改札", confidence: highConfidence },
-      exit: null,
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "統合生成改札", confidence: highConfidence },
+          exit: null,
+          reason: null,
+        },
+      },
       walkingSteps: [],
     }));
     const stationProvider: StationProviderPort = {
@@ -1107,7 +1139,10 @@ describe("buildTransferAndExitSegments", () => {
       const outcome = await buildTransferAndExitSegments(candidate, input, deps);
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
-      expect(outcome.result.exit?.name).toBe("近い出口");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("近い出口");
+      }
     });
 
     test("選ばれた出口の connectedGateId から対応する改札を選ぶ", async () => {
@@ -1127,7 +1162,10 @@ describe("buildTransferAndExitSegments", () => {
       const outcome = await buildTransferAndExitSegments(candidate, input, deps);
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
-      expect(outcome.result.gate?.name).toBe("近い出口側改札");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("近い出口側改札");
+      }
     });
 
     test("destinationCoordinates が無ければ従来通り先頭の出口を選ぶ(回帰確認)", async () => {
@@ -1143,7 +1181,10 @@ describe("buildTransferAndExitSegments", () => {
       const outcome = await buildTransferAndExitSegments(candidate, input, deps);
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
-      expect(outcome.result.exit?.name).toBe("遠い出口");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("遠い出口");
+      }
     });
 
     test("出口の座標が無いデータが混在していても、座標を持つ出口の中から選ぶ", async () => {
@@ -1170,7 +1211,10 @@ describe("buildTransferAndExitSegments", () => {
       const outcome = await buildTransferAndExitSegments(candidate, input, deps);
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
-      expect(outcome.result.exit?.name).toBe("近い出口");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("近い出口");
+      }
     });
 
     test("connectedGateId がgate以外のfacilityを指していても、それを改札として返さない(先頭改札にフォールバック)", async () => {
@@ -1210,8 +1254,15 @@ describe("buildTransferAndExitSegments", () => {
       const outcome = await buildTransferAndExitSegments(candidate, input, deps);
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
-      expect(outcome.result.gate?.facilityType).toBe("gate");
-      expect(outcome.result.gate?.name).not.toBe("誤ってリンクされたエスカレーター");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        // 誤ってエスカレーターにリンクされたexitからでも、実際のgate facility
+        // (先頭改札へのフォールバック)が選ばれることを確認する。
+        expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("近い出口側改札");
+        expect(outcome.result.facilityRecommendation.pair.gate?.name).not.toBe(
+          "誤ってリンクされたエスカレーター"
+        );
+      }
     });
 
     test("connectedGateId が存在しないfacilityIdを指していても、先頭改札にフォールバックする", async () => {
@@ -1235,7 +1286,10 @@ describe("buildTransferAndExitSegments", () => {
       const outcome = await buildTransferAndExitSegments(candidate, input, deps);
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
-      expect(outcome.result.gate?.name).toBe("近い出口側改札");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("近い出口側改札");
+      }
     });
   });
 
@@ -1308,8 +1362,7 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
 
-      expect(outcome.result.exit).toBeNull();
-      expect(outcome.result.gate).toBeNull();
+      expect(outcome.result.facilityRecommendation.state).toBe("unavailable");
       // 具体的な出口が確認できない場合、方角(北)を出口名の代わりに使わず
       // 「確認できません」と明示する(ユーザーフィードバックに基づく変更)。
       // 方角自体は hasApproximateGuidance/approximateDirectionLabel として
@@ -1350,8 +1403,11 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
 
-      expect(outcome.result.exit?.name).toBe("東口");
-      expect(outcome.result.gate?.name).toBe("東改札");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("東口");
+        expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("東改札");
+      }
       expect(outcome.result.hasApproximateGuidance).toBe(false);
     });
 
@@ -1380,7 +1436,7 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
 
-      expect(outcome.result.exit).toBeNull();
+      expect(outcome.result.facilityRecommendation.state).toBe("unavailable");
       expect(outcome.result.exitSegment.instruction).not.toContain("座標無し出口");
       expect(outcome.result.exitSegment.confidence.level).toBe("unavailable");
     });
@@ -1410,8 +1466,7 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
 
-      expect(outcome.result.exit).toBeNull();
-      expect(outcome.result.gate).toBeNull();
+      expect(outcome.result.facilityRecommendation.state).toBe("unavailable");
       expect(outcome.result.exitSegment.instruction).toBe("出口は確認できません。");
     });
 
@@ -1435,7 +1490,10 @@ describe("buildTransferAndExitSegments", () => {
       if (!outcome.ok) return;
 
       // 方角チェックをスキップした結果、単純に座標が最も近い出口(東口)が選ばれる
-      expect(outcome.result.exit?.name).toBe("東口");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("東口");
+      }
     });
   });
 
@@ -1508,8 +1566,11 @@ describe("buildTransferAndExitSegments", () => {
       // exit変数自体はnullにしない。confidenceSummary.exit等が「実在するが
       // 検証度が低い」を正しく表せるようにするため、実際のconfidenceを保持する
       // (unavailableへ格上げしない)。
-      expect(outcome.result.exit?.name).toBe("相鉄口");
-      expect(outcome.result.exit?.confidence.level).toBe("low");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("相鉄口");
+        expect(outcome.result.facilityRecommendation.pair.exit?.confidence.level).toBe("low");
+      }
 
       // 隠さず出口名を表示する。confidenceが"high"未満でも注記は付けない
       // (注記テキストはユーザーから不要と判断され削除した)。
@@ -1590,7 +1651,7 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
 
-      expect(outcome.result.exit).toBeNull();
+      expect(outcome.result.facilityRecommendation.state).toBe("unavailable");
       expect(outcome.result.exitSegment.instruction).toBe("出口は確認できません。");
       expect(outcome.result.exitSegment.facilities).toEqual([]);
       expect(outcome.result.exitSegment.confidence.level).toBe("unavailable");
@@ -1616,8 +1677,11 @@ describe("buildTransferAndExitSegments", () => {
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
 
-      expect(outcome.result.gate?.name).toBe("テスト改札");
-      expect(outcome.result.gate?.confidence.level).toBe("low");
+      expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+      if (outcome.result.facilityRecommendation.state === "confirmed") {
+        expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("テスト改札");
+        expect(outcome.result.facilityRecommendation.pair.gate?.confidence.level).toBe("low");
+      }
       expect(outcome.result.transferSegment.instruction).toContain("テスト改札");
       expect(outcome.result.transferSegment.instruction).not.toContain("未確認情報");
       // transferSegment.confidence自体は実際の値(low)を維持する。

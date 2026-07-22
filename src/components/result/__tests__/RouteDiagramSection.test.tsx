@@ -61,13 +61,13 @@ const OK_RESULT: FacilitiesSearchResult = {
       warnings: [],
     },
     recommendedExit: "A1出口",
-    gate: null,
-    exit: null,
+    facilityRecommendation: { state: "unavailable", reason: "test" },
     elevator: null,
     hasApproximateGuidance: false,
+    hasAlternativesGuidance: false,
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
-    arrivalGuide: { steps: [], destinationDirection: null },
+    arrivalGuide: { steps: [], destinationDirection: null, facility: { state: "unavailable", reason: "test" } },
   },
 };
 
