@@ -262,6 +262,20 @@ export type ResolveRouteCandidateResult =
   | { ok: false; reason: string };
 
 /**
+ * routeIdの組み立て式。出発駅+到着駅+モードから一意に決まる、この経路検索の
+ * 正規識別子(/chat・/feedback・履歴保存で既に使われている)。
+ * route-result-cache.ts のリロード耐性キャッシュのキーにも同じ式を再利用する
+ * (別の式を持つと、同じ検索なのにキャッシュキーだけ食い違う事故になるため)。
+ */
+export function buildRouteId(
+  originStationId: string,
+  destinationStationId: string,
+  mode: RouteMode
+): string {
+  return `route_${originStationId}_${destinationStationId}_${mode}`;
+}
+
+/**
  * 経路候補を取得し、モードに応じて最適な候補を選ぶ。
  * (searchRouteGuide の先頭部分をそのまま抽出したもの)
  */
@@ -327,7 +341,7 @@ export async function resolveRouteCandidate(
 
   return {
     ok: true,
-    routeId: `route_${input.originStationId}_${input.destinationStationId}_${input.mode}`,
+    routeId: buildRouteId(input.originStationId, input.destinationStationId, input.mode),
     mode: input.mode,
     originName: input.originLabel,
     destinationName: input.destinationLabel,

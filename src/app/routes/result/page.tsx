@@ -92,7 +92,7 @@ export default async function RouteResultPage({ searchParams }: ResultPageProps)
     <div className="flex flex-1 flex-col">
       <AppHeader user={user} />
       <Suspense fallback={<RouteResultBodySkeleton mode={mode} />}>
-        <RouteResultBody origin={origin} destination={destination} mode={mode} user={user} />
+        <RouteResultBody origin={origin} destination={destination} mode={mode} user={user} clientIp={ip} />
       </Suspense>
     </div>
   );
