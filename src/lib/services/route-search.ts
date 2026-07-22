@@ -956,7 +956,7 @@ export async function searchRouteGuide(
  * どちらかの座標が無い場合は比較不能としてnullを返す
  * (目的地がstation由来でdestinationCoordinatesが無い場合等の既存パターンに倣う)。
  */
-function approximateWalkingDistanceMeters(
+export function approximateWalkingDistanceMeters(
   arrivalStationCoordinates: Coordinates | null | undefined,
   destinationCoordinates: Coordinates | null
 ): number | null {
@@ -967,6 +967,24 @@ function approximateWalkingDistanceMeters(
     destinationCoordinates.lat,
     destinationCoordinates.lng
   );
+}
+
+/**
+ * 徒歩分速(メートル/分)。「不動産の表示に関する公正競争規約」が定める
+ * 徒歩所要時間の算出基準(道路距離80mを1分)を踏襲する。直線距離(近似値)を
+ * この速度で割って概算するため、実際の徒歩時間より短く出うる(道なり経路を
+ * 考慮しないため)。合計時間はあくまで目安として扱うこと。
+ */
+const WALKING_METERS_PER_MINUTE = 80;
+
+/**
+ * 直線距離(近似値)から徒歩分数を概算する。距離がnull、または0以下の
+ * 場合はnullを返す(距離不明を「0分」と誤って断定しないため)。端数は
+ * 切り上げる(実際より短く見積もって「目安のはずが着かない」を避けるため)。
+ */
+export function estimateWalkingMinutes(distanceMeters: number | null): number | null {
+  if (distanceMeters === null || distanceMeters <= 0) return null;
+  return Math.ceil(distanceMeters / WALKING_METERS_PER_MINUTE);
 }
 
 type RouteCandidateLike = {

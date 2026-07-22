@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import type { RouteSegment } from "@/lib/domain/route";
+import type { Coordinates } from "@/lib/domain/station";
 import type { FacilitiesSearchResult } from "@/lib/services/route-search";
 import { FacilityIcon } from "@/components/diagram/FacilityIcon";
 import { RouteBoardingStat } from "@/components/result/RouteBoardingStat";
@@ -8,11 +9,14 @@ import { RouteGateStat } from "@/components/result/RouteGateStat";
 import { RouteGateStatSkeleton } from "@/components/result/RouteGateStatSkeleton";
 import { RouteExitStat } from "@/components/result/RouteExitStat";
 import { RouteExitStatSkeleton } from "@/components/result/RouteExitStatSkeleton";
+import { RouteMapsLink } from "@/components/result/RouteMapsLink";
 
 interface RouteOverviewContentProps {
   trainSegmentsPromise: Promise<RouteSegment[]>;
   facilitiesPromise: Promise<FacilitiesSearchResult>;
   transferCount: number;
+  /** 目的地(place由来)の座標。Google Mapsリンクの組み立てに使う。 */
+  destinationCoordinates: Coordinates | null;
 }
 
 /**
@@ -32,6 +36,7 @@ export function RouteOverviewContent({
   trainSegmentsPromise,
   facilitiesPromise,
   transferCount,
+  destinationCoordinates,
 }: RouteOverviewContentProps) {
   return (
     <div className="mt-4 grid grid-cols-3 gap-2">
@@ -48,6 +53,12 @@ export function RouteOverviewContent({
         <FacilityIcon type="passage" className="h-4 w-4" />
         乗換{transferCount}回
       </div>
+      <Suspense fallback={null}>
+        <RouteMapsLink
+          facilitiesPromise={facilitiesPromise}
+          destinationCoordinates={destinationCoordinates}
+        />
+      </Suspense>
     </div>
   );
 }

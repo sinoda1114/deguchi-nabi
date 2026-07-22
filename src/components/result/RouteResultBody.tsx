@@ -6,6 +6,8 @@ import {
   resolveRouteCandidate,
   buildTrainSegments,
   buildTransferAndExitSegments,
+  approximateWalkingDistanceMeters,
+  estimateWalkingMinutes,
 } from "@/lib/services/route-search";
 import { addHistoryEntry } from "@/lib/store/history-repository";
 import { buildReturnRouteUrl } from "@/lib/services/return-route-link";
@@ -152,6 +154,13 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
     }
   }
 
+  // 出口から目的地までの徒歩時間(概算)。直線距離(近似値)ベースのため
+  // 実際より短く出うる目安(route-search.tsのJSDoc参照)。目的地が駅そのもの
+  // (destinationCoordinatesが無い)場合はnullのまま、乗車時間のみ表示する。
+  const walkingMinutes = estimateWalkingMinutes(
+    approximateWalkingDistanceMeters(candidate.arrivalStationCoordinates, resolved.destinationCoordinates)
+  );
+
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-5 px-4 py-6">
       <RouteOverviewCard
@@ -163,12 +172,14 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
         destinationStationId={resolved.destinationStationId}
         canSave={Boolean(user)}
         estimatedDurationMinutes={candidate.estimatedDurationMinutes}
+        walkingMinutes={walkingMinutes}
         overviewContentNode={
           <Suspense fallback={<RouteOverviewContentSkeleton />}>
             <RouteOverviewContent
               trainSegmentsPromise={trainSegmentsPromise}
               facilitiesPromise={facilitiesPromise}
               transferCount={candidate.transferCount}
+              destinationCoordinates={resolved.destinationCoordinates}
             />
           </Suspense>
         }
