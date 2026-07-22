@@ -40,16 +40,11 @@ async function callGemini(
       signal: AbortSignal.timeout(timeoutMs),
     });
 
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      console.error(`[DIAG-TEMP] callGemini failed: status=${res.status} model=${model} body=${bodyText.slice(0, 300)}`);
-      return null;
-    }
+    if (!res.ok) return null;
 
     const data = (await res.json()) as GeminiResponse;
     return data.candidates?.[0] ?? null;
-  } catch (err) {
-    console.error(`[DIAG-TEMP] callGemini threw: model=${model} err=${err instanceof Error ? err.message : String(err)}`);
+  } catch {
     return null;
   }
 }
