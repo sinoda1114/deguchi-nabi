@@ -7,10 +7,10 @@ import {
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
 
-const searchAndGenerateStructuredContent = vi.fn();
+const searchAndGenerateStructuredContentWithSearchText = vi.fn();
 vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
-  searchAndGenerateStructuredContent: (...args: unknown[]) =>
-    searchAndGenerateStructuredContent(...args),
+  searchAndGenerateStructuredContentWithSearchText: (...args: unknown[]) =>
+    searchAndGenerateStructuredContentWithSearchText(...args),
 }));
 
 const NISHIYA: Station = {
@@ -33,17 +33,25 @@ const SHIBUYA: Station = {
   longitude: 139.7016,
 };
 
+// 抽出結果のgateName/exitNameは検索フェーズの生テキスト(searchText)への逐語
+// 一致が必須(isVerbatimInSearchText)。このテストファイルでは、有効な候補と
+// して扱いたい名称を必ずこのテキストに含める。
+const VALID_SEARCH_TEXT = "詳細情報: 降りる改札は道玄坂改札、利用する出口はA1出口です。";
+
 const VALID_RAW = {
   lines: ["相鉄・東急直通線"],
   transferCount: 0,
   estimatedMinutes: 35,
-  gate: { name: "道玄坂改札", confidence: "medium" },
-  exit: { name: "A1出口", confidence: "medium" },
+  facilityCandidates: [{ gateName: "道玄坂改札", exitName: "A1出口", confidence: "medium" }],
   boardingCarNumber: 5,
   boardingDoorPosition: "1番ドア",
   boardingReason: "階段が近いため",
   boardingConfidence: "low",
 };
+
+function mockResult(data: unknown, searchText: string = VALID_SEARCH_TEXT) {
+  return { data, searchText };
+}
 
 describe("buildNavigatorSearchPrompt", () => {
   test("出発駅・目的地駅・目的地ヒントをプロンプトに含める", () => {
@@ -73,15 +81,21 @@ describe("generateSingleCallNavigatorGuide", () => {
     vi.clearAllMocks();
   });
 
-  test("正常な抽出結果からguideを組み立てる", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue(VALID_RAW);
+  test("正常な抽出結果からguideを組み立てる(改札・出口は1組のみ→confirmed)", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(mockResult(VALID_RAW));
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
 
     expect(result).not.toBeNull();
     expect(result?.lines).toEqual(["相鉄・東急直通線"]);
-    expect(result?.gate).toEqual({ name: "道玄坂改札", confidenceLevel: "medium" });
-    expect(result?.exit).toEqual({ name: "A1出口", confidenceLevel: "medium" });
+    expect(result?.facility).toEqual({
+      state: "confirmed",
+      pair: {
+        gate: { name: "道玄坂改札", confidenceLevel: "medium" },
+        exit: { name: "A1出口", confidenceLevel: "medium" },
+        reason: null,
+      },
+    });
     expect(result?.boarding).toEqual({
       carNumber: 5,
       doorPosition: "1番ドア",
@@ -90,151 +104,257 @@ describe("generateSingleCallNavigatorGuide", () => {
     });
   });
 
+  test("facilityCandidatesが2〜3件ならalternatives状態になる", async () => {
+    const searchText =
+      "利用する出口はみなみ西口(相鉄口)または5番街方面出口のいずれかです。改札は1階改札です。";
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          lines: ["相鉄本線"],
+          transferCount: 0,
+          estimatedMinutes: 10,
+          facilityCandidates: [
+            { gateName: "1階改札", exitName: "みなみ西口(相鉄口)", confidence: "medium" },
+            { gateName: "1階改札", exitName: "5番街方面出口", confidence: "medium" },
+          ],
+        },
+        searchText
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+    expect(result?.facility.state).toBe("alternatives");
+    if (result?.facility.state === "alternatives") {
+      expect(result.facility.pairs).toHaveLength(2);
+      expect(result.facility.pairs.map((p) => p.exit?.name)).toEqual([
+        "みなみ西口(相鉄口)",
+        "5番街方面出口",
+      ]);
+    }
+  });
+
+  test("facilityCandidatesが4件以上ならunavailableに格下げされる(絞り込めていないとみなす)", async () => {
+    const searchText = "候補A候補B候補C候補D";
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          lines: ["相鉄本線"],
+          transferCount: 0,
+          estimatedMinutes: 10,
+          facilityCandidates: [
+            { exitName: "候補A", confidence: "low" },
+            { exitName: "候補B", confidence: "low" },
+            { exitName: "候補C", confidence: "low" },
+            { exitName: "候補D", confidence: "low" },
+          ],
+        },
+        searchText
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+    expect(result?.facility.state).toBe("unavailable");
+  });
+
+  test("検索フェーズの生テキストに逐語で存在しない名称は棄却される(創作・補完の拒否)", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          lines: ["相鉄・東急直通線"],
+          transferCount: 0,
+          estimatedMinutes: 35,
+          facilityCandidates: [{ gateName: "本文に存在しない改札名", confidence: "medium" }],
+        },
+        "本文には別の内容しか書かれていません。"
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+    expect(result?.facility.state).toBe("unavailable");
+  });
+
   test("号車が未確認(boardingCarNumber省略)の場合、boardingはnullになる(断定を避ける挙動の維持)", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      lines: ["相鉄・東急直通線"],
-      transferCount: 0,
-      estimatedMinutes: 35,
-      gateName: "道玄坂改札",
-      gateConfidence: "medium",
-      exitName: "A1出口",
-      exitConfidence: "medium",
-    });
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        lines: ["相鉄・東急直通線"],
+        transferCount: 0,
+        estimatedMinutes: 35,
+        facilityCandidates: [{ gateName: "道玄坂改札", exitName: "A1出口", confidence: "medium" }],
+      })
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result?.boarding).toBeNull();
   });
 
-  test("改札・出口が未確認(gate/exit省略)の場合はnullのまま(創作しない)", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      lines: ["相鉄・東急直通線"],
-      transferCount: 0,
-      estimatedMinutes: 35,
-    });
+  test("改札・出口が未確認(facilityCandidates省略)の場合はunavailableのまま(創作しない)", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        lines: ["相鉄・東急直通線"],
+        transferCount: 0,
+        estimatedMinutes: 35,
+      })
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(result?.gate).toBeNull();
-    expect(result?.exit).toBeNull();
+    expect(result?.facility.state).toBe("unavailable");
   });
 
-  test("改札名は明記されているがconfidenceだけ欠けている場合、棄却せずlowで採用する(本番再現バグの回帰テスト: 西谷駅→kawara CAFE&DINING横浜店でgateNameは取れていたのにgateConfidence欠落で丸ごとnullになっていた)", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      lines: ["相鉄本線"],
-      transferCount: 0,
-      estimatedMinutes: 13,
-      gate: { name: "1階改札（みなみ西口（相鉄口）側）" },
-    });
+  test("改札名は明記されているがconfidenceだけ欠けている場合、棄却せずlowで採用する(本番再現バグの回帰テスト)", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          lines: ["相鉄本線"],
+          transferCount: 0,
+          estimatedMinutes: 13,
+          facilityCandidates: [{ gateName: "1階改札（みなみ西口（相鉄口）側）" }],
+        },
+        "降りる改札は1階改札（みなみ西口（相鉄口）側）です。"
+      )
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(result?.gate).toEqual({
-      name: "1階改札（みなみ西口（相鉄口）側）",
-      confidenceLevel: "low",
+    expect(result?.facility).toEqual({
+      state: "confirmed",
+      pair: {
+        gate: { name: "1階改札（みなみ西口（相鉄口）側）", confidenceLevel: "low" },
+        exit: null,
+        reason: null,
+      },
     });
   });
 
-  test("gate/exitオブジェクト自体が不正な型(null以外の非オブジェクト)の場合はnullとして扱う", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      lines: ["相鉄・東急直通線"],
-      transferCount: 0,
-      estimatedMinutes: 35,
-      gate: "道玄坂改札",
-    });
+  test("facilityCandidates自体が不正な型(配列でない)の場合はunavailableとして扱う", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        lines: ["相鉄・東急直通線"],
+        transferCount: 0,
+        estimatedMinutes: 35,
+        facilityCandidates: "道玄坂改札",
+      })
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(result?.gate).toBeNull();
+    expect(result?.facility.state).toBe("unavailable");
   });
 
   test("路線名に縮退生成の反復パターンが含まれる場合は無効として扱い、最終的にnullを返す", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      ...VALID_RAW,
-      lines: ["瘉鉄改戳版最改版甘鉄改戳版最改版・瘉鉄改戳版最改版甘鉄改戳版最改版"],
-    });
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        ...VALID_RAW,
+        lines: ["瘉鉄改戳版最改版甘鉄改戳版最改版・瘉鉄改戳版最改版甘鉄改戳版最改版"],
+      })
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result).toBeNull();
-    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
   });
 
   test("改札名に異常に長い文字列が来た場合は採用しない(セキュリティ: 後段プロンプトへの汚染防止)", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      ...VALID_RAW,
-      gate: { name: "あ".repeat(200), confidence: "medium" },
-    });
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        ...VALID_RAW,
+        facilityCandidates: [
+          { gateName: "あ".repeat(200), exitName: "A1出口", confidence: "medium" },
+        ],
+      })
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(result?.gate).toBeNull();
+    expect(result?.facility.state).toBe("confirmed");
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate).toBeNull();
+      expect(result.facility.pair.exit?.name).toBe("A1出口");
+    }
   });
 
   test("号車が実在する編成両数の上限(16)を超える場合は採用しない(/ai-review指摘)", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      ...VALID_RAW,
-      boardingCarNumber: 99,
-    });
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        ...VALID_RAW,
+        boardingCarNumber: 99,
+      })
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result?.boarding).toBeNull();
   });
 
   test("号車が上限(16)ちょうどの場合は採用する", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      ...VALID_RAW,
-      boardingCarNumber: 16,
-    });
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        ...VALID_RAW,
+        boardingCarNumber: 16,
+      })
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result?.boarding?.carNumber).toBe(16);
   });
 
   test("1回目がnull・2回目が正常な場合、リトライして2回目の結果を返す", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValueOnce(null).mockResolvedValueOnce(VALID_RAW);
+    searchAndGenerateStructuredContentWithSearchText
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(mockResult(VALID_RAW));
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result).not.toBeNull();
-    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
   });
 
   test("2回ともnullの場合、最終的にnullを返し3回目は試行しない", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue(null);
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(null);
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result).toBeNull();
-    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
   });
 
-  test("改札・出口が両方とも未確認(gate/exitともnull)の場合も再試行する(本番実機で発覚した不具合の回帰テスト)", async () => {
-    searchAndGenerateStructuredContent
-      .mockResolvedValueOnce({
+  test("改札・出口の情報が両方とも確認できない(facility unavailable)場合も再試行する(本番実機で発覚した不具合の回帰テスト)", async () => {
+    searchAndGenerateStructuredContentWithSearchText
+      .mockResolvedValueOnce(
+        mockResult({
+          lines: ["相鉄本線"],
+          transferCount: 0,
+          estimatedMinutes: 13,
+        })
+      )
+      .mockResolvedValueOnce(mockResult(VALID_RAW));
+
+    const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(result?.facility).toEqual({
+      state: "confirmed",
+      pair: {
+        gate: { name: "道玄坂改札", confidenceLevel: "medium" },
+        exit: { name: "A1出口", confidenceLevel: "medium" },
+        reason: null,
+      },
+    });
+  });
+
+  test("再試行しても改札・出口が両方未確認のままの場合、経路情報は捨てず直近の結果を返す", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
         lines: ["相鉄本線"],
         transferCount: 0,
         estimatedMinutes: 13,
       })
-      .mockResolvedValueOnce(VALID_RAW);
+    );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(2);
-    expect(result?.gate).toEqual({ name: "道玄坂改札", confidenceLevel: "medium" });
-  });
-
-  test("再試行しても改札・出口が両方未確認のままの場合、経路情報は捨てず直近の結果を返す", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue({
-      lines: ["相鉄本線"],
-      transferCount: 0,
-      estimatedMinutes: 13,
-    });
-
-    const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
     expect(result).not.toBeNull();
     expect(result?.lines).toEqual(["相鉄本線"]);
-    expect(result?.gate).toBeNull();
-    expect(result?.exit).toBeNull();
+    expect(result?.facility.state).toBe("unavailable");
   });
 
   test("1回目で正常な結果が返る場合、2回目(リトライ)は呼ばれない", async () => {
-    searchAndGenerateStructuredContent.mockResolvedValue(VALID_RAW);
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(mockResult(VALID_RAW));
 
     await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(searchAndGenerateStructuredContent).toHaveBeenCalledTimes(1);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
   });
 });
 

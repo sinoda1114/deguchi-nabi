@@ -117,6 +117,48 @@ export async function searchAndGenerateStructuredContent<T>(
   return extractStructuredContent<T>(apiKey, model, extractionInstruction, searchText, responseSchema);
 }
 
+/**
+ * Google Search Grounding + 構造化出力の2段階呼び出し。searchAndGenerate
+ * StructuredContentと同じだが、抽出結果に加えて検索フェーズの生テキストも
+ * 返す。呼び出し側が抽出結果の逐語一致検証(例: single-call-navigator.tsの
+ * isVerbatimInSearchText)を行うために必要(通常のsearchAndGenerateStructured
+ * Contentは検索フェーズのテキストを抽出後に破棄しており、検証できない)。
+ * 既存のsearchAndGenerateStructuredContentは変更せず維持する(他の呼び出し元
+ * への影響を避けるため)。
+ */
+export async function searchAndGenerateStructuredContentWithSearchText<T>(
+  apiKey: string,
+  searchPrompt: string,
+  extractionInstruction: string,
+  responseSchema: object,
+  model: string
+): Promise<{ data: T; searchText: string } | null> {
+  const searchCandidate = await callGemini(
+    apiKey,
+    model,
+    {
+      contents: [{ parts: [{ text: searchPrompt }] }],
+      tools: [{ google_search: {} }],
+    },
+    SEARCH_REQUEST_TIMEOUT_MS
+  );
+
+  const searchText = searchCandidate?.content?.parts?.[0]?.text;
+  const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
+  if (!searchText || !searchExecuted) return null;
+
+  const data = await extractStructuredContent<T>(
+    apiKey,
+    model,
+    extractionInstruction,
+    searchText,
+    responseSchema
+  );
+  if (data === null) return null;
+
+  return { data, searchText };
+}
+
 export interface InlineImage {
   data: string;
   mimeType: string;

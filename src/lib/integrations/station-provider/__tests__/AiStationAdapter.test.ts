@@ -625,8 +625,14 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
-      gate: { name: "1F改札", confidenceLevel: "medium" },
-      exit: { name: "五番街口", confidenceLevel: "medium" },
+      facility: {
+        state: "confirmed",
+        pair: {
+          gate: { name: "1F改札", confidenceLevel: "medium" },
+          exit: { name: "五番街口", confidenceLevel: "medium" },
+          reason: null,
+        },
+      },
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -668,8 +674,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
-      gate: null,
-      exit: null,
+      facility: { state: "unavailable", reason: "test" },
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -705,8 +710,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
-      gate: null,
-      exit: null,
+      facility: { state: "unavailable", reason: "test" },
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -740,8 +744,14 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
         reason: "1階改札への階段に近いため",
         confidenceLevel: "high",
       },
-      gate: { name: "1F改札", confidenceLevel: "high" },
-      exit: { name: "五番街口", confidenceLevel: "high" },
+      facility: {
+        state: "confirmed",
+        pair: {
+          gate: { name: "1F改札", confidenceLevel: "high" },
+          exit: { name: "五番街口", confidenceLevel: "high" },
+          reason: null,
+        },
+      },
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -761,10 +771,13 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     expect(result?.boardingPosition?.carNumber).toBe(6);
     expect(result?.boardingPosition?.doorPosition).toBe("後方");
     expect(result?.boardingPosition?.confidence.level).toBe("medium");
-    expect(result?.gate?.name).toBe("1F改札");
-    expect(result?.gate?.confidence.level).toBe("medium");
-    expect(result?.exit?.name).toBe("五番街口");
-    expect(result?.exit?.confidence.level).toBe("medium");
+    expect(result?.facility.state).toBe("confirmed");
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("1F改札");
+      expect(result.facility.pair.gate?.confidence.level).toBe("medium");
+      expect(result.facility.pair.exit?.name).toBe("五番街口");
+      expect(result.facility.pair.exit?.confidence.level).toBe("medium");
+    }
   });
 
   test("boardingPositionがnullの場合はそのままnullとして返す", async () => {
@@ -774,8 +787,14 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
-      gate: { name: "1F改札", confidenceLevel: "medium" },
-      exit: { name: "五番街口", confidenceLevel: "medium" },
+      facility: {
+        state: "confirmed",
+        pair: {
+          gate: { name: "1F改札", confidenceLevel: "medium" },
+          exit: { name: "五番街口", confidenceLevel: "medium" },
+          reason: null,
+        },
+      },
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -802,8 +821,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
-      gate: null,
-      exit: null,
+      facility: { state: "unavailable", reason: "test" },
     });
     const adapter = new AiStationAdapter("test-key");
 

@@ -60,10 +60,10 @@ const OK_RESULT: FacilitiesSearchResult = {
       warnings: [],
     },
     recommendedExit: "A1出口",
-    gate: null,
-    exit: null,
+    facilityRecommendation: { state: "unavailable", reason: "test" },
     elevator: null,
     hasApproximateGuidance: false,
+    hasAlternativesGuidance: false,
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
     arrivalGuide: {
@@ -78,6 +78,14 @@ const OK_RESULT: FacilitiesSearchResult = {
         },
       ],
       destinationDirection: null,
+      facility: {
+        state: "confirmed",
+        pair: {
+          gate: null,
+          exit: { name: "A1出口", confidence: highConfidence, provenance: "surveyed" },
+          reason: null,
+        },
+      },
     },
   },
 };

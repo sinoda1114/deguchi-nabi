@@ -45,10 +45,10 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
         warnings: [],
       },
       recommendedExit: "東口",
-      gate: null,
-      exit: null,
+      facilityRecommendation: { state: "unavailable", reason: "test" },
       elevator: null,
       hasApproximateGuidance: false,
+      hasAlternativesGuidance: false,
       approximateDirectionLabel: null,
       unifiedBoardingPosition: null,
       arrivalGuide: {
@@ -63,6 +63,14 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
           },
         ],
         destinationDirection: null,
+        facility: {
+          state: "confirmed",
+          pair: {
+            gate: { name: "中央改札", confidence: highConfidence, provenance: "surveyed" },
+            exit: null,
+            reason: null,
+          },
+        },
       },
       ...overrides,
     },
@@ -85,7 +93,13 @@ describe("RouteGateStat", () => {
   test("改札名が確認できない場合、方角を代用せず「確認できません」と表示する", async () => {
     const element = await RouteGateStat({
       facilitiesPromise: Promise.resolve(
-        okResult({ arrivalGuide: { steps: [], destinationDirection: "南" } })
+        okResult({
+          arrivalGuide: {
+            steps: [],
+            destinationDirection: "南",
+            facility: { state: "unavailable", reason: "test" },
+          },
+        })
       ),
     });
     const html = renderToStaticMarkup(element);
@@ -109,6 +123,18 @@ describe("RouteGateStat", () => {
               },
             ],
             destinationDirection: null,
+            facility: {
+              state: "confirmed",
+              pair: {
+                gate: {
+                  name: "西改札",
+                  confidence: { level: "low", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 0 },
+                  provenance: "map_estimate",
+                },
+                exit: null,
+                reason: null,
+              },
+            },
           },
         })
       ),

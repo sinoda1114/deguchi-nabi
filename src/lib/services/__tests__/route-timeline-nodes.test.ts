@@ -3,6 +3,7 @@ import { buildRouteTimelineNodes } from "../route-timeline-nodes";
 import type { ArrivalGuide, GuideStep, RouteSegment } from "@/lib/domain/route";
 import type { FacilitiesBuildSuccess } from "../route-search";
 import type { Confidence } from "@/lib/domain/confidence";
+import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
 
 const highConfidence: Confidence = {
   level: "high",
@@ -46,10 +47,37 @@ function guideStep(overrides: Partial<GuideStep> = {}): GuideStep {
   };
 }
 
-function buildArrivalGuide(overrides: Partial<ArrivalGuide> = {}): ArrivalGuide {
+/**
+ * stepsの内容(ticket_gate/street_exitの有無)からfacilityを機械的に導出する。
+ * このテストファイルではfacility自体の値をアサーションしていないため、型を
+ * 満たすためだけの導出でよい(呼び出し側は従来どおりstepsだけを気にすればよい)。
+ */
+function deriveFacility(steps: GuideStep[]): FacilityRecommendation {
+  const gateStep = steps.find((step) => step.type === "ticket_gate");
+  const exitStep = steps.find((step) => step.type === "street_exit");
+  if (!gateStep && !exitStep) {
+    return { state: "unavailable", reason: "test" };
+  }
   return {
-    steps: [guideStep()],
+    state: "confirmed",
+    pair: {
+      gate: gateStep
+        ? { name: gateStep.title, confidence: gateStep.confidence, provenance: gateStep.provenance }
+        : null,
+      exit: exitStep
+        ? { name: exitStep.title, confidence: exitStep.confidence, provenance: exitStep.provenance }
+        : null,
+      reason: null,
+    },
+  };
+}
+
+function buildArrivalGuide(overrides: Partial<ArrivalGuide> = {}): ArrivalGuide {
+  const steps = overrides.steps ?? [guideStep()];
+  return {
+    steps,
     destinationDirection: null,
+    facility: deriveFacility(steps),
     ...overrides,
   };
 }

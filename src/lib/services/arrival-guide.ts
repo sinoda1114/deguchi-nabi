@@ -1,26 +1,47 @@
 import type { FacilitiesBuildSuccess } from "./route-search";
 import type { ArrivalGuide, GuideStep, GuideStepType, RouteMode } from "@/lib/domain/route";
-import type { Coordinates, StationFacility } from "@/lib/domain/station";
+import type { Coordinates } from "@/lib/domain/station";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import { capConfidenceForProvenance } from "@/lib/domain/confidence";
+import type { FacilityPair, FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
+import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
+import { combinedFacilityConfidence } from "./confidence-engine";
 import { isGuideStepVisible } from "./guide-step-visibility";
 
 /**
- * StationFacility(改札・出口)から1件のGuideStepを組み立てる。provenanceが
- * 未設定のfacilityは、出所不明なデータを誤って高信頼扱いしないよう安全側の
- * "ai_inferred"として扱う(domain/station.tsのコメント参照)。
+ * FacilityRecommendation(改札 or 出口)から1件のGuideStepを組み立てる。
+ * confirmed(1件)・alternatives(2〜3件)のいずれも同じ関数で扱う。alternatives
+ * の場合はtitleを"A / B"のように全候補名を連結した文字列にする(UI側
+ * (overview-field.ts・route-timeline-nodes.ts)はtitleをそのまま表示するだけで
+ * 済み、先頭候補だけを暗黙の推奨のように見せてしまうことを構造的に防ぐ)。
+ * confidenceは候補群の中で最も慎重な値を代表値として使う(combinedFacility
+ * Confidence)。provenanceが未設定のfacilityは、出所不明なデータを誤って
+ * 高信頼扱いしないよう安全側の"ai_inferred"として扱う(domain/station.tsの
+ * コメントと同じ考え方)。
  */
-function facilityStep(type: GuideStepType, facility: StationFacility, instruction: string): GuideStep {
-  const provenance = facility.provenance ?? "ai_inferred";
+function buildFacilityGuideStep(
+  type: GuideStepType,
+  facilityRecommendation: FacilityRecommendation,
+  pick: (pair: FacilityPair) => NamedFacility | null,
+  confirmedInstructionFor: (name: string) => string,
+  alternativesLabel: string
+): GuideStep | null {
+  const facilities = facilityCandidatesOf(facilityRecommendation, pick);
+  if (facilities.length === 0) return null;
+
+  const provenance = facilities[0].provenance ?? "ai_inferred";
+  const isAlternatives = facilityRecommendation.state === "alternatives" && facilities.length > 1;
+  const title = facilities.map((f) => f.name).join(" / ");
+  const combined = combinedFacilityConfidence(facilities.map((f) => f.confidence));
+
   return {
     type,
-    title: facility.name,
-    instruction,
+    title,
+    instruction: isAlternatives
+      ? `${alternativesLabel}: ${title}(いずれか。現地の案内表示でご確認ください)。`
+      : confirmedInstructionFor(title),
     landmarks: [],
-    confidence: {
-      ...facility.confidence,
-      level: capConfidenceForProvenance(facility.confidence.level, provenance),
-    },
+    confidence: { ...combined, level: capConfidenceForProvenance(combined.level, provenance) },
     provenance,
   };
 }
@@ -49,15 +70,17 @@ function facilityStep(type: GuideStepType, facility: StationFacility, instructio
  *   自体の削除は本タスク(fixture廃止)のスコープ外としたため未対応。
  */
 function canGenerateNarrative(
-  result: Pick<FacilitiesBuildSuccess, "gate" | "exit">,
+  result: Pick<FacilitiesBuildSuccess, "facilityRecommendation">,
   mode: RouteMode,
   isRouteAiGenerated: boolean
 ): boolean {
   if (mode === "accessible") return false;
   if (isRouteAiGenerated) return false;
-  if (!result.gate || !result.exit) return false;
-  const gateProvenance = result.gate.provenance ?? "ai_inferred";
-  const exitProvenance = result.exit.provenance ?? "ai_inferred";
+  if (result.facilityRecommendation.state !== "confirmed") return false;
+  const { gate, exit } = result.facilityRecommendation.pair;
+  if (!gate || !exit) return false;
+  const gateProvenance = gate.provenance ?? "ai_inferred";
+  const exitProvenance = exit.provenance ?? "ai_inferred";
   return gateProvenance !== "ai_inferred" && exitProvenance !== "ai_inferred";
 }
 
@@ -91,7 +114,7 @@ function canGenerateNarrative(
  * 説明として読める方が自然なため、出口を徒歩ステップより前に配置する。
  */
 export async function buildArrivalGuide(
-  result: Pick<FacilitiesBuildSuccess, "gate" | "exit" | "approximateDirectionLabel">,
+  result: Pick<FacilitiesBuildSuccess, "facilityRecommendation" | "approximateDirectionLabel">,
   arrivalStationId: string,
   arrivalStationName: string,
   arrivalStationCoordinates: Coordinates | null,
@@ -102,25 +125,37 @@ export async function buildArrivalGuide(
 ): Promise<ArrivalGuide> {
   const steps: GuideStep[] = [];
 
-  if (result.gate) {
-    steps.push(facilityStep("ticket_gate", result.gate, `${result.gate.name}を利用してください。`));
-  }
+  const gateStep = buildFacilityGuideStep(
+    "ticket_gate",
+    result.facilityRecommendation,
+    (pair) => pair.gate,
+    (name) => `${name}を利用してください。`,
+    "利用できる改札"
+  );
+  if (gateStep) steps.push(gateStep);
 
-  if (result.exit) {
-    steps.push(facilityStep("street_exit", result.exit, `${result.exit.name}から地上へ出てください。`));
-  }
+  const exitStep = buildFacilityGuideStep(
+    "street_exit",
+    result.facilityRecommendation,
+    (pair) => pair.exit,
+    (name) => `${name}から地上へ出てください。`,
+    "利用できる出口"
+  );
+  if (exitStep) steps.push(exitStep);
 
   if (unifiedWalkingSteps !== null) {
     steps.push(...unifiedWalkingSteps);
   } else if (
     canGenerateNarrative(result, mode, isRouteAiGenerated) &&
-    stationProvider.getArrivalGuideNarrativeSteps
+    stationProvider.getArrivalGuideNarrativeSteps &&
+    result.facilityRecommendation.state === "confirmed"
   ) {
+    const { gate, exit } = result.facilityRecommendation.pair;
     const narrativeSteps = await stationProvider.getArrivalGuideNarrativeSteps(
       arrivalStationId,
       arrivalStationName,
-      result.gate!.name,
-      result.exit!.name,
+      gate!.name,
+      exit!.name,
       arrivalStationCoordinates
     );
     steps.push(...narrativeSteps);
@@ -129,5 +164,6 @@ export async function buildArrivalGuide(
   return {
     steps: steps.filter(isGuideStepVisible),
     destinationDirection: result.approximateDirectionLabel,
+    facility: result.facilityRecommendation,
   };
 }

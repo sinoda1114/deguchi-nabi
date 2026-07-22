@@ -45,13 +45,17 @@ function buildResult(hasApproximateGuidance: boolean): FacilitiesSearchResult {
         warnings: [],
       },
       recommendedExit: "A1出口",
-      gate: null,
-      exit: null,
+      facilityRecommendation: { state: "unavailable", reason: "test" },
       elevator: null,
       hasApproximateGuidance,
+      hasAlternativesGuidance: false,
       approximateDirectionLabel: hasApproximateGuidance ? "西" : null,
       unifiedBoardingPosition: null,
-      arrivalGuide: { steps: [], destinationDirection: hasApproximateGuidance ? "西" : null },
+      arrivalGuide: {
+        steps: [],
+        destinationDirection: hasApproximateGuidance ? "西" : null,
+        facility: { state: "unavailable", reason: "test" },
+      },
     },
   };
 }

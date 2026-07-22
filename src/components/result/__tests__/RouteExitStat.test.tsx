@@ -45,10 +45,10 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
         warnings: [],
       },
       recommendedExit: "東口",
-      gate: null,
-      exit: null,
+      facilityRecommendation: { state: "unavailable", reason: "test" },
       elevator: null,
       hasApproximateGuidance: false,
+      hasAlternativesGuidance: false,
       approximateDirectionLabel: null,
       unifiedBoardingPosition: null,
       arrivalGuide: {
@@ -63,6 +63,14 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
           },
         ],
         destinationDirection: null,
+        facility: {
+          state: "confirmed",
+          pair: {
+            gate: null,
+            exit: { name: "東口", confidence: highConfidence, provenance: "surveyed" },
+            reason: null,
+          },
+        },
       },
       ...overrides,
     },
@@ -85,7 +93,13 @@ describe("RouteExitStat", () => {
   test("出口名が確認できず方角のみ判明している場合、方角を出口名として使わず推奨方向として区別して表示する", async () => {
     const element = await RouteExitStat({
       facilitiesPromise: Promise.resolve(
-        okResult({ arrivalGuide: { steps: [], destinationDirection: "南" } })
+        okResult({
+          arrivalGuide: {
+            steps: [],
+            destinationDirection: "南",
+            facility: { state: "unavailable", reason: "test" },
+          },
+        })
       ),
     });
     const html = renderToStaticMarkup(element);
@@ -109,6 +123,18 @@ describe("RouteExitStat", () => {
               },
             ],
             destinationDirection: null,
+            facility: {
+              state: "confirmed",
+              pair: {
+                gate: null,
+                exit: {
+                  name: "南口",
+                  confidence: { level: "low", reasons: [], verifiedAt: null, expiresAt: null, sourceCount: 0 },
+                  provenance: "map_estimate",
+                },
+                reason: null,
+              },
+            },
           },
         })
       ),

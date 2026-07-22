@@ -1,7 +1,12 @@
 import type { ConfidenceLevel } from "@/lib/domain/confidence";
 import type { Coordinates, Station } from "@/lib/domain/station";
 import { hasRepetitionArtifact } from "@/lib/domain/text-quality";
-import { searchAndGenerateStructuredContent } from "@/lib/integrations/ai/GeminiClient";
+import type { FacilityPair, FacilityRecommendation } from "@/lib/domain/facility-recommendation";
+import {
+  classifyFacilityRecommendation,
+  isVerbatimInSearchText,
+} from "@/lib/domain/facility-recommendation";
+import { searchAndGenerateStructuredContentWithSearchText } from "@/lib/integrations/ai/GeminiClient";
 
 /**
  * 経路生成(ai-route-generation.ts)・改札/出口検索(destination-exit-search-
@@ -40,6 +45,20 @@ const MAX_CAR_NUMBER = 16;
 // nullの場合のみ丸ごと1回だけ再試行する(合計最大2試行)。
 const MAX_ATTEMPTS = 2;
 
+/** single-call-navigator.ts自身は自己申告のConfidenceLevel(生の文字列)しか
+ * 持たず、検証度Confidenceオブジェクト(reasons/verifiedAt等)への変換は
+ * AiStationAdapter層(groundedAiConfidence)の責務。domain/facility-
+ * recommendation.tsのFacilityPair/FacilityRecommendationはこの型を注入して
+ * 生成層でも同じ組・3状態判定ロジックを再利用する。
+ */
+export interface RawNamedFacility {
+  name: string;
+  confidenceLevel: ConfidenceLevel;
+}
+
+export type RawFacilityPair = FacilityPair<RawNamedFacility>;
+export type RawFacilityRecommendation = FacilityRecommendation<RawNamedFacility>;
+
 export interface SingleCallNavigatorGuide {
   lines: string[];
   transferCount: number;
@@ -51,13 +70,21 @@ export interface SingleCallNavigatorGuide {
     reason: string;
     confidenceLevel: ConfidenceLevel;
   } | null;
-  gate: { name: string; confidenceLevel: ConfidenceLevel } | null;
-  exit: { name: string; confidenceLevel: ConfidenceLevel } | null;
+  /**
+   * 改札・出口を確定(confirmed)/複数候補(alternatives)/不明(unavailable)の
+   * 3状態で表現する(2026-07-22、Fable 5・Codexの独立レビューで一致した結論:
+   * 「confirmed以外は非表示」という全か無かゲートは、「利用する出口: A または
+   * B」のように2択には絞れているが1つに断定できない情報まで丸ごと捨ててしまい、
+   * 既存の設計原則「存在する情報は必ず出す、隠さない」に反していた)。
+   */
+  facility: RawFacilityRecommendation;
 }
 
-interface RawFacility {
-  name?: unknown;
+interface RawFacilityCandidate {
+  gateName?: unknown;
+  exitName?: unknown;
   confidence?: unknown;
+  reason?: unknown;
 }
 
 interface RawExtraction {
@@ -69,25 +96,24 @@ interface RawExtraction {
   boardingDoorPosition?: unknown;
   boardingReason?: unknown;
   boardingConfidence?: unknown;
-  gate?: RawFacility | null;
-  exit?: RawFacility | null;
+  facilityCandidates?: unknown;
 }
 
-// gate/exitはname+confidenceをネストしたオブジェクトにする(/production指摘、
-// 2026-07-21実機発覚: フラットな gateName/gateConfidence 構造では、モデルが
-// gateNameだけ返しgateConfidenceを省略するケースがあり、名前と確信度が
-// 両方揃っていないと採用しない検証ロジック(extractGate)によって、実際には
-// 明記されていた改札名が丸ごと棄却され「確認できません」表示になる不具合が
-// 発生した(西谷駅→kawara CAFE&DINING横浜店で再現)。ネストしたオブジェクトの
-// 内側でrequiredを指定することで、モデルがそのオブジェクトを含める場合は
-// name/confidence両方を一緒に埋めるよう構造的に誘導する。
-const FACILITY_SCHEMA = {
+const FACILITY_CANDIDATE_SCHEMA = {
   type: "object",
   properties: {
-    name: { type: "string" },
+    gateName: {
+      type: "string",
+      description: "改札名。本文に断定的に明記されている場合のみ含める(逐語で)。",
+    },
+    exitName: {
+      type: "string",
+      description: "出口名。本文に断定的に明記されている場合のみ含める(逐語で)。",
+    },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
+    reason: { type: "string", description: "この組を選んだ理由(任意、1行程度)" },
   },
-  required: ["name", "confidence"],
+  required: ["confidence"],
 };
 
 const EXTRACTION_SCHEMA = {
@@ -111,13 +137,11 @@ const EXTRACTION_SCHEMA = {
     boardingDoorPosition: { type: "string" },
     boardingReason: { type: "string" },
     boardingConfidence: { type: "string", enum: ["high", "medium", "low"] },
-    gate: {
-      ...FACILITY_SCHEMA,
-      description: "改札名が断定されている場合のみ含める(name/confidence両方を必ず埋めること)。未確認の場合はgate自体を省略する。",
-    },
-    exit: {
-      ...FACILITY_SCHEMA,
-      description: "出口名が断定されている場合のみ含める(name/confidence両方を必ず埋めること)。未確認の場合はexit自体を省略する。",
+    facilityCandidates: {
+      type: "array",
+      items: FACILITY_CANDIDATE_SCHEMA,
+      description:
+        "改札・出口の組。断定できるなら要素1件、2〜3択に絞れるなら複数要素、絞り込めなければ空配列。",
     },
   },
   required: ["lines", "transferCount", "estimatedMinutes"],
@@ -128,8 +152,7 @@ const EXTRACTION_INSTRUCTION = `以下の文章から、経路案内情報をJSO
 - transferCount・estimatedMinutes: 整数で抽出してください。
 - arrivalPlatformNumber: 到着番線が文中で確認できる場合のみ含めてください(不明なら省略)。
 - boardingCarNumber/boardingDoorPosition/boardingReason/boardingConfidence: 号車位置が断定されている場合のみ含めてください。文中で「未確認」「降車後は案内表示に従ってください」のように断定を避けている場合は、これらのフィールドを一切含めないでください。
-- gate/exit: 改札名・出口名が断定されている場合のみ、{name, confidence}の両方を必ずセットで含めてください。片方だけ(名前はあるが確信度は書かない、等)は禁止です。断定されていない場合はgate/exit自体を省略してください。「最重要ポイント」で明言されていなくても、詳細情報の説明文中に固有の改札名・出口名(例:「A0出口」「道玄坂改札」)が明記されていれば、それを必ず抽出してください(本文中のどこか1箇所にでも明記されていれば抽出対象です)。
-- 改札を出た地点がそのまま出口(例:「1階改札」を出るとそこが「みなみ西口」)のように、改札名と出口名が同じ場所を指す場合でも、gate(改札名)とexit(出口名)の両方を省略せずそれぞれ記入してください。片方に統合しないでください。
+- facilityCandidates: 改札・出口の組を配列で抽出してください。単一の組に断定できる場合は要素1件、2〜3択に絞り込める場合は複数要素を列挙してください(例:「AまたはB」という記述は2要素)。gateName/exitNameは本文中に逐語で明記されている名称のみを使ってください(言い換え・要約・正規化はしないでください)。1つの要素のgateNameとexitNameは、本文中で同じ選択肢として一緒に説明されている組み合わせのみにしてください(別々の文脈で言及された改札名と出口名を推測で組み合わせないでください)。改札・出口のどちらも本文中で確認できない組は含めないでください。断定・候補のいずれも無い場合はこの配列を空にしてください。reasonにはその組を選んだ理由が本文にあれば1行程度で含めてください。
 本文に明記されていない情報を創作しないでください。confidenceは本文中の確信度の記述を参考に自己申告してください(不明な場合はlowとしてください)。`;
 
 function locationHint(station: Station): string {
@@ -250,27 +273,45 @@ function extractBoarding(raw: RawExtraction): SingleCallNavigatorGuide["boarding
 }
 
 /**
- * name/confidenceがネストされたオブジェクトから改札・出口情報を取り出す共有処理。
- * 名前が明記されているのにconfidenceだけ欠けている場合、丸ごと棄却すると
- * 実在する情報が「確認できません」に化けてしまう不具合が実機で発生した
- * (西谷駅→kawara CAFE&DINING横浜店で再現、gateNameは抽出できていたが
- * gateConfidence欠落で全体がnullになっていた)。スキーマ側でname/confidenceを
- * 同じオブジェクトのrequiredにしたことで発生頻度は下がる想定だが、防御的に
- * confidence欠落時は"low"を補って名前自体は失わないようにする。
+ * facilityCandidatesの1要素からgate/exitの片方を取り出す。名前の妥当性検証
+ * (isNonEmptyBoundedText)に加え、検索フェーズの生テキストへの逐語一致検証
+ * (isVerbatimInSearchText)を必ず通す(事故再発防止ガードレール: AIによる
+ * 補完・正規化での候補追加を機械的に拒否する。名前が本文に無ければ、
+ * confidenceがどうであれ採用しない)。confidence欠落時は名前自体は失わず
+ * "low"を補う(西谷駅→kawara CAFE&DINING横浜店で発覚した過去の回帰と
+ * 同じ配慮)。
  */
-function extractFacility(raw: RawFacility | null | undefined): { name: string; confidenceLevel: ConfidenceLevel } | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  if (!isNonEmptyBoundedText(raw.name, MAX_FACILITY_NAME_LENGTH)) return null;
-  const confidenceLevel = isValidConfidenceLevel(raw.confidence) ? raw.confidence : "low";
-  return { name: raw.name, confidenceLevel };
+function extractNamedFacility(
+  name: unknown,
+  confidence: unknown,
+  searchText: string
+): RawNamedFacility | null {
+  if (!isNonEmptyBoundedText(name, MAX_FACILITY_NAME_LENGTH)) return null;
+  if (!isVerbatimInSearchText(name, searchText)) return null;
+  const confidenceLevel = isValidConfidenceLevel(confidence) ? confidence : "low";
+  return { name, confidenceLevel };
 }
 
-function extractGate(raw: RawExtraction): SingleCallNavigatorGuide["gate"] {
-  return extractFacility(raw.gate);
-}
+// facilityCandidates配列の処理件数上限(安全弁)。classifyFacilityRecommendation
+// が4件以上でunavailableへ格下げするため実質的な上限はそちらだが、極端に
+// 大きい配列を無制限に処理しないよう、既存のMAX_WALKING_STEPS等と同じ考え方で
+// 上限を設ける。
+const MAX_FACILITY_CANDIDATES_RAW = 10;
 
-function extractExit(raw: RawExtraction): SingleCallNavigatorGuide["exit"] {
-  return extractFacility(raw.exit);
+function extractFacilityCandidatePairs(raw: RawExtraction, searchText: string): RawFacilityPair[] {
+  if (!Array.isArray(raw.facilityCandidates)) return [];
+
+  const pairs: RawFacilityPair[] = [];
+  for (const item of raw.facilityCandidates.slice(0, MAX_FACILITY_CANDIDATES_RAW)) {
+    if (typeof item !== "object" || item === null) continue;
+    const candidate = item as RawFacilityCandidate;
+    const gate = extractNamedFacility(candidate.gateName, candidate.confidence, searchText);
+    const exit = extractNamedFacility(candidate.exitName, candidate.confidence, searchText);
+    if (!gate && !exit) continue;
+    const reason = isNonEmptyBoundedText(candidate.reason, MAX_REASON_LENGTH) ? candidate.reason : null;
+    pairs.push({ gate, exit, reason });
+  }
+  return pairs;
 }
 
 function isValidGuide(value: unknown): value is SingleCallNavigatorGuide {
@@ -282,7 +323,7 @@ function isValidGuide(value: unknown): value is SingleCallNavigatorGuide {
   );
 }
 
-function toGuide(raw: RawExtraction): SingleCallNavigatorGuide | null {
+function toGuide(raw: RawExtraction, searchText: string): SingleCallNavigatorGuide | null {
   if (!Array.isArray(raw.lines) || raw.lines.length === 0) return null;
   if (
     !raw.lines.every(
@@ -318,8 +359,7 @@ function toGuide(raw: RawExtraction): SingleCallNavigatorGuide | null {
     estimatedMinutes: raw.estimatedMinutes,
     arrivalPlatformNumber: extractArrivalPlatformNumber(raw.arrivalPlatformNumber),
     boarding: extractBoarding(raw),
-    gate: extractGate(raw),
-    exit: extractExit(raw),
+    facility: classifyFacilityRecommendation(extractFacilityCandidatePairs(raw, searchText)),
   };
 
   return isValidGuide(guide) ? guide : null;
@@ -339,7 +379,7 @@ async function attemptGenerateSingleCallNavigatorGuide(
     destinationPlaceCoordinates
   );
 
-  const result = await searchAndGenerateStructuredContent<RawExtraction>(
+  const result = await searchAndGenerateStructuredContentWithSearchText<RawExtraction>(
     apiKey,
     searchPrompt,
     EXTRACTION_INSTRUCTION,
@@ -348,17 +388,19 @@ async function attemptGenerateSingleCallNavigatorGuide(
   );
 
   if (!result) return null;
-  return toGuide(result);
+  return toGuide(result.data, result.searchText);
 }
 
 /**
- * 改札・出口が両方ともnull(未確認)の結果か判定する。この状態は本来最も
- * ユーザーに見せたくない結果(乗換自体は成功したのに改札・出口だけ
- * 「確認できません」になる)であり、実機検証で一定確率(3回中1回)で
- * 発生することを確認したため、丸ごとnullの場合と同様に再試行の対象にする。
+ * 改札・出口の情報が両方とも確認できない(facility.state === "unavailable")
+ * 結果か判定する。この状態は本来最もユーザーに見せたくない結果(乗換自体は
+ * 成功したのに改札・出口だけ「確認できません」になる)であり、実機検証で
+ * 一定確率(3回中1回)で発生することを確認したため、丸ごとnullの場合と
+ * 同様に再試行の対象にする。alternatives(複数候補)は「情報が出せた」状態
+ * として扱い、再試行の対象にしない。
  */
-function isGateAndExitBothUnconfirmed(guide: SingleCallNavigatorGuide): boolean {
-  return guide.gate === null && guide.exit === null;
+function isFacilityUnavailable(guide: SingleCallNavigatorGuide): boolean {
+  return guide.facility.state === "unavailable";
 }
 
 /**
@@ -396,13 +438,13 @@ export async function generateSingleCallNavigatorGuide(
       destinationHint,
       destinationPlaceCoordinates
     );
-    if (result !== null && !isGateAndExitBothUnconfirmed(result)) return result;
+    if (result !== null && !isFacilityUnavailable(result)) return result;
 
     if (attempt < MAX_ATTEMPTS) {
       const reason =
         result === null
           ? "結果がnullだった"
-          : "改札・出口が両方とも未確認だった";
+          : "改札・出口の情報が両方とも確認できなかった";
       console.warn(
         `[single-call-navigator] ${attempt}回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
       );

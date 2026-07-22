@@ -61,13 +61,20 @@ const OK_RESULT: FacilitiesSearchResult = {
       warnings: [],
     },
     recommendedExit: "A1出口",
-    gate: { facilityId: "g1", stationId: "d", facilityType: "gate", name: "中央改札", level: "1F", accessible: true, coordinates: null, connectedGateId: null, confidence: highConfidence, verifiedAt: null },
-    exit: { facilityId: "e1", stationId: "d", facilityType: "exit", name: "A1出口", level: "1F", accessible: true, coordinates: null, connectedGateId: null, confidence: highConfidence, verifiedAt: null },
+    facilityRecommendation: {
+      state: "confirmed",
+      pair: {
+        gate: { name: "中央改札", confidence: highConfidence, provenance: "surveyed" },
+        exit: { name: "A1出口", confidence: highConfidence, provenance: "surveyed" },
+        reason: null,
+      },
+    },
     elevator: null,
     hasApproximateGuidance: false,
+    hasAlternativesGuidance: false,
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
-    arrivalGuide: { steps: [], destinationDirection: null },
+    arrivalGuide: { steps: [], destinationDirection: null, facility: { state: "unavailable", reason: "test" } },
   },
 };
 

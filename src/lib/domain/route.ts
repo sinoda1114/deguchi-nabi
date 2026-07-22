@@ -1,5 +1,6 @@
 import type { Confidence, Provenance } from "./confidence";
 import type { FacilityType } from "./station";
+import type { FacilityRecommendation } from "./facility-recommendation";
 
 export type RouteMode = "fastest" | "easy" | "accessible";
 
@@ -92,7 +93,13 @@ export type GuideStepType =
  */
 export interface GuideStep {
   type: GuideStepType;
-  /** 固有名詞(例: "南改札"、"A7出口")。確認できない場合はステップ自体を生成しない。 */
+  /**
+   * 固有名詞(例: "南改札"、"A7出口")。確認できない場合はステップ自体を生成
+   * しない。改札・出口が複数候補(alternatives)の場合は、先頭候補だけでなく
+   * 全候補名を"/"区切りで連結した文字列にする(例: "みなみ西口 / 5番街方面出口")。
+   * UI側(overview-field.ts・route-timeline-nodes.ts)はtitleをそのまま表示する
+   * だけで済み、単一候補を暗黙の推奨のように見せてしまうことを構造的に防げる。
+   */
   title: string;
   instruction: string;
   landmarks: string[];
@@ -113,6 +120,14 @@ export interface GuideStep {
 export interface ArrivalGuide {
   steps: GuideStep[];
   destinationDirection: string | null;
+  /**
+   * 改札・出口の3状態(confirmed/alternatives/unavailable)。stepsは既存の
+   * UI(route-timeline-nodes.ts等)向けにconfirmed/alternativesいずれの場合も
+   * ticket_gate/street_exitステップへ変換済みだが、alternatives状態そのもの
+   * (候補一覧・「いずれか」であること)を表示側が正確に扱うためにここでも
+   * 保持する。
+   */
+  facility: FacilityRecommendation;
 }
 
 /**
@@ -125,6 +140,11 @@ export interface ArrivalGuide {
  * disambiguation)。同一検索セッションでgateを基準に号車を決めさせることで、
  * 独立した乗車位置生成(旧ai-generation.ts generateBoardingPosition)が
  * 統合生成とは無関係の改札を基準に号車を回答してしまう不整合を防ぐ。
+ *
+ * facilityは2026-07-22に gate/exit(単一断定 or null)から置き換えた。改札・
+ * 出口を confirmed/alternatives/unavailable の3状態で表現し、「Aまたは B」
+ * のように2択には絞れているが1つに断定できない情報も(alternativesとして)
+ * 隠さず保持する(Fable 5・Codexの独立レビューで一致した結論)。
  */
 export interface UnifiedArrivalGuide {
   boardingPosition: {
@@ -133,8 +153,7 @@ export interface UnifiedArrivalGuide {
     reason: string;
     confidence: Confidence;
   } | null;
-  gate: { name: string; confidence: Confidence } | null;
-  exit: { name: string; confidence: Confidence } | null;
+  facility: FacilityRecommendation;
   walkingSteps: GuideStep[];
 }
 
