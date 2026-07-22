@@ -98,7 +98,11 @@ export async function RouteResultBody({ origin, destination, mode, user, clientI
   // (route-result-cache.tsのJSDoc参照。PR #80が撤去した「異なるリクエスト間の
   // 使い回し」とは異なり、同一routeId・短TTLに限定したユーザー承認済みの設計)。
   const routeId = buildRouteId(resolved.originStationId, resolved.destinationStationId, mode);
-  const cacheKey = buildReloadCacheKey(routeId, clientIp);
+  // ログイン済みなら改ざん不能なセッションCookie由来のuserIdを優先する
+  // (x-forwarded-for等スプーフィング可能なIPだけでスコープすると、CGNAT/公衆
+  // Wi-Fi共有や偽装ヘッダで他人の結果、特にorigin=home_stationでは「自宅最寄り駅」
+  // まで読めてしまう。security-reviewer指摘、route-result-cache.tsのJSDoc参照)。
+  const cacheKey = buildReloadCacheKey(routeId, user ? { userId: user.userId } : { clientIp });
   const cached = await getCachedRouteResult(cacheKey);
 
   let candidate: RouteCandidateResult;

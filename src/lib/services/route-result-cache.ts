@@ -21,12 +21,17 @@ import type { RouteSegment } from "@/lib/domain/route";
  * /ai-review指摘(Codex、High): 当初の実装はrouteIdのみをキーにしており、
  * 無関係な別ユーザーが同じ経路を10分以内に検索すると他人の生成結果を
  * 受け取れてしまっていた(PR #80が避けた「異なるユーザー間の再利用」の再導入)。
- * クライアントIPをキーに含めることで、実質的に「同じ利用者(端末)からの
- * 再アクセス」に絞り込む(page.tsxのIPレートリミットと同じextractClientIpを
- * 再利用。新しいセッションCookie基盤を作らずに済む現実的な折衷案)。同一IP
- * (社内LAN・公衆Wi-Fi等)を共有する別人が偶然同じ経路を10分以内に検索する
- * ケースは残るが、「同一IPかつ同一経路かつ10分以内」まで絞られた残存リスクは
- * 許容範囲と判断する(ユーザー承認、2026-07-22)。
+ * 一次対応としてクライアントIPをキーに含めたが、その後のsecurity-reviewer
+ * 指摘(Medium)で「ログイン済みユーザーはx-forwarded-for等のクライアントが
+ * 送信可能なヘッダではなく、改ざん不能なセッションCookie由来のuser.userIdを
+ * 既に持っているのにそれを使っていない」問題が判明した。IPのみのスコープでは
+ * (a) CGNAT/公衆Wi-Fi等の同一IP共有環境で他人の結果を受け取れる、
+ * (b) x-forwarded-forの先頭値はextractClientIpが形式検証せずそのまま採用する
+ * ため、被害者IPを騙ったヘッダで狙い撃ちできる、という2経路で他人の経路結果
+ * (特にorigin=home_stationの場合は「ログイン済みユーザーの自宅最寄り駅名」
+ * という機微な情報)を読めてしまう。そのためログイン時はuser.userIdを優先し、
+ * 未ログイン(匿名)時のみIPにフォールバックする設計に修正した
+ * (下記buildReloadCacheKeyのScope引数参照)。
  *
  * 保存先はTurso(getKvCacheStore、nearby-stationsキャッシュと同じ実装)を再利用する。
  * インメモリキャッシュを使わない理由: VercelのサーバーレスFunctionはリクエストごとに
@@ -51,11 +56,22 @@ export interface CachedRouteResultBundle {
 }
 
 /**
- * routeId(出発駅+到着駅+モード)とクライアントIPを組み合わせたキャッシュキー。
- * routeId単体をキーにしない理由は本ファイル冒頭のコメント参照。
+ * キャッシュキーのスコープ。ログイン済みなら改ざん不能なuserIdを、匿名なら
+ * クライアントIP(スプーフィング可能、残存リスクは本ファイル冒頭コメント参照)を
+ * フォールバックとして使う。呼び出し側(RouteResultBody.tsx)はuser?.userIdが
+ * あれば必ずこちらを優先すること。
  */
-export function buildReloadCacheKey(routeId: string, clientIp: string): string {
-  return `${routeId}::ip:${clientIp}`;
+export type ReloadCacheScope = { userId: string } | { clientIp: string };
+
+/**
+ * routeId(出発駅+到着駅+モード)とスコープ(userId優先・匿名時のみIP)を
+ * 組み合わせたキャッシュキー。routeId単体をキーにしない理由は本ファイル
+ * 冒頭のコメント参照。
+ */
+export function buildReloadCacheKey(routeId: string, scope: ReloadCacheScope): string {
+  return "userId" in scope
+    ? `${routeId}::user:${scope.userId}`
+    : `${routeId}::ip:${scope.clientIp}`;
 }
 
 /**

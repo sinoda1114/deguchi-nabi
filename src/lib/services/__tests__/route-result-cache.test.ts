@@ -79,15 +79,33 @@ const SAMPLE_BUNDLE = {
 
 describe("buildReloadCacheKey", () => {
   test("routeIdとIPを組み合わせたキーを作る(異なるIPなら別キーになる、他ユーザーとの共有を避けるため)", () => {
-    const keyA = buildReloadCacheKey("route_origin_destination_easy", "203.0.113.1");
-    const keyB = buildReloadCacheKey("route_origin_destination_easy", "203.0.113.2");
+    const keyA = buildReloadCacheKey("route_origin_destination_easy", { clientIp: "203.0.113.1" });
+    const keyB = buildReloadCacheKey("route_origin_destination_easy", { clientIp: "203.0.113.2" });
     expect(keyA).not.toBe(keyB);
   });
 
   test("同じrouteId・同じIPなら同じキーになる", () => {
-    const keyA = buildReloadCacheKey("route_origin_destination_easy", "203.0.113.1");
-    const keyB = buildReloadCacheKey("route_origin_destination_easy", "203.0.113.1");
+    const keyA = buildReloadCacheKey("route_origin_destination_easy", { clientIp: "203.0.113.1" });
+    const keyB = buildReloadCacheKey("route_origin_destination_easy", { clientIp: "203.0.113.1" });
     expect(keyA).toBe(keyB);
+  });
+
+  test("ログイン済み(userId指定)なら同じIPでも別ユーザーIDなら別キーになる(security-reviewer指摘: IPだけのスコープはスプーフィング・CGNAT共有で他人の結果を読めてしまうため、userId優先に修正)", () => {
+    const keyA = buildReloadCacheKey("route_origin_destination_easy", { userId: "user_1" });
+    const keyB = buildReloadCacheKey("route_origin_destination_easy", { userId: "user_2" });
+    expect(keyA).not.toBe(keyB);
+  });
+
+  test("同じrouteId・同じuserIdなら同じキーになる", () => {
+    const keyA = buildReloadCacheKey("route_origin_destination_easy", { userId: "user_1" });
+    const keyB = buildReloadCacheKey("route_origin_destination_easy", { userId: "user_1" });
+    expect(keyA).toBe(keyB);
+  });
+
+  test("userIdスコープとclientIpスコープは値が同じ文字列でもキーが衝突しない(名前空間分離)", () => {
+    const keyA = buildReloadCacheKey("route_origin_destination_easy", { userId: "203.0.113.1" });
+    const keyB = buildReloadCacheKey("route_origin_destination_easy", { clientIp: "203.0.113.1" });
+    expect(keyA).not.toBe(keyB);
   });
 });
 
@@ -96,7 +114,7 @@ describe("route-result-cache", () => {
     vi.clearAllMocks();
   });
 
-  const KEY = buildReloadCacheKey("route_a", "203.0.113.1");
+  const KEY = buildReloadCacheKey("route_a", { clientIp: "203.0.113.1" });
 
   test("キャッシュが無い場合はnullを返す", async () => {
     kvGet.mockResolvedValue(null);

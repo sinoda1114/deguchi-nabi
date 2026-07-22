@@ -95,7 +95,8 @@ const setCachedRouteResultMock = vi.fn();
 vi.mock("@/lib/services/route-result-cache", () => ({
   getCachedRouteResult: (...args: unknown[]) => getCachedRouteResultMock(...args),
   setCachedRouteResult: (...args: unknown[]) => setCachedRouteResultMock(...args),
-  buildReloadCacheKey: (routeId: string, clientIp: string) => `${routeId}::ip:${clientIp}`,
+  buildReloadCacheKey: (routeId: string, scope: { userId: string } | { clientIp: string }) =>
+    "userId" in scope ? `${routeId}::user:${scope.userId}` : `${routeId}::ip:${scope.clientIp}`,
 }));
 
 const DEFAULT_RAIL_ROUTE = {

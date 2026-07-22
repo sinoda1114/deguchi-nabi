@@ -85,7 +85,8 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/services/route-result-cache", () => ({
   getCachedRouteResult: (...args: unknown[]) => getCachedRouteResultMock(...args),
   setCachedRouteResult: (...args: unknown[]) => setCachedRouteResultMock(...args),
-  buildReloadCacheKey: (routeId: string, clientIp: string) => `${routeId}::ip:${clientIp}`,
+  buildReloadCacheKey: (routeId: string, scope: { userId: string } | { clientIp: string }) =>
+    "userId" in scope ? `${routeId}::user:${scope.userId}` : `${routeId}::ip:${scope.clientIp}`,
 }));
 
 vi.mock("@/lib/integrations", () => ({
@@ -306,8 +307,28 @@ describe("RouteResultBody のリロード耐性キャッシュ", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(setCachedRouteResultMock).toHaveBeenCalledTimes(1);
     const [cacheKeyArg] = setCachedRouteResultMock.mock.calls[0];
-    // clientIpでスコープされたキー(route-result-cache.tsのbuildReloadCacheKey)。
-    // routeId単体だとユーザー間でキャッシュが共有されてしまうため(/ai-review指摘)。
+    // ログイン済み(BASE_USER)のためuserIdでスコープされたキーになる
+    // (route-result-cache.tsのbuildReloadCacheKey。security-reviewer指摘により
+    // clientIpよりuserIdを優先する設計に修正した)。
+    expect(cacheKeyArg).toBe("route_origin_destination_easy::user:user_1");
+  });
+
+  test("未ログイン(userなし)の場合はclientIpでスコープされたキーになる", async () => {
+    getCachedRouteResultMock.mockResolvedValue(null);
+    getFacilitiesMock.mockResolvedValue([]);
+    const { RouteResultBody } = await import("@/components/result/RouteResultBody");
+
+    await RouteResultBody({
+      origin: ORIGIN,
+      destination: DESTINATION,
+      mode: "easy",
+      user: null,
+      clientIp: "203.0.113.1",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setCachedRouteResultMock).toHaveBeenCalledTimes(1);
+    const [cacheKeyArg] = setCachedRouteResultMock.mock.calls[0];
     expect(cacheKeyArg).toBe("route_origin_destination_easy::ip:203.0.113.1");
   });
 });
