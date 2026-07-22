@@ -28,7 +28,10 @@ import { searchAndGenerateStructuredContentWithSearchText } from "@/lib/integrat
  * 情報不足時の対応優先順位を明記)を、動的な出発駅・目的地向けにパラメータ化した。
  */
 
-const MODEL = "gemini-3.5-flash";
+// 2026-07-22、gemini-3.5-flashから移行(ユーザー判断)。実機検証(西谷駅→
+// kawara CAFE&DINING横浜店、facilityCandidates新スキーマ含め計19回)で
+// 速度・コストが優位、gate/exit抽出成功率も3.5-flash比で悪化なしを確認した。
+const MODEL = "gemini-3.6-flash";
 const MAX_LINE_NAME_LENGTH = 100;
 const MAX_TRANSFER_COUNT = 10;
 const MAX_DURATION_MINUTES = 600;
