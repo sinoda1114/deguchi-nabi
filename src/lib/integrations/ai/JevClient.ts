@@ -55,18 +55,18 @@ export async function evaluateRetryGate(
       // Phase 1暫定実装: 件数ベースの判定を維持しつつ、構造を整備
       const shouldRetry = facility.state === "unavailable";
       
-      clearTimeout(timeoutId);
       return {
         shouldRetry,
         reason: shouldRetry ? "No facility information available" : "Facility information present",
       };
     } catch (error) {
-      clearTimeout(timeoutId);
       if ((error as Error).name === "AbortError") {
         console.warn("[JevClient] Retry gate evaluation timed out, falling back to false");
         return { shouldRetry: false, reason: "Timeout fallback" };
       }
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   } catch (error) {
     console.warn("[JevClient] Retry gate evaluation failed, falling back to false:", error);
@@ -78,7 +78,8 @@ export async function evaluateRetryGate(
  * JEVクライアントが利用可能かチェック
  */
 export function isJevAvailable(): boolean {
-  return typeof process.env.JEV_API_KEY === "string" && process.env.JEV_API_KEY.length > 0;
+  const key = process.env.JEV_API_KEY;
+  return typeof key === "string" && key.trim().length > 0;
 }
 
 /**

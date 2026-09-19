@@ -424,7 +424,8 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
         }
         return decision.shouldRetry;
       } catch (error) {
-        console.warn("[single-call-navigator] JEV evaluation failed, falling back to rule-based:", error);
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV evaluation failed, falling back to rule-based:", message);
       }
     }
   }

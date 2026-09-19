@@ -387,6 +387,8 @@ describe("generateSingleCallNavigatorGuide", () => {
       // unavailableなのでretryされる（従来挙動）
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
       expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
+      expect(result).not.toBeNull();
+      expect(result?.facility.state).toBe("unavailable");
     });
 
     test("JEV_API_KEYが設定されている場合、JEVによる判定を使用する", async () => {
@@ -454,6 +456,8 @@ describe("generateSingleCallNavigatorGuide", () => {
       // JEVエラー時はルールベースへフォールバック、unavailableなのでretryされる
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
       expect(mockEvaluateRetryGate).toHaveBeenCalled();
+      expect(result).not.toBeNull();
+      expect(result?.facility.state).toBe("unavailable");
     });
   });
 });
