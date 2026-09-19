@@ -47,6 +47,13 @@ function safeErrorMessage(e: unknown): string {
  * 判定基準:
  * - unavailableでも情報が実質的に有用ならfalse（retry不要）
  * - 本当に情報が足りない場合のみtrue（retry実施）
+ * 
+ * 呼び出し契約（2026-09-19追加）:
+ * - この関数は `unavailable` 状態のみに対して呼び出される前提で最適化されている
+ * - `confirmed` / `alternatives` 状態は single-call-navigator.ts で早期returnされ、
+ *   この関数に到達しない（レイテンシ最適化のため）
+ * - ただし、この関数自体は全3状態を処理可能に設計されており、将来の柔軟性のため
+ *   stateの型情報は保持している
  */
 export async function evaluateRetryGate(
   facility: FacilityRecommendation<RawNamedFacility>,

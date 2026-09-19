@@ -455,7 +455,7 @@ describe("generateSingleCallNavigatorGuide", () => {
       expect(result?.facility.state).toBe("unavailable");
     });
 
-    test("JEVがshouldRetry=trueを返した場合、retryを実行する", async () => {
+    test("JEVがshouldRetry=trueを返した場合、retryを実行する（2回目でconfirmed）", async () => {
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
       mockEvaluateRetryGate.mockResolvedValueOnce({ shouldRetry: true, reason: "JEV判定でretry必要" });
@@ -477,6 +477,44 @@ describe("generateSingleCallNavigatorGuide", () => {
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
       expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(1);
       expect(result?.facility.state).toBe("confirmed");
+    });
+
+    test("JEVがshouldRetry=trueを返した場合、retryを実行する（2回目でalternatives）", async () => {
+      mockIsJevAvailable.mockReturnValue(true);
+      mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
+      mockEvaluateRetryGate.mockResolvedValueOnce({ shouldRetry: true, reason: "JEV判定でretry必要" });
+
+      const alternativesSearchText = "利用する出口はA出口またはB出口のいずれかです。改札は1階改札です。";
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(
+          mockResult({
+            lines: ["相鉄本線"],
+            transferCount: 0,
+            estimatedMinutes: 13,
+          })
+        )
+        .mockResolvedValueOnce(
+          mockResult(
+            {
+              lines: ["相鉄本線"],
+              transferCount: 0,
+              estimatedMinutes: 10,
+              facilityCandidates: [
+                { gateName: "1階改札", exitName: "A出口", confidence: "medium" },
+                { gateName: "1階改札", exitName: "B出口", confidence: "medium" },
+              ],
+            },
+            alternativesSearchText
+          )
+        );
+
+      const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+      
+      // 1回目: unavailable→JEV判定でretry必要→retry実行
+      // 2回目: alternatives→JEV呼び出しなし（alternativesでは早期return）
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+      expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(1);
+      expect(result?.facility.state).toBe("alternatives");
     });
 
     test("JEV判定がエラーの場合、ルールベース判定へフォールバックする", async () => {
