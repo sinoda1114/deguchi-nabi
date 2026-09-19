@@ -24,6 +24,18 @@ interface JevClientConfig {
   timeoutMs?: number;
 }
 
+const DEFAULT_TIMEOUT_MS = 1000;
+
+/**
+ * エラーメッセージを安全に文字列化（シークレット漏洩防止）
+ */
+function safeErrorMessage(e: unknown): string {
+  if (e instanceof Error) {
+    return e.message;
+  }
+  return String(e);
+}
+
 /**
  * JEVを使ってretry gateを判定する。
  * 
@@ -39,38 +51,36 @@ export async function evaluateRetryGate(
   facility: FacilityRecommendation<RawNamedFacility>,
   config: JevClientConfig
 ): Promise<JevRetryGateDecision> {
-  const timeoutMs = config.timeoutMs ?? 1000;
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Phase 1: シンプルな判定ロジック（JEV APIの実装が確定次第、本実装へ移行）
-  // 現時点では環境変数の存在確認とフォールバック実装
-  
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      // TODO: JEV API実装
-      // const result = await callJevApi(facility, config.apiKey, controller.signal);
-      
-      // Phase 1暫定実装: 件数ベースの判定を維持しつつ、構造を整備
-      const shouldRetry = facility.state === "unavailable";
-      
-      return {
-        shouldRetry,
-        reason: shouldRetry ? "No facility information available" : "Facility information present",
-      };
-    } catch (error) {
-      if ((error as Error).name === "AbortError") {
-        console.warn("[JevClient] Retry gate evaluation timed out, falling back to false");
-        return { shouldRetry: false, reason: "Timeout fallback" };
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    // TODO: JEV API実装（Phase 2で本実装へ移行）
+    // NOTE: When implementing, pass controller.signal to enforce timeout:
+    // const result = await callJevApi(facility, config.apiKey, controller.signal);
+    
+    // Phase 1暫定実装: 件数ベースの判定を維持しつつ、構造を整備
+    // IMPORTANT: This synchronous logic does not use the timeout mechanism.
+    // Timeout handling will activate once an actual async API call is implemented in Phase 2.
+    const shouldRetry = facility.state === "unavailable";
+    
+    return {
+      shouldRetry,
+      reason: shouldRetry ? "No facility information available" : "Facility information present",
+    };
   } catch (error) {
-    console.warn("[JevClient] Retry gate evaluation failed, falling back to false:", error);
-    return { shouldRetry: false, reason: "Error fallback" };
+    // Timeout-specific handling: return false to avoid retry loops
+    if ((error as Error).name === "AbortError") {
+      console.warn("[JevClient] Retry gate evaluation timed out, falling back to false");
+      return { shouldRetry: false, reason: "Timeout fallback" };
+    }
+    // For other errors, rethrow to let caller apply rule-based fallback
+    // (isFacilityUnavailable will catch and use facility.state check)
+    console.warn("[JevClient] Retry gate evaluation failed:", safeErrorMessage(error));
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
