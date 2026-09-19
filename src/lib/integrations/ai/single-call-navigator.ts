@@ -570,6 +570,8 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
         }
         // Phase 1が retry不要と判定 → 確定（Phase 2-Cはスキップ）
         // タイムアウト対策: 不要なJEV呼び出しを削減
+        // 注: Phase 1は unavailable / approximate を判定、Phase 2-Cは confirmed の完全性を判定
+        // approximate (gate + 方角) は Phase 1 で成功として処理されるため、Phase 2-C は不要
         if (!retryGateDecision.shouldRetry) {
           return false;
         }
@@ -815,7 +817,7 @@ export function generateSingleCallNavigatorRun(
   
   const final = attempt1.then(async (r1) => {
     const elapsedTime = Date.now() - startTime;
-    const remainingTime = RETRY_BUDGET_MS - elapsedTime;
+    const remainingTime = Math.max(0, RETRY_BUDGET_MS - elapsedTime); // 負の値を0にクランプ
     
     // 1回目で完了（confirmed/alternatives または null）
     if (r1 !== null && !(await isFacilityUnavailable(r1))) {
@@ -823,13 +825,15 @@ export function generateSingleCallNavigatorRun(
     }
     
     // 残り時間チェック: 2回目を実行する時間が不十分ならスキップ
+    // NOTE: remainingTime が 0 の場合もこの条件に該当し、retryをスキップする
     if (remainingTime < MIN_RETRY_TIME_MS) {
       const reason = r1 === null ? "結果がnull" : "改札・出口の情報が不完全";
       console.warn(
         `[single-call-navigator] ${reason}だが、残り時間が不十分（${Math.floor(remainingTime / 1000)}秒）のため再試行をスキップ: ` +
         `origin=${originStation.stationName}, destination=${destinationStation.stationName}`
       );
-      // 1回目の結果を返す（不完全でもタイムアウトより良い）
+      // NOTE: r1 が null の場合、呼び出し元で「経路が見つかりませんでした」と表示される
+      // タイムアウトよりは明示的なエラーの方が望ましいため、r1 を返す
       return r1;
     }
     
