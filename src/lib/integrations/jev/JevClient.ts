@@ -8,6 +8,7 @@ import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
 export interface JevHealthCheckResult {
   ok: boolean;
   reason?: string;
+  code?: string;
 }
 
 const HEALTH_CHECK_TIMEOUT_MS = 5000;
