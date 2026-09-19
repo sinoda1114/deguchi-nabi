@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { checkJevHealth, callJevSafely } from "../JevClient";
 
+vi.mock("@typesafe-ai/sdk", () => ({
+  TypeSafeClient: vi.fn(),
+  noul: vi.fn((q, opts) => ({ question: q, options: opts })),
+}));
+
 describe("JevClient", () => {
   const originalEnv = process.env;
-  const originalFetch = global.fetch;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
@@ -12,7 +16,6 @@ describe("JevClient", () => {
 
   afterEach(() => {
     process.env = originalEnv;
-    global.fetch = originalFetch;
   });
 
   describe("checkJevHealth", () => {
@@ -21,65 +24,68 @@ describe("JevClient", () => {
 
       const result = await checkJevHealth();
 
-      expect(result).toEqual({ ok: false, error: "missing_key" });
+      expect(result).toEqual({ ok: false, reason: "missing_key" });
     });
 
-    it("APIが200を返す場合はokを返す", async () => {
+    it("TypeSafe systemOne呼び出しが成功した場合はokを返す", async () => {
       process.env.JEV_API_KEY = "test-key";
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-      });
+      const { TypeSafeClient } = await import("@typesafe-ai/sdk");
+      const mockSystemOne = vi.fn().mockResolvedValue({ answers: { pong: { noul: 1 } } });
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
 
       const result = await checkJevHealth();
 
       expect(result).toEqual({ ok: true });
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/health"),
-        expect.objectContaining({
-          method: "GET",
-          headers: expect.objectContaining({
-            Authorization: "Bearer test-key",
-          }),
-        })
-      );
+      expect(TypeSafeClient).toHaveBeenCalledWith({
+        apiKey: "test-key",
+        timeout: 5000,
+      });
     });
 
-    it("APIがエラーを返す場合はupstream_errorを返す", async () => {
+    it("TypeSafe APIがエラーを返す場合はupstream_errorを返す", async () => {
       process.env.JEV_API_KEY = "test-key";
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-      });
+      const { TypeSafeClient } = await import("@typesafe-ai/sdk");
+      const mockSystemOne = vi.fn().mockRejectedValue(new Error("API error"));
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
 
       const result = await checkJevHealth();
 
-      expect(result).toEqual({ ok: false, error: "upstream_error" });
+      expect(result).toEqual({ ok: false, reason: "upstream_error" });
+    });
+
+    it("認証エラー時はauth_errorを返す", async () => {
+      process.env.JEV_API_KEY = "test-key";
+      const { TypeSafeClient } = await import("@typesafe-ai/sdk");
+      const mockSystemOne = vi.fn().mockRejectedValue(new Error("401 Unauthorized"));
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
+
+      const result = await checkJevHealth();
+
+      expect(result).toEqual({ ok: false, reason: "auth_error" });
     });
 
     it("タイムアウト時はtimeoutエラーを返す", async () => {
       process.env.JEV_API_KEY = "test-key";
-      global.fetch = vi.fn().mockImplementation(
-        () =>
-          new Promise((_resolve, reject) => {
-            const error = new Error("The operation was aborted");
-            error.name = "AbortError";
-            setTimeout(() => reject(error), 100);
-          })
-      );
+      const { TypeSafeClient } = await import("@typesafe-ai/sdk");
+      const mockSystemOne = vi.fn().mockRejectedValue(new Error("timeout"));
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
 
       const result = await checkJevHealth();
 
-      expect(result).toEqual({ ok: false, error: "timeout" });
+      expect(result).toEqual({ ok: false, reason: "timeout" });
     });
 
-    it("ネットワークエラー時はupstream_errorを返す", async () => {
+    it("AbortError時はtimeoutエラーを返す", async () => {
       process.env.JEV_API_KEY = "test-key";
-      global.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
+      const { TypeSafeClient } = await import("@typesafe-ai/sdk");
+      const error = new Error("Aborted");
+      error.name = "AbortError";
+      const mockSystemOne = vi.fn().mockRejectedValue(error);
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
 
       const result = await checkJevHealth();
 
-      expect(result).toEqual({ ok: false, error: "upstream_error" });
+      expect(result).toEqual({ ok: false, reason: "timeout" });
     });
   });
 

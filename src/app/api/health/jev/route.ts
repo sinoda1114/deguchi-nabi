@@ -16,9 +16,9 @@ export async function GET() {
   const result = await checkJevHealth();
 
   if (!result.ok) {
-    const statusCode = result.error === "missing_key" ? 503 : 502;
+    const statusCode = result.reason === "missing_key" ? 503 : 502;
     return NextResponse.json(
-      { ok: false, reason: result.error },
+      { ok: false, reason: result.reason },
       { status: statusCode }
     );
   }

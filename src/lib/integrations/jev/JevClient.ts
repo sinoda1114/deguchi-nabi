@@ -1,11 +1,13 @@
 /**
- * TypeSafe System One (JEV) クライアント
+ * TypeSafe System One (JEV) ヘルスチェッククライアント
  * 疎通確認とfail-open機能を提供
  */
 
+import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
+
 export interface JevHealthCheckResult {
   ok: boolean;
-  error?: string;
+  reason?: string;
 }
 
 const HEALTH_CHECK_TIMEOUT_MS = 5000;
@@ -15,40 +17,44 @@ const HEALTH_CHECK_TIMEOUT_MS = 5000;
  */
 export async function checkJevHealth(): Promise<JevHealthCheckResult> {
   const JEV_API_KEY = process.env.JEV_API_KEY;
-  const JEV_API_ENDPOINT = process.env.JEV_API_ENDPOINT || "https://api.typesafe.ai/v1";
 
   if (!JEV_API_KEY) {
-    return { ok: false, error: "missing_key" };
+    return { ok: false, reason: "missing_key" };
   }
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
-
-    const response = await fetch(`${JEV_API_ENDPOINT}/health`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${JEV_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
+    const client = new TypeSafeClient({
+      apiKey: JEV_API_KEY,
+      timeout: HEALTH_CHECK_TIMEOUT_MS,
     });
 
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      return { ok: false, error: "upstream_error" };
-    }
+    await client.systemOne({
+      state: { healthCheck: true },
+      questions: {
+        alive: noul("Is the system operational?", {
+          yes: "System is operational",
+          no: "System is down",
+        }),
+      },
+    });
 
     return { ok: true };
   } catch (error) {
     if (error instanceof Error) {
-      if (error.name === "AbortError") {
-        return { ok: false, error: "timeout" };
+      const msg = error.message.toLowerCase();
+      const name = error.name.toLowerCase();
+      
+      if (name === "aborterror" || msg.includes("timeout") || msg.includes("timed out") || name.includes("timeout")) {
+        return { ok: false, reason: "timeout" };
       }
-      return { ok: false, error: "upstream_error" };
+      
+      if (msg.includes("unauthorized") || msg.includes("forbidden") || msg.includes("authentication") || msg.includes("api key") || msg.includes("401") || msg.includes("403")) {
+        return { ok: false, reason: "auth_error" };
+      }
+      
+      return { ok: false, reason: "upstream_error" };
     }
-    return { ok: false, error: "unknown_error" };
+    return { ok: false, reason: "unknown_error" };
   }
 }
 
