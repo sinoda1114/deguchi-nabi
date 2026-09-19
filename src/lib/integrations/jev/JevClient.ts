@@ -40,22 +40,29 @@ export async function checkJevHealth(): Promise<JevHealthCheckResult> {
     });
 
     return { ok: true };
-  } catch (error) {
-    if (error instanceof Error) {
-      const msg = error.message.toLowerCase();
-      const name = error.name.toLowerCase();
-      
-      if (name === "aborterror" || msg.includes("timeout") || msg.includes("timed out") || name.includes("timeout")) {
-        return { ok: false, reason: "timeout" };
-      }
-      
-      if (msg.includes("unauthorized") || msg.includes("forbidden") || msg.includes("authentication") || msg.includes("api key") || msg.includes("401") || msg.includes("403")) {
-        return { ok: false, reason: "auth_error" };
-      }
-      
-      return { ok: false, reason: "upstream_error" };
+  } catch (error: unknown) {
+    const err = error as { status?: number; statusCode?: number; response?: { status?: number }; code?: string; type?: string; message?: string; name?: string };
+    const status = err.status || err.statusCode || err.response?.status;
+    const code = err.code || err.type;
+    const msg = err.message || String(error);
+    const name = err.name || "";
+    
+    console.error("[JevClient] Health check failed:", {
+      name,
+      status,
+      code,
+      messageSafe: msg.substring(0, 100).replace(/[a-z0-9]{20,}/gi, "[REDACTED]"),
+    });
+    
+    if (name === "AbortError" || /timeout|timed out/i.test(msg) || /timeout/i.test(name)) {
+      return { ok: false, reason: "timeout", code };
     }
-    return { ok: false, reason: "unknown_error" };
+    
+    if (status === 401 || status === 403 || /unauthorized|forbidden|authentication|invalid.*key|401|403/i.test(msg) || code === "authentication_error") {
+      return { ok: false, reason: "auth_error", code };
+    }
+    
+    return { ok: false, reason: "upstream_error", code };
   }
 }
 
