@@ -7,6 +7,7 @@
  * タイムアウト: 1秒（判定に時間がかかる場合はフォールバック）
  */
 
+import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
 import type { RawNamedFacility } from "./single-call-navigator";
 
@@ -56,27 +57,52 @@ export async function evaluateRetryGate(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    // TODO: JEV API実装（Phase 2で本実装へ移行）
-    // NOTE: When implementing, pass controller.signal to enforce timeout:
-    // const result = await callJevApi(facility, config.apiKey, controller.signal);
-    
-    // Phase 1暫定実装: 件数ベースの判定を維持しつつ、構造を整備
-    // IMPORTANT: This synchronous logic does not use the timeout mechanism.
-    // Timeout handling will activate once an actual async API call is implemented in Phase 2.
-    const shouldRetry = facility.state === "unavailable";
-    
+    const client = new TypeSafeClient({
+      apiKey: config.apiKey,
+      timeout: timeoutMs,
+    });
+
+    const state: Record<string, string | number | boolean | null> = {
+      facilityState: facility.state,
+    };
+
+    if (facility.state === "unavailable") {
+      state.facilityReason = facility.reason;
+    } else if (facility.state === "confirmed") {
+      state.hasPair = true;
+    } else if (facility.state === "alternatives") {
+      state.pairsCount = facility.pairs.length;
+    }
+
+    const result = await client.systemOne(
+      {
+        state,
+        questions: {
+          needsRetry: noul(
+            "この施設情報は、ユーザーが駅構内で改札・出口を見つけるのに十分な情報を提供していますか？unavailable状態でも、代替情報や部分的な情報が実質的に有用であればfalseを返してください。本当に情報が足りない場合のみtrueを返してください。",
+            {
+              true: "情報が不足しており、リトライが必要",
+              false: "十分な情報があり、リトライ不要",
+            }
+          ),
+        },
+      },
+      { signal: controller.signal }
+    );
+
+    const shouldRetry = result.answers.needsRetry.noul > 0.5;
+
     return {
       shouldRetry,
-      reason: shouldRetry ? "No facility information available" : "Facility information present",
+      reason: shouldRetry
+        ? `JEV判定: 情報不足（確信度: ${result.answers.needsRetry.noul.toFixed(2)}）`
+        : `JEV判定: 情報十分（確信度: ${(1 - result.answers.needsRetry.noul).toFixed(2)}）`,
     };
   } catch (error) {
-    // Timeout-specific handling: return false to avoid retry loops
-    if ((error as Error).name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError") {
       console.warn("[JevClient] Retry gate evaluation timed out, falling back to false");
       return { shouldRetry: false, reason: "Timeout fallback" };
     }
-    // For other errors, rethrow to let caller apply rule-based fallback
-    // (isFacilityUnavailable will catch and use facility.state check)
     console.warn("[JevClient] Retry gate evaluation failed:", safeErrorMessage(error));
     throw error;
   } finally {

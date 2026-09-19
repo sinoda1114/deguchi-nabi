@@ -1,4 +1,4 @@
-import { describe, expect, test, afterEach } from "vitest";
+import { describe, expect, test, afterEach, vi, beforeEach } from "vitest";
 import {
   isJevAvailable,
   createJevConfig,
@@ -6,9 +6,23 @@ import {
 } from "../JevClient";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
 import type { RawNamedFacility } from "../single-call-navigator";
+import { TypeSafeClient } from "@typesafe-ai/sdk";
+
+vi.mock("@typesafe-ai/sdk", () => ({
+  TypeSafeClient: vi.fn(),
+  noul: vi.fn((instructions, criteria) => ({
+    type: "noul",
+    instructions,
+    criteria,
+  })),
+}));
 
 describe("JevClient", () => {
   const originalEnv = process.env.JEV_API_KEY;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   afterEach(() => {
     if (originalEnv !== undefined) {
@@ -50,7 +64,22 @@ describe("JevClient", () => {
   });
 
   describe("evaluateRetryGate", () => {
-    test("unavailable状態の場合、shouldRetry=trueを返す（Phase 1暫定実装）", async () => {
+    test("unavailable状態でJEVが高確信度でリトライ必要と判定", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          needsRetry: {
+            type: "noul",
+            noul: 0.85,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
       const facility: FacilityRecommendation<RawNamedFacility> = {
         state: "unavailable",
         reason: "改札・出口の情報が確認できませんでした",
@@ -58,10 +87,55 @@ describe("JevClient", () => {
 
       const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
       expect(result.shouldRetry).toBe(true);
-      expect(result.reason).toBe("No facility information available");
+      expect(result.reason).toContain("JEV判定");
+      expect(result.reason).toContain("0.85");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
     });
 
-    test("confirmed状態の場合、shouldRetry=falseを返す", async () => {
+    test("unavailable状態でもJEVが情報十分と判定すればリトライ不要", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          needsRetry: {
+            type: "noul",
+            noul: 0.2,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const facility: FacilityRecommendation<RawNamedFacility> = {
+        state: "unavailable",
+        reason: "改札・出口の情報が確認できませんでした",
+      };
+
+      const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
+      expect(result.shouldRetry).toBe(false);
+      expect(result.reason).toContain("JEV判定");
+      expect(result.reason).toContain("0.80");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+    });
+
+    test("confirmed状態の場合、JEVはリトライ不要と判定", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          needsRetry: {
+            type: "noul",
+            noul: 0.1,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
       const facility: FacilityRecommendation<RawNamedFacility> = {
         state: "confirmed",
         pair: {
@@ -73,10 +147,25 @@ describe("JevClient", () => {
 
       const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
       expect(result.shouldRetry).toBe(false);
-      expect(result.reason).toBe("Facility information present");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
     });
 
-    test("alternatives状態の場合、shouldRetry=falseを返す", async () => {
+    test("alternatives状態の場合、JEVはリトライ不要と判定", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          needsRetry: {
+            type: "noul",
+            noul: 0.15,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
       const facility: FacilityRecommendation<RawNamedFacility> = {
         state: "alternatives",
         pairs: [
@@ -95,7 +184,46 @@ describe("JevClient", () => {
 
       const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
       expect(result.shouldRetry).toBe(false);
-      expect(result.reason).toBe("Facility information present");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+    });
+
+    test("タイムアウト時はshouldRetry=falseでフォールバック", async () => {
+      const abortError = new Error("AbortError");
+      abortError.name = "AbortError";
+
+      const mockSystemOne = vi.fn().mockRejectedValue(abortError);
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const facility: FacilityRecommendation<RawNamedFacility> = {
+        state: "unavailable",
+        reason: "改札・出口の情報が確認できませんでした",
+      };
+
+      const result = await evaluateRetryGate(facility, { apiKey: "test_key", timeoutMs: 100 });
+      expect(result.shouldRetry).toBe(false);
+      expect(result.reason).toBe("Timeout fallback");
+    });
+
+    test("API呼び出しエラー時は例外を再スロー", async () => {
+      const mockSystemOne = vi.fn().mockRejectedValue(new Error("Network error"));
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const facility: FacilityRecommendation<RawNamedFacility> = {
+        state: "unavailable",
+        reason: "改札・出口の情報が確認できませんでした",
+      };
+
+      await expect(evaluateRetryGate(facility, { apiKey: "test_key" })).rejects.toThrow("Network error");
     });
   });
 });
