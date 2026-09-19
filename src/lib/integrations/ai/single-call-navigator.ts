@@ -7,6 +7,11 @@ import {
   isVerbatimInSearchText,
 } from "@/lib/domain/facility-recommendation";
 import { searchAndGenerateStructuredContentWithSearchText } from "@/lib/integrations/ai/GeminiClient";
+import {
+  isJevAvailable,
+  createJevConfig,
+  evaluateRetryGate,
+} from "@/lib/integrations/ai/JevClient";
 
 /**
  * 経路生成(ai-route-generation.ts)・改札/出口検索(destination-exit-search-
@@ -402,8 +407,30 @@ async function attemptGenerateSingleCallNavigatorGuide(
  * 一定確率(3回中1回)で発生することを確認したため、丸ごとnullの場合と
  * 同様に再試行の対象にする。alternatives(複数候補)は「情報が出せた」状態
  * として扱い、再試行の対象にしない。
+ * 
+ * Phase 1 JEV統合: JEV_API_KEYが設定されている場合、JEVによる意味的判定を
+ * 使用してretry判定を改善する（機械的な件数ルールから意味理解ベースへ移行）。
+ * JEV未設定時は従来の挙動（unavailableならretry）を維持。
  */
-function isFacilityUnavailable(guide: SingleCallNavigatorGuide): boolean {
+async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
+  // JEVが利用可能な場合は意味的判定を使用
+  if (isJevAvailable()) {
+    const jevConfig = createJevConfig();
+    if (jevConfig) {
+      try {
+        const decision = await evaluateRetryGate(guide.facility, jevConfig);
+        if (decision.reason) {
+          console.log(`[single-call-navigator] JEV retry decision: ${decision.shouldRetry} (${decision.reason})`);
+        }
+        return decision.shouldRetry;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV evaluation failed, falling back to rule-based:", message);
+      }
+    }
+  }
+  
+  // フォールバック: 従来の件数ベース判定
   return guide.facility.state === "unavailable";
 }
 
@@ -442,7 +469,7 @@ export async function generateSingleCallNavigatorGuide(
       destinationHint,
       destinationPlaceCoordinates
     );
-    if (result !== null && !isFacilityUnavailable(result)) return result;
+    if (result !== null && !(await isFacilityUnavailable(result))) return result;
 
     if (attempt < MAX_ATTEMPTS) {
       const reason =
