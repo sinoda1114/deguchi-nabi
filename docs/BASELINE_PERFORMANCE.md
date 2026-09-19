@@ -113,10 +113,11 @@ The harness reports:
 3. Update this document with actual BEFORE numbers
 
 **For AFTER (JEV) Measurement**:
-- Will require `TYPESAFE_API_KEY` (available on Grok Bot box)
+- Will require `JEV_API_KEY` (canonical name, available on Grok Bot box)
 - Cloud VMs do NOT auto-inherit box secrets
-- Run AFTER measurement from environment with `TYPESAFE_API_KEY` configured
+- Run AFTER measurement from environment with `JEV_API_KEY` configured
 - Or configure Cloud Agents environment variable before AFTER run
+- Note: App code reads `process.env.JEV_API_KEY` (not TYPESAFE_API_KEY)
 
 ### Expected Baseline (from code analysis)
 

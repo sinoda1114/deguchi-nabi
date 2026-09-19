@@ -39,14 +39,15 @@ export GEMINI_API_KEY=your_gemini_api_key_here
 **For AFTER (JEV integration) measurement**:
 ```bash
 export GEMINI_API_KEY=your_gemini_api_key_here
-export TYPESAFE_API_KEY=your_typesafe_api_key_here
+export JEV_API_KEY=your_jev_api_key_here
 ```
 
-**Note on TYPESAFE_API_KEY**: 
+**Note on JEV_API_KEY** (canonical name for TypeSafe System One):
 - Available on Grok Bot box (user environment)
 - Cloud Project VMs do NOT auto-inherit box secrets
-- For AFTER measurements on cloud agents, configure environment with TYPESAFE_API_KEY
+- For AFTER measurements on cloud agents, configure Cloud Agents Environment with JEV_API_KEY
 - Or run from local environment where key is available
+- App code reads `process.env.JEV_API_KEY` (not TYPESAFE_API_KEY)
 
 See `.env.example` for details on obtaining Gemini key.
 
