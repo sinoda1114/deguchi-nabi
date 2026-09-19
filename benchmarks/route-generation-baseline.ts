@@ -24,26 +24,38 @@ const BENCHMARK_CONFIG = {
   // Number of runs to execute (N)
   runs: 10,
   
-  // Fixture test case: 西谷駅 (Nishitani) → 渋谷駅 (Shibuya)
-  // User-specified benchmark route. This exercises:
-  // - Route generation (AI search + extract)
-  // - Unified generation (gate/exit/boarding via single-call-navigator)
-  // 
-  // Note: User mentioned 「うえちゃべ」 (possible exit/landmark or STT error).
-  // Meaning not yet confirmed. If product UI has exit/poi field, this may be relevant.
-  // Current fixture uses station-to-station without additional exit specification.
+  // Fixture test case: 西谷駅 (Nishitani) → 居酒屋ウエチャベ (Uetyabe izakaya in Shibuya)
+  // User-specified benchmark route (confirmed 2026-09-19):
+  // - Origin: 西谷駅
+  // - Destination POI: しゃぶしゃぶ×居酒屋 ウエチャベ
+  // - Address: 東京都渋谷区道玄坂2-9-2 正実ビル3階
+  // - Location: 渋谷駅ハチ公口徒歩約2〜6分 / 井の頭線西口徒歩約1分
+  // - Official: https://uetyabe.owst.jp/
+  //
+  // This exercises the FULL slow path:
+  // - Route generation (AI search + extract to Shibuya area)
+  // - Unified generation (gate/exit selection based on POI coordinates)
+  // - Exit-to-POI optimization (destination-aware facility selection)
+  //
+  // NOTE: If using place destination, need valid Google Place ID for Uetyabe.
+  // Current config uses station-to-station as fallback. To use POI destination:
+  // 1. Search Google Places API for "ウエチャベ 渋谷" or use address
+  // 2. Get placeId (format: ChIJ...)
+  // 3. Update fixture below with { type: "place", placeId: "ChIJ..." }
   fixture: {
     origin: {
       type: "station" as const,
       stationId: "nishiya", // 西谷駅
     },
     destination: {
+      // TODO: Update to place destination once Google Place ID is obtained
+      // { type: "place", placeId: "ChIJ_UETYABE_PLACE_ID_HERE" }
       type: "station" as const,
-      stationId: "shibuya", // 渋谷駅
+      stationId: "shibuya", // 渋谷駅 (fallback until Place ID available)
     },
     mode: "easy" as RouteMode,
     originLabel: "西谷駅",
-    destinationLabel: "渋谷駅",
+    destinationLabel: "渋谷 居酒屋ウエチャベ", // Full POI name for clarity
   },
   
   // Alternative fixture with place destination (exercises destinationCoordinates path)
