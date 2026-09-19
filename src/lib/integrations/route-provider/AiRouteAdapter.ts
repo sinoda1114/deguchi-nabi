@@ -3,8 +3,8 @@ import type { Coordinates } from "@/lib/domain/station";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import {
   buildSharedGuideCacheKey,
-  generateSingleCallNavigatorGuide,
-  getSharedSingleCallNavigatorGuide,
+  generateSingleCallNavigatorRun,
+  getSharedSingleCallNavigatorRun,
 } from "@/lib/integrations/ai/single-call-navigator";
 
 /**
@@ -48,15 +48,17 @@ export class AiRouteAdapter implements RouteProviderPort {
       destinationHint,
       destinationPlaceCoordinates
     );
-    const guide = await getSharedSingleCallNavigatorGuide(cacheKey, () =>
-      generateSingleCallNavigatorGuide(
+    // 二段階生成: first（最初の非null結果）を使用してヘッダ表示を高速化（体感≈56秒）
+    // AiStationAdapterは同じrunのfinalを待つため、Gemini呼び出しは1回のまま
+    const guide = await getSharedSingleCallNavigatorRun(cacheKey, () =>
+      generateSingleCallNavigatorRun(
         this.geminiApiKey,
         originStation,
         destinationStation,
         destinationHint,
         destinationPlaceCoordinates
       )
-    );
+    ).first;
     if (!guide) return [];
 
     return [

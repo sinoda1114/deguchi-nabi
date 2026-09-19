@@ -4,8 +4,8 @@ import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import {
   buildSharedGuideCacheKey,
-  generateSingleCallNavigatorGuide,
-  getSharedSingleCallNavigatorGuide,
+  generateSingleCallNavigatorRun,
+  getSharedSingleCallNavigatorRun,
 } from "@/lib/integrations/ai/single-call-navigator";
 import { groundedAiConfidence, resolveFacilityRecommendationConfidence } from "./ai-generation";
 import {
@@ -272,15 +272,17 @@ export class AiStationAdapter implements StationProviderPort {
       destinationHint,
       destinationPlaceCoordinates
     );
-    const guide = await getSharedSingleCallNavigatorGuide(cacheKey, () =>
-      generateSingleCallNavigatorGuide(
+    // 二段階生成: final（再試行・整合性チェック後）を使用して改札・出口の品質を維持
+    // AiRouteAdapterは同じrunのfirstを待つため、Gemini呼び出しは1回のまま（完了≈72秒または105秒）
+    const guide = await getSharedSingleCallNavigatorRun(cacheKey, () =>
+      generateSingleCallNavigatorRun(
         this.geminiApiKey,
         originStationForGuide,
         destinationStationForGuide,
         destinationHint,
         destinationPlaceCoordinates
       )
-    );
+    ).final;
     if (!guide) return null;
 
     return {
