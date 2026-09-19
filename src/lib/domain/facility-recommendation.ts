@@ -89,11 +89,16 @@ function dedupePairs<F extends { name: string }>(pairs: FacilityPair<F>[]): Faci
  * pair配列から3状態を判定する。gate・exitともにnullのpair(抽出時に
  * 逐語一致検証で両方棄却された等)は無効として除外し、さらに完全一致する
  * 重複pairを除いてから件数判定する(dedupePairs参照)。
+ * 
+ * 新成功基準（gate AND exit 必須）対応: alternatives判定時も各pairが
+ * gate AND exitの両方を持つことを要求する。gate-only または exit-only の
+ * pairは不完全として除外する。
  */
 export function classifyFacilityRecommendation<F extends { name: string }>(
   pairs: FacilityPair<F>[]
 ): FacilityRecommendation<F> {
-  const validPairs = dedupePairs(pairs.filter((pair) => pair.gate !== null || pair.exit !== null));
+  // 新成功基準: gate AND exit の両方が存在するpairのみを有効とする
+  const validPairs = dedupePairs(pairs.filter((pair) => pair.gate !== null && pair.exit !== null));
 
   if (validPairs.length === 0) {
     return { state: "unavailable", reason: "改札・出口の情報が確認できませんでした" };

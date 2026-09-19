@@ -606,7 +606,12 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
   // approximate: gate + 方角は成功として扱う（retry不要）
   // 方角フォールバックは gate が存在する場合のみ適用されることを保証済み
   if (guide.facility.state === "approximate") {
-    console.log(`[single-call-navigator] Approximate facility (gate=${guide.facility.pair.gate!.name}, direction=${guide.facility.directionHint}), no retry needed`);
+    // 防御的チェック: gate=null の場合は設計違反（retry で改善を試みる）
+    if (guide.facility.pair.gate === null) {
+      console.error("[single-call-navigator] BUG: approximate state with null gate detected, will retry");
+      return true;
+    }
+    console.log(`[single-call-navigator] Approximate facility (gate=${guide.facility.pair.gate.name}, direction=${guide.facility.directionHint}), no retry needed`);
     return false;
   }
   
