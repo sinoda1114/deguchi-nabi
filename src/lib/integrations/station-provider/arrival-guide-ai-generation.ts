@@ -122,8 +122,8 @@ confidenceは、あなた自身がその情報にどれだけ自信があるか�
     extractionInstruction,
     NARRATIVE_SCHEMA,
     "arrival-guide-narrative-steps",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash"
+    "gemini-3.8-flash",
+    "gemini-3.8-flash"
   );
 
   if (result === null || typeof result !== 'object' || !Array.isArray(result.steps)) {
