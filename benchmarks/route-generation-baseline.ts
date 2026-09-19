@@ -92,10 +92,22 @@ interface BenchmarkSummary {
 }
 
 function calculateStats(timings: number[]): Omit<BenchmarkSummary, "totalRuns" | "successfulRuns" | "failedRuns" | "timings"> {
+  // Guard against empty array
+  if (timings.length === 0) {
+    return { mean: 0, p50: 0, p95: 0, min: 0, max: 0, range: 0 };
+  }
+  
   const sorted = [...timings].sort((a, b) => a - b);
   const mean = timings.reduce((a, b) => a + b, 0) / timings.length;
-  const p50 = sorted[Math.floor(sorted.length * 0.5)];
-  const p95 = sorted[Math.floor(sorted.length * 0.95)];
+  
+  // Proper percentile calculation using nearest rank method
+  // For P50 (median): position = 0.5 * (N + 1)
+  // For P95: position = 0.95 * (N + 1)
+  const p50Index = Math.ceil(0.5 * timings.length) - 1;
+  const p95Index = Math.ceil(0.95 * timings.length) - 1;
+  
+  const p50 = sorted[Math.max(0, Math.min(p50Index, sorted.length - 1))];
+  const p95 = sorted[Math.max(0, Math.min(p95Index, sorted.length - 1))];
   const min = sorted[0];
   const max = sorted[sorted.length - 1];
   const range = max - min;
@@ -165,9 +177,7 @@ async function runBenchmark(): Promise<BenchmarkSummary> {
   }
   
   const successfulTimings = results.filter(r => r.success).map(r => r.durationMs);
-  const stats = successfulTimings.length > 0 ? calculateStats(successfulTimings) : {
-    mean: 0, p50: 0, p95: 0, min: 0, max: 0, range: 0
-  };
+  const stats = calculateStats(successfulTimings); // Now handles empty array internally
   
   return {
     totalRuns: results.length,
