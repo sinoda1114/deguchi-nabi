@@ -1,8 +1,11 @@
 # JEV (TypeSafe System One) 統合計画書
 
 **日付**: 2026-09-19  
-**ステータス**: 改訂版（ユーザー実装フォーカス反映済み）  
-**目的**: deguchi-nabi の実測ボトルネック（single-call-navigator）への JEV 統合
+**ステータス**: 改訂版（実測値反映済み）  
+**目的**: deguchi-nabi の実測ボトルネック（single-call-navigator）への JEV 統合  
+**測定フィクスチャ**: 西谷 → 居酒屋ウエチャベ (道玄坂2-9-2, 渋谷)
+
+**NOTE**: gemini-3.8-flash (60秒) は PR #118 preview で測定。production merge 後に再測定予定。
 
 ---
 
@@ -12,7 +15,10 @@
 
 **ファイル**: `src/lib/integrations/ai/single-call-navigator.ts`  
 **関数**: `generateSingleCallNavigatorGuide()` (line 428)  
-**実測パフォーマンス**: 38-75秒（平均 55.6秒、コメント記載）  
+**実測パフォーマンス** (2026-09-19 JST):
+- gemini-3.6-flash (production): **~107秒** (西谷→ウエチャベ、成功)
+- gemini-3.8-flash (preview): **~60秒** (同フィクスチャ、成功)
+- Code analysis estimate: 38-75秒（平均 55.6秒）← 3.8で実現
 **アーキテクチャ**: Gemini Search Grounding 1回（検索＋抽出）、リトライ最大2回
 
 ### JEVの正しい適用範囲
@@ -27,13 +33,19 @@
 3. **Confidence Thresholding** — "low"をフォールバックすべきか判定
 4. **Mode Routing Gate** — accessibleモード時の追加検証スキップ判定
 
-### 期待効果（保守的）
+### 期待効果（保守的、3.8-flash基準）
 
-- **Phase 1（リトライゲート）**: リトライ率30% → 10%削減で平均 **3-5秒短縮**（9%）
+**Three-Point Comparison**:
+1. ✅ **BEFORE (1)**: gemini-3.6-flash = **107秒** (production, 2026-09-19測定)
+2. ✅ **BEFORE (2)**: gemini-3.8-flash = **60秒** (preview PR #118, 2026-09-19測定) ← 44%改善
+3. ⏳ **AFTER**: gemini-3.8-flash + JEV = **<50秒目標**
+
+**JEV Phase別の追加効果** (3.8-flash 60秒を基準):
+- **Phase 1（リトライゲート）**: リトライ率30% → 10%削減で **3-5秒短縮** → ~55秒
 - **Phase 2（3状態判定）**: 精度向上による「確認できません」率削減（速度向上なし、UX改善）
-- **Phase 3（並行判定）**: Mode routing等の並行実行で追加 **2-3秒短縮**
+- **Phase 3（並行判定）**: Mode routing等の並行実行で追加 **2-3秒短縮** → ~52秒
 
-**合計**: 5-8秒短縮（現状55.6秒 → 47-50秒、約10-15%改善）
+**合計見積もり**: 107秒 (3.6) → 60秒 (3.8, -44%) → <50秒 (3.8+JEV, 追加-17%)
 
 ---
 
