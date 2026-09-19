@@ -141,7 +141,26 @@ export async function buildArrivalGuide(
     (name) => `${name}から地上へ出てください。`,
     "利用できる出口"
   );
-  if (exitStep) steps.push(exitStep);
+  if (exitStep) {
+    steps.push(exitStep);
+  } else if (result.facilityRecommendation.state === "approximate") {
+    // approximate状態でexitがnullの場合、directionHintを使った方角案内を生成
+    const directionHint = result.facilityRecommendation.directionHint;
+    steps.push({
+      type: "street_exit",
+      title: `${directionHint}側の出口`,
+      instruction: `${directionHint}側の出口から地上へ出てください。`,
+      landmarks: [],
+      confidence: {
+        level: "low",
+        reasons: ["方角のみの案内（出口名は確認できませんでした）"],
+        verifiedAt: null,
+        expiresAt: null,
+        sourceCount: 0,
+      },
+      provenance: "ai_inferred",
+    });
+  }
 
   if (unifiedWalkingSteps !== null) {
     steps.push(...unifiedWalkingSteps);

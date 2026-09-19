@@ -126,7 +126,7 @@ function dedupeByName<F extends { name: string }>(facilities: F[]): F[] {
 
 /**
  * 3状態から、実際に案内可能な施設(NamedFacility等)の配列を取り出す共有処理。
- * confirmedなら0〜1件、alternativesなら2〜3件、unavailableなら0件になる。
+ * confirmedなら0〜1件、approximateなら0〜1件、alternativesなら2〜3件、unavailableなら0件になる。
  * route-search.ts(セグメント・サマリー組み立て)・arrival-guide.ts(GuideStep
  * 組み立て)の両方から、gate/exitそれぞれに対して同じロジックで使う。
  *
@@ -139,7 +139,7 @@ export function facilityCandidatesOf<F extends { name: string }>(
   recommendation: FacilityRecommendation<F>,
   pick: (pair: FacilityPair<F>) => F | null
 ): F[] {
-  if (recommendation.state === "confirmed") {
+  if (recommendation.state === "confirmed" || recommendation.state === "approximate") {
     const facility = pick(recommendation.pair);
     return facility ? [facility] : [];
   }
