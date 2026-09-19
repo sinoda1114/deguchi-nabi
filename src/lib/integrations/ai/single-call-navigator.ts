@@ -31,7 +31,8 @@ import { searchAndGenerateStructuredContentWithSearchText } from "@/lib/integrat
 // 2026-07-22、gemini-3.5-flashから移行(ユーザー判断)。実機検証(西谷駅→
 // kawara CAFE&DINING横浜店、facilityCandidates新スキーマ含め計19回)で
 // 速度・コストが優位、gate/exit抽出成功率も3.5-flash比で悪化なしを確認した。
-const MODEL = "gemini-3.6-flash";
+// 2026-09-19、gemini-3.8-flashへバンプ(最新安定版Flash)。
+const MODEL = "gemini-3.8-flash";
 const MAX_LINE_NAME_LENGTH = 100;
 const MAX_TRANSFER_COUNT = 10;
 const MAX_DURATION_MINUTES = 600;

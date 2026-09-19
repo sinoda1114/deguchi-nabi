@@ -46,7 +46,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
+      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.8-flash");
 
       expect(result).toEqual({ ok: true });
       expect(createGoogleMock).toHaveBeenCalledWith({ apiKey: "key" });
@@ -61,7 +61,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: {} });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
+      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.8-flash");
 
       expect(timeoutSpy).toHaveBeenCalledTimes(1);
       expect(timeoutSpy.mock.calls[0][0]).toBeLessThanOrEqual(15000);
@@ -71,7 +71,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("timeout"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
+      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.8-flash");
 
       expect(result).toBeNull();
     });
@@ -80,7 +80,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("NoObjectGeneratedError"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
+      const result = await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.8-flash");
 
       expect(result).toBeNull();
     });
@@ -89,7 +89,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", {}, "gemini-3.5-flash");
+      const result = await generateStructuredContent("key", "prompt", {}, "gemini-3.8-flash");
 
       expect(result).toBeNull();
       expect(generateObjectMock).not.toHaveBeenCalled();
@@ -99,7 +99,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      const result = await generateStructuredContent("key", "prompt", [] as unknown as object, "gemini-3.5-flash");
+      const result = await generateStructuredContent("key", "prompt", [] as unknown as object, "gemini-3.8-flash");
 
       expect(result).toBeNull();
       expect(generateObjectMock).not.toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockResolvedValue({ object: { ok: true } });
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
+      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.8-flash");
 
       expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
@@ -118,7 +118,7 @@ describe("GeminiAiSdkClient", () => {
       generateObjectMock.mockRejectedValue(new Error("timeout"));
 
       const { generateStructuredContent } = await import("../GeminiAiSdkClient");
-      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.5-flash");
+      await generateStructuredContent("key", "prompt", { type: "object" }, "gemini-3.8-flash");
 
       expect(scheduleLangfuseFlushMock).toHaveBeenCalledTimes(1);
     });
@@ -146,7 +146,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         { type: "object" },
         "test-caller",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 
@@ -177,7 +177,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         { type: "object" },
         "test-caller",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 
@@ -197,7 +197,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         {},
         "test-caller",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 
@@ -215,7 +215,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         {},
         "test-caller",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 
@@ -238,7 +238,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         { type: "object" },
         "test-caller",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 
@@ -255,7 +255,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         {},
         "test-caller",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 
@@ -278,11 +278,11 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         { type: "object" },
         "unified-arrival-guide",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 
-      expect(generateTextMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-3.5-flash" });
+      expect(generateTextMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-3.8-flash" });
       expect(generateObjectMock.mock.calls[0][0].model).toEqual({ modelId: "gemini-3.1-flash-lite" });
     });
 
@@ -303,7 +303,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         { type: "object" },
         "unified-arrival-guide",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite",
         90_000
       );
@@ -328,7 +328,7 @@ describe("GeminiAiSdkClient", () => {
         "extract",
         { type: "object" },
         "test-caller",
-        "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-3.1-flash-lite"
       );
 

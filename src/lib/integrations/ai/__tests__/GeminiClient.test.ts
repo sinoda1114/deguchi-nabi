@@ -29,7 +29,7 @@ describe("callGemini のタイムアウト設定", () => {
       jsonResponse({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] })
     ) as unknown as typeof fetch;
 
-    await generateStructuredContent("key", "prompt", {}, "gemini-3.5-flash");
+    await generateStructuredContent("key", "prompt", {}, "gemini-3.8-flash");
 
     expect(timeoutSpy).toHaveBeenCalledTimes(1);
     expect(timeoutSpy.mock.calls[0][0]).toBeLessThanOrEqual(15000);
@@ -63,7 +63,7 @@ describe("callGemini のタイムアウト設定", () => {
       "search prompt",
       "extract",
       {},
-      "gemini-3.5-flash"
+      "gemini-3.8-flash"
     );
 
     // 戻り値そのものを検証することで、タイムアウト値だけでなく一連の処理が
@@ -102,7 +102,7 @@ describe("callGemini のタイムアウト設定", () => {
       "extract",
       {},
       { data: "base64imagedata", mimeType: "image/png" },
-      "gemini-3.5-flash"
+      "gemini-3.8-flash"
     );
 
     expect(result).toEqual({ facilities: [] });
@@ -133,7 +133,7 @@ describe("callGemini のタイムアウト設定", () => {
       "extract",
       {},
       { data: "base64imagedata", mimeType: "image/png" },
-      "gemini-3.5-flash"
+      "gemini-3.8-flash"
     );
 
     const firstCallBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
@@ -154,7 +154,7 @@ describe("callGemini のタイムアウト設定", () => {
       "extract",
       {},
       { data: "base64imagedata", mimeType: "image/png" },
-      "gemini-3.5-flash"
+      "gemini-3.8-flash"
     );
 
     expect(result).toBeNull();
@@ -194,7 +194,7 @@ describe("searchAndGenerateStructuredContentWithSearchText", () => {
       "search prompt",
       "extract",
       {},
-      "gemini-3.5-flash"
+      "gemini-3.8-flash"
     );
 
     expect(result).toEqual({
@@ -213,7 +213,7 @@ describe("searchAndGenerateStructuredContentWithSearchText", () => {
       "search prompt",
       "extract",
       {},
-      "gemini-3.5-flash"
+      "gemini-3.8-flash"
     );
 
     expect(result).toBeNull();
@@ -242,7 +242,7 @@ describe("searchAndGenerateStructuredContentWithSearchText", () => {
       "search prompt",
       "extract",
       {},
-      "gemini-3.5-flash"
+      "gemini-3.8-flash"
     );
 
     expect(result).toBeNull();

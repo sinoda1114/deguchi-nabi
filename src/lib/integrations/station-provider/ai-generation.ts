@@ -240,7 +240,7 @@ export async function generateStationFacilities(
     searchPrompt,
     extractionInstruction,
     FACILITIES_SCHEMA,
-    "gemini-3.5-flash"
+    "gemini-3.8-flash"
   );
 
   if (!Array.isArray(result?.facilities)) return [];
@@ -338,7 +338,7 @@ ${platformHint}
     searchPrompt,
     extractionInstruction,
     BOARDING_SCHEMA,
-    "gemini-3.5-flash"
+    "gemini-3.8-flash"
   );
 
   if (!isValidBoardingPosition(result)) return null;
