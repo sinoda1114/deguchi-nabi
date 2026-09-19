@@ -103,14 +103,20 @@ The harness reports:
 
 ### Status: BLOCKED ON ENVIRONMENT
 
-**Required Environment Variable**: `GEMINI_API_KEY`
+**Required for BEFORE (baseline)**: `GEMINI_API_KEY`
 
-**Current Status**: Not set in CI/build environment
+**Current Status**: Not set in cloud VM environment
 
-**To Unblock**:
+**To Unblock BEFORE Measurement**:
 1. Set `GEMINI_API_KEY` in your environment
 2. Run `npm run benchmark`
-3. Update this document with actual measurements
+3. Update this document with actual BEFORE numbers
+
+**For AFTER (JEV) Measurement**:
+- Will require `TYPESAFE_API_KEY` (available on Grok Bot box)
+- Cloud VMs do NOT auto-inherit box secrets
+- Run AFTER measurement from environment with `TYPESAFE_API_KEY` configured
+- Or configure Cloud Agents environment variable before AFTER run
 
 ### Expected Baseline (from code analysis)
 

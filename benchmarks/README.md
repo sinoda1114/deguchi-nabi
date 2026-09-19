@@ -31,12 +31,24 @@ This exercises both:
 
 #### Prerequisites
 
-Required environment variable:
+**For BEFORE (baseline) measurement**:
 ```bash
 export GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-See `.env.example` for details on obtaining this key.
+**For AFTER (JEV integration) measurement**:
+```bash
+export GEMINI_API_KEY=your_gemini_api_key_here
+export TYPESAFE_API_KEY=your_typesafe_api_key_here
+```
+
+**Note on TYPESAFE_API_KEY**: 
+- Available on Grok Bot box (user environment)
+- Cloud Project VMs do NOT auto-inherit box secrets
+- For AFTER measurements on cloud agents, configure environment with TYPESAFE_API_KEY
+- Or run from local environment where key is available
+
+See `.env.example` for details on obtaining Gemini key.
 
 #### Execute
 
