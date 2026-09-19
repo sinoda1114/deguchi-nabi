@@ -221,9 +221,9 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   result = await attemptGenerateSingleCallNavigatorGuide(/* ... */);
   
   // JEV統合（フィーチャーフラグ制御）
-  if (process.env.JEV_RETRY_GATE === "1" && process.env.TYPESAFE_API_KEY) {
+  if (process.env.JEV_RETRY_GATE === "1" && process.env.JEV_API_KEY) {
     const assessment = await assessRetrySufficiency(
-      process.env.TYPESAFE_API_KEY,
+      process.env.JEV_API_KEY,
       result,
       originStation.stationName,
       destinationStation.stationName
@@ -369,9 +369,9 @@ ${pairDescriptions}
   let facility: RawFacilityRecommendation;
 
   // Phase 2: JEVで意味的重複を評価
-  if (process.env.JEV_FACILITY_CLASSIFIER === "1" && process.env.TYPESAFE_API_KEY) {
+  if (process.env.JEV_FACILITY_CLASSIFIER === "1" && process.env.JEV_API_KEY) {
     const semanticAnalysis = await assessSemanticDuplicates(
-      process.env.TYPESAFE_API_KEY,
+      process.env.JEV_API_KEY,
       rawPairs,
       destinationStation.stationName
     );
@@ -609,7 +609,7 @@ if (process.env.JEV_SKIP_REDUNDANT_BOARDING === "1" && facilitiesOutcome.ok) {
 GEMINI_API_KEY=xxx npm run benchmark -- --output baseline_before.json
 
 # AFTER (Phase 1, JEV enabled)
-GEMINI_API_KEY=xxx TYPESAFE_API_KEY=yyy JEV_RETRY_GATE=1 \
+GEMINI_API_KEY=xxx JEV_API_KEY=yyy JEV_RETRY_GATE=1 \
   npm run benchmark -- --output baseline_phase1.json
 
 # 差分計算
@@ -685,7 +685,64 @@ async function callJevWithFallback<T>(
 
 ## 6. 未解決の質問（実装前に確認必須）
 
-### 6.1 JEV API仕様
+### 6.1 環境変数セットアップ（重要）
+
+#### 正規の環境変数名: `JEV_API_KEY`
+
+**ユーザー決定**: アプリコード・ドキュメントでは `JEV_API_KEY` を正規名として使用。  
+**理由**: `TYPESAFE_API_KEY` はSDK内部名であり、ユーザー向けインターフェースとしては不適切。
+
+#### 現在のキー配置状況
+
+| 環境 | JEV_API_KEY | ステータス |
+|------|-------------|----------|
+| **Grok Bot box** | ✅ 設定済み | 利用可能 |
+| **Cursor Cloud Agents VM** | ❌ 未設定 | **手動追加が必要** |
+| **Vercel (本番/Preview)** | ❌ 未設定 | **デプロイ前に追加必須** |
+
+#### 影響と対応
+
+- **計画書作成・レビュー**: JEV_API_KEY不要（Grok Bot boxで作業）
+- **実装・テスト**: Cloud Agents VMに `JEV_API_KEY` を手動追加する必要あり
+  - 追加方法: Cursor Dashboard > Cloud Agents > Secrets
+  - スコープ: リポジトリ単位（`sinoda1114/deguchi-nabi`）
+- **本番デプロイ**: Vercel環境変数に `JEV_API_KEY` を追加
+  - Vercel Dashboard > deguchi-nabi > Settings > Environment Variables
+  - Production / Preview / Development すべてに設定
+
+#### コード実装パターン
+
+```typescript
+// ✅ 正しい: JEV_API_KEY を読み取る
+if (process.env.JEV_API_KEY) {
+  const client = new TypeSafeClient({ 
+    apiKey: process.env.JEV_API_KEY  // SDK内部でどう扱うかは問わない
+  });
+}
+
+// ❌ 誤り: TYPESAFE_API_KEY（内部名を外部に露出）
+if (process.env.TYPESAFE_API_KEY) {
+  // ...
+}
+```
+
+#### ベンチマーク実行時の環境変数
+
+```bash
+# BEFORE (Gemini only, baseline)
+export GEMINI_API_KEY=your_gemini_key_here
+npm run benchmark
+
+# AFTER (JEV enabled, Phase 1)
+export GEMINI_API_KEY=your_gemini_key_here
+export JEV_API_KEY=your_jev_key_here  # ← 正規名
+export JEV_RETRY_GATE=1
+npm run benchmark
+```
+
+---
+
+### 6.2 JEV API仕様
 
 - [ ] **エンドポイント**: REST API URL（または SDK import path）
 - [ ] **認証方式**: API key? Bearer token? OAuth?
@@ -693,14 +750,14 @@ async function callJevWithFallback<T>(
 - [ ] **レート制限**: リクエスト/分? コスト上限設定可能?
 - [ ] **タイムアウト**: デフォルト値? カスタマイズ可能?
 
-### 6.2 フィクスチャの確認
+### 6.3 フィクスチャの確認
 
 **「居酒屋ウエチャベ」の Google Place ID**:
 - ユーザー指定: 道玄坂2-9-2 正実ビル3階
 - Google Places API で検索して Place ID取得が必要
 - または住所→座標変換（緯度経度）で代替可能
 
-### 6.3 投資判断の閾値
+### 6.4 投資判断の閾値
 
 **Phase 1実装後の判断基準**:
 - リトライ率削減が10%未満 → Phase 2スキップ
@@ -774,8 +831,9 @@ async function callJevWithFallback<T>(
 
 ## 9. 実装着手の前提条件（チェックリスト）
 
-以下3点が確認できるまで、Phase 1実装は**着手しない**:
+以下4点が確認できるまで、Phase 1実装は**着手しない**:
 
+- [ ] **環境変数セットアップ**: `JEV_API_KEY` をCursor Cloud Agents環境に追加（Cursor Dashboard > Cloud Agents > Secrets）
 - [ ] **JEV API仕様の確認**: エンドポイント、認証、料金体系の文書化
 - [ ] **ベンチマーク実測**: 現状の平均レイテンシが実測で60秒以上（改善余地の証明）
 - [ ] **コストシミュレーション**: 1000リクエストでJEV課金を実測し、Gemini単独の120%未満を確認
