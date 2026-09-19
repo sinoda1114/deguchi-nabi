@@ -23,7 +23,7 @@ describe("GET /api/health/jev", () => {
 
   it("JEV_API_KEYが未設定の場合は503を返す", async () => {
     const { checkJevHealth } = await import("@/lib/integrations/jev/JevClient");
-    vi.mocked(checkJevHealth).mockResolvedValue({ ok: false, error: "missing_key" });
+    vi.mocked(checkJevHealth).mockResolvedValue({ ok: false, reason: "missing_key" });
 
     const response = await GET();
     const data = await response.json();
@@ -34,7 +34,7 @@ describe("GET /api/health/jev", () => {
 
   it("上流エラーの場合は502を返す", async () => {
     const { checkJevHealth } = await import("@/lib/integrations/jev/JevClient");
-    vi.mocked(checkJevHealth).mockResolvedValue({ ok: false, error: "upstream_error" });
+    vi.mocked(checkJevHealth).mockResolvedValue({ ok: false, reason: "upstream_error" });
 
     const response = await GET();
     const data = await response.json();
@@ -45,7 +45,7 @@ describe("GET /api/health/jev", () => {
 
   it("タイムアウトの場合は502を返す", async () => {
     const { checkJevHealth } = await import("@/lib/integrations/jev/JevClient");
-    vi.mocked(checkJevHealth).mockResolvedValue({ ok: false, error: "timeout" });
+    vi.mocked(checkJevHealth).mockResolvedValue({ ok: false, reason: "timeout" });
 
     const response = await GET();
     const data = await response.json();
