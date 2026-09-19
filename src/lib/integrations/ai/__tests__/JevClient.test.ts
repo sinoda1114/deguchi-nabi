@@ -187,7 +187,7 @@ describe("JevClient", () => {
       expect(mockSystemOne).toHaveBeenCalledTimes(1);
     });
 
-    test("タイムアウト時はshouldRetry=falseでフォールバック", async () => {
+    test("タイムアウト時は例外を再スロー（呼び出し側でルールベース判定へフォールバック）", async () => {
       const abortError = new Error("AbortError");
       abortError.name = "AbortError";
 
@@ -204,12 +204,10 @@ describe("JevClient", () => {
         reason: "改札・出口の情報が確認できませんでした",
       };
 
-      const result = await evaluateRetryGate(facility, { apiKey: "test_key", timeoutMs: 100 });
-      expect(result.shouldRetry).toBe(false);
-      expect(result.reason).toContain("JEV error fallback");
+      await expect(evaluateRetryGate(facility, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow("AbortError");
     });
 
-    test("API呼び出しエラー時はshouldRetry=falseでフォールバック（fail-open）", async () => {
+    test("API呼び出しエラー時は例外を再スロー（呼び出し側でルールベース判定へフォールバック）", async () => {
       const mockSystemOne = vi.fn().mockRejectedValue(new Error("Network error"));
 
       vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
@@ -223,9 +221,7 @@ describe("JevClient", () => {
         reason: "改札・出口の情報が確認できませんでした",
       };
 
-      const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(false);
-      expect(result.reason).toContain("JEV error fallback");
+      await expect(evaluateRetryGate(facility, { apiKey: "test_key" })).rejects.toThrow("Network error");
     });
   });
 });

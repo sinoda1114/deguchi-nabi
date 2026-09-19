@@ -59,7 +59,8 @@ export async function evaluateRetryGate(
 ): Promise<JevRetryGateDecision> {
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   try {
     // Promise.raceでより堅牢なタイムアウトを実装
@@ -100,7 +101,7 @@ export async function evaluateRetryGate(
     })();
 
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      raceTimeoutId = setTimeout(() => {
         const error = new Error("JEV API call timed out");
         error.name = "JevTimeoutError";
         reject(error);
@@ -120,13 +121,18 @@ export async function evaluateRetryGate(
     };
   } catch (error) {
     // Fail-open: 任意のエラー（タイムアウト、ネットワークエラー、SDKエラー等）で
-    // 検索全体を失敗させず、フォールバック（retry不要と見なす）
+    // 検索全体を失敗させず、呼び出し側（isFacilityUnavailable）の
+    // 従来ルールベース判定へフォールバックさせる
     const errorName = error instanceof Error ? error.name : "UnknownError";
     const errorMsg = safeErrorMessage(error);
-    console.warn(`[JevClient] Retry gate evaluation failed (${errorName}): ${errorMsg}, falling back to shouldRetry=false`);
-    return { shouldRetry: false, reason: `JEV error fallback (${errorName})` };
+    console.warn(`[JevClient] Retry gate evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`);
+    // 例外を再スローして、isFacilityUnavailableのcatchで従来判定（facility.state === "unavailable"）へ戻す
+    throw error;
   } finally {
-    clearTimeout(timeoutId);
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
   }
 }
 
