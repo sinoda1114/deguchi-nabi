@@ -33,8 +33,8 @@ export async function checkJevHealth(): Promise<JevHealthCheckResult> {
       state: { healthCheck: true },
       questions: {
         alive: noul("Is the system operational?", {
-          yes: "System is operational",
-          no: "System is down",
+          true: "System is operational",
+          false: "System is down",
         }),
       },
     });
