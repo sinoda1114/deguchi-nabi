@@ -493,25 +493,33 @@ export function selectFinalGuide(
  * 2つの結果が同一経路を表しているか判定する。
  * 到着路線（末尾）・乗換回数・到着番線で比較。
  * 
- * 路線名の揺れ（全角/半角スペース等）を吸収するため正規化して比較。
+ * 路線名・番線の表記揺れを吸収するため正規化して比較。
  */
 export function isRouteConsistent(
   a: SingleCallNavigatorGuide,
   b: SingleCallNavigatorGuide
 ): boolean {
-  const normalize = (s: string) => s.replace(/\s+/g, "");
-  const lastLineA = normalize(a.lines[a.lines.length - 1]);
-  const lastLineB = normalize(b.lines[b.lines.length - 1]);
+  // 路線名の正規化: 空白・中黒・末尾の「線」を削除
+  const normalizeLine = (s: string) =>
+    s
+      .replace(/\s+/g, "")
+      .replace(/[・･]/g, "")
+      .replace(/線$/, "");
+  
+  const lastLineA = normalizeLine(a.lines[a.lines.length - 1]);
+  const lastLineB = normalizeLine(b.lines[b.lines.length - 1]);
   
   // 到着路線の一致（完全一致 or 部分一致）
   const sameArrivalLine =
     lastLineA === lastLineB || lastLineA.includes(lastLineB) || lastLineB.includes(lastLineA);
   
-  // 番線の一致（片方がnullなら一致とみなす）
-  const samePlatform =
-    !a.arrivalPlatformNumber ||
-    !b.arrivalPlatformNumber ||
-    a.arrivalPlatformNumber === b.arrivalPlatformNumber;
+  // 番線の正規化: 数字部分のみを抽出して比較（「3」「3番線」「3番ホーム」を統一）
+  const normalizePlatform = (p: string | null) => p?.match(/\d+/)?.[0] ?? null;
+  const platformA = normalizePlatform(a.arrivalPlatformNumber);
+  const platformB = normalizePlatform(b.arrivalPlatformNumber);
+  
+  // 番線の一致（片方がnullなら一致とみなす + 数字部分が一致）
+  const samePlatform = !platformA || !platformB || platformA === platformB;
   
   return sameArrivalLine && a.transferCount === b.transferCount && samePlatform;
 }
