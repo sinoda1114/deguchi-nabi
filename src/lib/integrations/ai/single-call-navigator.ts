@@ -592,7 +592,7 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
     return true; // unavailable → retry必須
   }
   
-  if (guide.facility.state === "confirmed" || guide.facility.state === "approximate") {
+  if (guide.facility.state === "confirmed") {
     const { gate, exit } = guide.facility.pair;
     // gate OR exit が null → 不完全なので retry
     if (gate === null || exit === null) {
@@ -600,6 +600,13 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
       return true;
     }
     // 両方存在 → 完全
+    return false;
+  }
+  
+  // approximate: gate + 方角は成功として扱う（retry不要）
+  // 方角フォールバックは gate が存在する場合のみ適用されることを保証済み
+  if (guide.facility.state === "approximate") {
+    console.log(`[single-call-navigator] Approximate facility (gate=${guide.facility.pair.gate!.name}, direction=${guide.facility.directionHint}), no retry needed`);
     return false;
   }
   
