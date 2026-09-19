@@ -325,7 +325,8 @@ describe("generateSingleCallNavigatorGuide", () => {
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
   });
 
-  test("改札・出口の情報が両方とも確認できない(facility unavailable)場合も再試行する(本番実機で発覚した不具合の回帰テスト)", async () => {
+  test("改札・出口の情報が両方とも確認できない(facility unavailable)場合も再試行する。経路一致なら2回目を採用", async () => {
+    const CONSISTENT_RAW = { ...VALID_RAW, lines: ["相鉄本線"] }; // 経路を統一
     searchAndGenerateStructuredContentWithSearchText
       .mockResolvedValueOnce(
         mockResult({
@@ -334,7 +335,7 @@ describe("generateSingleCallNavigatorGuide", () => {
           estimatedMinutes: 13,
         })
       )
-      .mockResolvedValueOnce(mockResult(VALID_RAW));
+      .mockResolvedValueOnce(mockResult(CONSISTENT_RAW));
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
@@ -413,12 +414,11 @@ describe("generateSingleCallNavigatorGuide", () => {
       expect(result?.facility.state).toBe("unavailable");
     });
 
-    test("JEVがshouldRetry=trueを返した場合、retryを実行する", async () => {
+    test("JEVがshouldRetry=trueを返した場合、retryを実行する。経路一致なら2回目を採用", async () => {
+      const CONSISTENT_RAW = { ...VALID_RAW, lines: ["相鉄本線"] };
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
-      mockEvaluateRetryGate
-        .mockResolvedValueOnce({ shouldRetry: true, reason: "JEV判定でretry必要" })
-        .mockResolvedValueOnce({ shouldRetry: false });
+      mockEvaluateRetryGate.mockResolvedValueOnce({ shouldRetry: true, reason: "JEV判定でretry必要" });
 
       searchAndGenerateStructuredContentWithSearchText
         .mockResolvedValueOnce(
@@ -428,32 +428,41 @@ describe("generateSingleCallNavigatorGuide", () => {
             estimatedMinutes: 13,
           })
         )
-        .mockResolvedValueOnce(mockResult(VALID_RAW));
+        .mockResolvedValueOnce(mockResult(CONSISTENT_RAW));
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
       
       // 1回目でJEVがretryと判定、2回目で成功
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
-      expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(2);
+      expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(1); // 2回目はconfirmedなので呼ばれない
       expect(result?.facility.state).toBe("confirmed");
     });
 
-    test("JEV判定がエラーの場合、ルールベース判定へフォールバックする", async () => {
+    test("JEV判定がエラーの場合、ルールベース判定へフォールバックする。経路一致なので2回目も採用", async () => {
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
       mockEvaluateRetryGate.mockRejectedValue(new Error("JEV API error"));
 
-      searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
-        mockResult({
-          lines: ["相鉄本線"],
-          transferCount: 0,
-          estimatedMinutes: 13,
-        })
-      );
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(
+          mockResult({
+            lines: ["相鉄本線"],
+            transferCount: 0,
+            estimatedMinutes: 13,
+          })
+        )
+        .mockResolvedValueOnce(
+          mockResult({
+            lines: ["相鉄本線"],
+            transferCount: 0,
+            estimatedMinutes: 13,
+          })
+        );
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
       
       // JEVエラー時はルールベースへフォールバック、unavailableなのでretryされる
+      // 両方unavailableなので1回目を維持
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
       expect(mockEvaluateRetryGate).toHaveBeenCalled();
       expect(result).not.toBeNull();

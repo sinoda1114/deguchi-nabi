@@ -435,22 +435,162 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
 }
 
 /**
+ * 二段階生成用: first（最初の非null結果）とfinal（再試行・整合性チェック後）
+ * の両方のPromiseを含む実行オブジェクト。
+ */
+export interface SingleCallNavigatorRun {
+  /** 最初の非null結果。1回目がnullならfinalと同時に決着。findRailRoutes(ヘッダ)が消費 */
+  first: Promise<SingleCallNavigatorGuide | null>;
+  /** 再試行・経路整合チェック後の最終結果。getUnifiedArrivalGuide(改札・出口)が消費 */
+  final: Promise<SingleCallNavigatorGuide | null>;
+}
+
+const FACILITY_RANK = { unavailable: 0, alternatives: 1, confirmed: 2 } as const;
+
+/**
+ * 1回目と2回目の結果から最終結果を選択する。経路の整合性を保ちつつ、
+ * 改札・出口の品質を向上させる。
+ * 
+ * 選択ルール:
+ * - 片方null → もう一方を返す（現行バグ修正: 1回目を捨てない）
+ * - 2回目の改札・出口が悪化 → 1回目を維持
+ * - 経路不一致 → 1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
+ * - 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口
+ */
+export function selectFinalGuide(
+  first: SingleCallNavigatorGuide | null,
+  second: SingleCallNavigatorGuide | null
+): SingleCallNavigatorGuide | null {
+  if (first === null) return second;
+  if (second === null) return first;
+  
+  // 2回目が悪化していれば1回目を維持
+  if (FACILITY_RANK[second.facility.state] <= FACILITY_RANK[first.facility.state]) {
+    return first;
+  }
+  
+  // 経路不一致なら1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
+  if (!isRouteConsistent(first, second)) {
+    console.warn(
+      "[single-call-navigator] 再試行結果の経路が1回目と不一致のため改札・出口を採用しません",
+      {
+        first: { lines: first.lines, transfers: first.transferCount, platform: first.arrivalPlatformNumber },
+        second: { lines: second.lines, transfers: second.transferCount, platform: second.arrivalPlatformNumber },
+      }
+    );
+    return first;
+  }
+  
+  // 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口・乗車位置
+  return {
+    ...first,
+    facility: second.facility,
+    boarding: second.boarding,
+  };
+}
+
+/**
+ * 2つの結果が同一経路を表しているか判定する。
+ * 到着路線（末尾）・乗換回数・到着番線で比較。
+ * 
+ * 路線名の揺れ（全角/半角スペース等）を吸収するため正規化して比較。
+ */
+export function isRouteConsistent(
+  a: SingleCallNavigatorGuide,
+  b: SingleCallNavigatorGuide
+): boolean {
+  const normalize = (s: string) => s.replace(/\s+/g, "");
+  const lastLineA = normalize(a.lines[a.lines.length - 1]);
+  const lastLineB = normalize(b.lines[b.lines.length - 1]);
+  
+  // 到着路線の一致（完全一致 or 部分一致）
+  const sameArrivalLine =
+    lastLineA === lastLineB || lastLineA.includes(lastLineB) || lastLineB.includes(lastLineA);
+  
+  // 番線の一致（片方がnullなら一致とみなす）
+  const samePlatform =
+    !a.arrivalPlatformNumber ||
+    !b.arrivalPlatformNumber ||
+    a.arrivalPlatformNumber === b.arrivalPlatformNumber;
+  
+  return sameArrivalLine && a.transferCount === b.transferCount && samePlatform;
+}
+
+/**
+ * 二段階生成: first（最初の非null）とfinal（再試行後）を含むrunを返す。
+ * 
+ * - first: 1回目の結果、またはnullなら2回目まで待つ。findRailRoutes（ヘッダ）が消費し体感≈56秒。
+ * - final: 再試行・経路整合チェック後の最終結果。getUnifiedArrivalGuide（改札・出口）が消費し完了≈72秒。
+ * 
+ * 1回目がunavailableでも再試行で改善する可能性があるため、firstは先に公開し、
+ * 2回目で経路整合性を保ちつつfacilityを昇格させる。2回目がnullまたは例外の場合、
+ * firstがあればfinalはfirstにフォールバック（現行バグ修正：1回目を捨てない）。
+ */
+export function generateSingleCallNavigatorRun(
+  apiKey: string,
+  originStation: Station,
+  destinationStation: Station,
+  destinationHint: string | null,
+  destinationPlaceCoordinates: Coordinates | null = null
+): SingleCallNavigatorRun {
+  const attempt = () =>
+    attemptGenerateSingleCallNavigatorGuide(
+      apiKey,
+      originStation,
+      destinationStation,
+      destinationHint,
+      destinationPlaceCoordinates
+    );
+  
+  const attempt1 = attempt();
+  
+  const final = attempt1.then(async (r1) => {
+    // 1回目で完了（confirmed/alternatives または null）
+    if (r1 !== null && !(await isFacilityUnavailable(r1))) {
+      return r1;
+    }
+    
+    // 再試行が必要
+    const reason = r1 === null ? "結果がnullだった" : "改札・出口の情報が両方とも確認できなかった";
+    console.warn(
+      `[single-call-navigator] 1回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
+    );
+    
+    let r2: SingleCallNavigatorGuide | null;
+    try {
+      r2 = await attempt();
+    } catch (error) {
+      // 2回目が例外で失敗
+      if (r1 === null) throw error; // 見せられる結果が無い
+      console.warn(
+        "[single-call-navigator] 再試行が例外で失敗、1回目の結果を採用",
+        error instanceof Error ? error.message : String(error)
+      );
+      r2 = null;
+    }
+    
+    return selectFinalGuide(r1, r2);
+  });
+  
+  // first: 1回目の結果、またはnullならfinalと同時に決着
+  const first = attempt1.then((r1) => r1 ?? final);
+  
+  // 未購読側の未処理rejection防止（accessibleモードではfinal、逆経路ではfirst）
+  // 呼び出し元がawaitしたrejectionはそのまま観測できる
+  first.catch(() => {});
+  final.catch(() => {});
+  
+  return { first, final };
+}
+
+/**
  * 出発駅・目的地から、経路(利用路線・乗換回数・所要時間)+改札+出口+乗車位置を
  * 単一のGemini Search Grounding呼び出し(検索1回+抽出1回)でまとめて生成する
- * (公開API)。出口から目的地までの徒歩ルート(左折・右折等の方向指示)は
- * 生成しない(2026-07-21ユーザー判断: このアプリの役割は駅構内・改札・出口
- * までの案内であり、出口以降はユーザーが地図アプリを使う前提。実機で
- * 「右折」が実際には左折だった誤りが発覚したこともあり、検証手段のない
- * 方向指示は出力自体をやめた)。
- *
- * 実処理はattemptGenerateSingleCallNavigatorGuide()に委譲する。丸ごとnullの
- * 場合に加え、改札・出口が両方ともnull(未確認)の場合も最大MAX_ATTEMPTS回まで
- * 再試行する(本番実機で発覚: 西谷駅→kawara CAFE&DINING横浜店で改札・出口が
- * 両方未確認になるケースを実測。destination-exit-search-pipeline.ts・
- * ai-route-generation.tsのnull時再試行と同じ設計をこのケースにも拡張した)。
- * 再試行しても改善しなかった場合は、直近の結果(経路情報は取れているが
- * 改札・出口が未確認)をそのまま返す(経路自体まで捨てない)。例外はここで
- * 捕捉せず、呼び出し元にそのまま伝播させる。
+ * (公開API・後方互換)。
+ * 
+ * 二段階生成のfinal（再試行後の最終結果）を返す。既存の呼び出し元・テストは
+ * そのまま動作する。新規の呼び出し元でfirst/final を使い分ける場合は
+ * generateSingleCallNavigatorRun() を直接使用する。
  */
 export async function generateSingleCallNavigatorGuide(
   apiKey: string,
@@ -459,30 +599,13 @@ export async function generateSingleCallNavigatorGuide(
   destinationHint: string | null,
   destinationPlaceCoordinates: Coordinates | null = null
 ): Promise<SingleCallNavigatorGuide | null> {
-  let result: SingleCallNavigatorGuide | null = null;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    result = await attemptGenerateSingleCallNavigatorGuide(
-      apiKey,
-      originStation,
-      destinationStation,
-      destinationHint,
-      destinationPlaceCoordinates
-    );
-    if (result !== null && !(await isFacilityUnavailable(result))) return result;
-
-    if (attempt < MAX_ATTEMPTS) {
-      const reason =
-        result === null
-          ? "結果がnullだった"
-          : "改札・出口の情報が両方とも確認できなかった";
-      console.warn(
-        `[single-call-navigator] ${attempt}回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
-      );
-    }
-  }
-
-  return result;
+  return generateSingleCallNavigatorRun(
+    apiKey,
+    originStation,
+    destinationStation,
+    destinationHint,
+    destinationPlaceCoordinates
+  ).final;
 }
 
 /**
@@ -515,7 +638,7 @@ export async function generateSingleCallNavigatorGuide(
 const SHARED_GUIDE_TTL_AFTER_SETTLE_MS = 30_000;
 const sharedGuideCache = new Map<
   string,
-  { promise: Promise<SingleCallNavigatorGuide | null>; expiresAt: number }
+  { run: SingleCallNavigatorRun; expiresAt: number }
 >();
 
 // 目的地施設座標をキャッシュキーに含める際の丸め桁数。小数点以下4桁(概ね11m
@@ -554,39 +677,59 @@ function sweepExpiredGuideCacheEntries(now: number): void {
   }
 }
 
-export function getSharedSingleCallNavigatorGuide(
+/**
+ * 二段階生成の共有キャッシュ。同一キーの呼び出しは同じrunを返し、
+ * Gemini呼び出しを1回に抑える（経路側と改札・出口側で二重課金しない）。
+ * 
+ * TTLはfinal決着後から開始（first決着後だと、finalが動いている途中でTTLが
+ * 切れて二重生成が起きる）。
+ */
+export function getSharedSingleCallNavigatorRun(
   cacheKey: string,
-  generator: () => Promise<SingleCallNavigatorGuide | null>
-): Promise<SingleCallNavigatorGuide | null> {
+  generator: () => SingleCallNavigatorRun
+): SingleCallNavigatorRun {
   const now = Date.now();
   const cached = sharedGuideCache.get(cacheKey);
   if (cached && cached.expiresAt > now) {
-    return cached.promise;
+    return cached.run;
   }
 
   sweepExpiredGuideCacheEntries(now);
 
-  const promise = generator();
-  // 生成中(in-flight)は expiresAt を Infinity にし、どれだけ時間がかかっても
-  // 同一キーの後続呼び出しが必ずこの進行中のPromiseを再利用できるようにする。
-  // 解決した時点でTTLを付け直し、以降はSHARED_GUIDE_TTL_AFTER_SETTLE_MS秒だけ
+  const run = generator();
+  // 生成中(in-flight)は expiresAt を Infinity にし、first決着後もfinal完了まで
+  // 同一キーの後続呼び出しが同じrunを再利用できるようにする。
+  // final解決後にTTLを付け直し、以降はSHARED_GUIDE_TTL_AFTER_SETTLE_MS秒だけ
   // 共有可能にする(PR #80の趣旨: 結果を長期間固定しない)。
-  sharedGuideCache.set(cacheKey, { promise, expiresAt: Infinity });
-  // .finally()が作る派生Promiseは、元のpromiseがrejectした場合にreject状態を
-  // 引き継ぐ。この派生Promiseを誰も購読していないと未処理rejection警告に
-  // なりうるため、明示的に握りつぶす(/ai-review指摘、Medium)。呼び出し元が
-  // 受け取る`promise`自体はここでは変更しておらず、呼び出し元の例外処理には
-  // 影響しない。
-  promise
+  sharedGuideCache.set(cacheKey, { run, expiresAt: Infinity });
+  
+  run.final
     .finally(() => {
       const current = sharedGuideCache.get(cacheKey);
-      if (current && current.promise === promise) {
+      if (current && current.run === run) {
         sharedGuideCache.set(cacheKey, {
-          promise,
+          run,
           expiresAt: Date.now() + SHARED_GUIDE_TTL_AFTER_SETTLE_MS,
         });
       }
     })
     .catch(() => {});
-  return promise;
+  
+  return run;
+}
+
+/**
+ * 後方互換: 既存の呼び出し元向け。finalを返す。
+ */
+export function getSharedSingleCallNavigatorGuide(
+  cacheKey: string,
+  generator: () => Promise<SingleCallNavigatorGuide | null>
+): Promise<SingleCallNavigatorGuide | null> {
+  return getSharedSingleCallNavigatorRun(cacheKey, () => {
+    const promise = generator();
+    return {
+      first: promise,
+      final: promise,
+    };
+  }).final;
 }

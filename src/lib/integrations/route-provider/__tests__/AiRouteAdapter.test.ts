@@ -3,6 +3,7 @@ import type { Station } from "@/lib/domain/station";
 import type { SingleCallNavigatorGuide } from "@/lib/integrations/ai/single-call-navigator";
 
 const generateSingleCallNavigatorGuide = vi.fn();
+const generateSingleCallNavigatorRun = vi.fn();
 vi.mock("@/lib/integrations/ai/single-call-navigator", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/integrations/ai/single-call-navigator")
@@ -11,6 +12,8 @@ vi.mock("@/lib/integrations/ai/single-call-navigator", async () => {
     ...actual,
     generateSingleCallNavigatorGuide: (...args: unknown[]) =>
       generateSingleCallNavigatorGuide(...args),
+    generateSingleCallNavigatorRun: (...args: unknown[]) =>
+      generateSingleCallNavigatorRun(...args),
   };
 });
 
@@ -72,7 +75,10 @@ describe("AiRouteAdapter.findRailRoutes", () => {
       [DESTINATION_STATION.stationId]: DESTINATION_STATION,
     });
     const adapter = new AiRouteAdapter("test-key", stationProvider);
-    generateSingleCallNavigatorGuide.mockResolvedValue(GENERATED_GUIDE);
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(GENERATED_GUIDE),
+      final: Promise.resolve(GENERATED_GUIDE),
+    });
 
     const result = await adapter.findRailRoutes(
       ORIGIN_STATION.stationId,
@@ -99,7 +105,7 @@ describe("AiRouteAdapter.findRailRoutes", () => {
         ],
       },
     ]);
-    expect(generateSingleCallNavigatorGuide).toHaveBeenCalledWith(
+    expect(generateSingleCallNavigatorRun).toHaveBeenCalledWith(
       "test-key",
       ORIGIN_STATION,
       DESTINATION_STATION,
@@ -122,7 +128,7 @@ describe("AiRouteAdapter.findRailRoutes", () => {
     );
 
     expect(result).toEqual([]);
-    expect(generateSingleCallNavigatorGuide).not.toHaveBeenCalled();
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
   });
 
   test("生成が失敗(null)した場合は空配列を返す", async () => {
@@ -131,7 +137,10 @@ describe("AiRouteAdapter.findRailRoutes", () => {
       [DESTINATION_STATION.stationId]: DESTINATION_STATION,
     });
     const adapter = new AiRouteAdapter("test-key", stationProvider);
-    generateSingleCallNavigatorGuide.mockResolvedValue(null);
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(null),
+      final: Promise.resolve(null),
+    });
 
     const result = await adapter.findRailRoutes(
       ORIGIN_STATION.stationId,
@@ -148,9 +157,15 @@ describe("AiRouteAdapter.findRailRoutes", () => {
       [DESTINATION_STATION.stationId]: DESTINATION_STATION,
     });
     const adapter = new AiRouteAdapter("test-key", stationProvider);
-    generateSingleCallNavigatorGuide.mockResolvedValue({
-      ...GENERATED_GUIDE,
-      arrivalPlatformNumber: "3",
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        ...GENERATED_GUIDE,
+        arrivalPlatformNumber: "3",
+      }),
+      final: Promise.resolve({
+        ...GENERATED_GUIDE,
+        arrivalPlatformNumber: "3",
+      }),
     });
 
     const result = await adapter.findRailRoutes(

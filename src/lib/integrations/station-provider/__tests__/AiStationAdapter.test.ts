@@ -48,13 +48,18 @@ vi.mock("../arrival-guide-ai-generation", () => ({
 }));
 
 const generateSingleCallNavigatorGuide = vi.fn();
+const generateSingleCallNavigatorRun = vi.fn();
 vi.mock("@/lib/integrations/ai/single-call-navigator", () => ({
   generateSingleCallNavigatorGuide: (...args: unknown[]) =>
     generateSingleCallNavigatorGuide(...args),
+  generateSingleCallNavigatorRun: (...args: unknown[]) =>
+    generateSingleCallNavigatorRun(...args),
   buildSharedGuideCacheKey: (a: string, b: string, c: string | null) => `${a}::${b}::${c ?? ""}`,
   // テストではキャッシュ挙動自体を検証しないため、generatorを素通しするだけの
   // 単純な実装に差し替える(モジュール単位のキャッシュがテスト間で汚染しないようにする)。
   getSharedSingleCallNavigatorGuide: (_key: string, generator: () => Promise<unknown>) =>
+    generator(),
+  getSharedSingleCallNavigatorRun: (_key: string, generator: () => { first: Promise<unknown>; final: Promise<unknown> }) => 
     generator(),
 }));
 
@@ -597,6 +602,7 @@ describe("AiStationAdapter.getArrivalGuideNarrativeSteps", () => {
 describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   beforeEach(() => {
     generateSingleCallNavigatorGuide.mockReset();
+    generateSingleCallNavigatorRun.mockReset();
     decodeHeartRailsStationId.mockReset();
     decodeHeartRailsStationId.mockReturnValue(null);
     fetchNearestStationsFromHeartRails.mockReset();
@@ -619,7 +625,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
 
   test("originStationIdが解決できる場合、出発駅の完全なStationと到着駅のStationを組み立てて生成関数へ渡す", async () => {
     decodeHeartRailsStationId.mockReturnValue(ORIGIN_DECODED);
-    generateSingleCallNavigatorGuide.mockResolvedValue({
+    const guideValue = {
       lines: ["相鉄本線"],
       transferCount: 0,
       estimatedMinutes: 10,
@@ -633,6 +639,10 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
           reason: null,
         },
       },
+    };
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(guideValue),
+      final: Promise.resolve(guideValue),
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -650,7 +660,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       "st_nishiya"
     );
 
-    expect(generateSingleCallNavigatorGuide).toHaveBeenCalledWith(
+    expect(generateSingleCallNavigatorRun).toHaveBeenCalledWith(
       "test-key",
       ORIGIN_DECODED,
       {
@@ -668,13 +678,17 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("originStationIdが渡されない場合、出発駅名のみの簡易Stationで生成関数を呼ぶ(フォールバック)", async () => {
-    generateSingleCallNavigatorGuide.mockResolvedValue({
+    const guideValue = {
       lines: ["相鉄本線"],
       transferCount: 0,
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
       facility: { state: "unavailable", reason: "test" },
+    };
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(guideValue),
+      final: Promise.resolve(guideValue),
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -691,7 +705,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       null
     );
 
-    const [, originArg] = generateSingleCallNavigatorGuide.mock.calls[0];
+    const [, originArg] = generateSingleCallNavigatorRun.mock.calls[0];
     expect(originArg).toEqual({
       stationId: "",
       stationName: "西谷駅",
@@ -704,13 +718,17 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("到着駅の座標が無い場合、緯度経度0でフォールバックする", async () => {
-    generateSingleCallNavigatorGuide.mockResolvedValue({
+    const guideValue = {
       lines: ["相鉄本線"],
       transferCount: 0,
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
       facility: { state: "unavailable", reason: "test" },
+    };
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(guideValue),
+      final: Promise.resolve(guideValue),
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -727,13 +745,13 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       null
     );
 
-    const [, , destinationArg] = generateSingleCallNavigatorGuide.mock.calls[0];
+    const [, , destinationArg] = generateSingleCallNavigatorRun.mock.calls[0];
     expect(destinationArg.latitude).toBe(0);
     expect(destinationArg.longitude).toBe(0);
   });
 
   test("boardingPositionのconfidenceLevelをai_inferredの上限(medium)にキャップしたConfidenceへ変換する", async () => {
-    generateSingleCallNavigatorGuide.mockResolvedValue({
+    const guideValue = {
       lines: ["相鉄本線"],
       transferCount: 0,
       estimatedMinutes: 10,
@@ -752,6 +770,10 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
           reason: null,
         },
       },
+    };
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(guideValue),
+      final: Promise.resolve(guideValue),
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -781,7 +803,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("boardingPositionがnullの場合はそのままnullとして返す", async () => {
-    generateSingleCallNavigatorGuide.mockResolvedValue({
+    const guideValue = {
       lines: ["相鉄本線"],
       transferCount: 0,
       estimatedMinutes: 10,
@@ -795,6 +817,10 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
           reason: null,
         },
       },
+    };
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(guideValue),
+      final: Promise.resolve(guideValue),
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -815,13 +841,17 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("walkingStepsは常に空配列を返す(2026-07-21ユーザー判断: 出口から先の徒歩ナラティブは生成しない。実機で「右折」が実際は左折だった誤りが発覚したため)", async () => {
-    generateSingleCallNavigatorGuide.mockResolvedValue({
+    const guideValue = {
       lines: ["相鉄本線"],
       transferCount: 0,
       estimatedMinutes: 10,
       arrivalPlatformNumber: null,
       boarding: null,
       facility: { state: "unavailable", reason: "test" },
+    };
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(guideValue),
+      final: Promise.resolve(guideValue),
     });
     const adapter = new AiStationAdapter("test-key");
 
@@ -842,7 +872,10 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   });
 
   test("生成に失敗(null)した場合はnullを返す", async () => {
-    generateSingleCallNavigatorGuide.mockResolvedValue(null);
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(null),
+      final: Promise.resolve(null),
+    });
     const adapter = new AiStationAdapter("test-key");
 
     const result = await adapter.getUnifiedArrivalGuide(
