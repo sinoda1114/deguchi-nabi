@@ -47,6 +47,11 @@ function safeErrorMessage(e: unknown): string {
  * 判定基準:
  * - unavailableでも情報が実質的に有用ならfalse（retry不要）
  * - 本当に情報が足りない場合のみtrue（retry実施）
+ * 
+ * Fail-open設計:
+ * - JEV API呼び出しが失敗・タイムアウトした場合、検索全体を失敗させず
+ *   shouldRetry=falseでフォールバック（retry不要と見なす）
+ * - 従来のルールベース判定に戻すのはsingle-call-navigatorの責務
  */
 export async function evaluateRetryGate(
   facility: FacilityRecommendation<RawNamedFacility>,
@@ -54,59 +59,80 @@ export async function evaluateRetryGate(
 ): Promise<JevRetryGateDecision> {
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   try {
-    const client = new TypeSafeClient({
-      apiKey: config.apiKey,
-      timeout: timeoutMs,
+    // Promise.raceでより堅牢なタイムアウトを実装
+    // SDKの内部タイムアウトが機能しない場合も確実にタイムアウトさせる
+    const apiCallPromise = (async () => {
+      const client = new TypeSafeClient({
+        apiKey: config.apiKey,
+        timeout: timeoutMs,
+      });
+
+      const state: Record<string, string | number | boolean | null> = {
+        facilityState: facility.state,
+      };
+
+      if (facility.state === "unavailable") {
+        state.facilityReason = facility.reason;
+      } else if (facility.state === "confirmed") {
+        state.hasPair = true;
+      } else if (facility.state === "alternatives") {
+        state.pairsCount = facility.pairs.length;
+      }
+
+      return await client.systemOne(
+        {
+          state,
+          questions: {
+            needsRetry: noul(
+              "この施設情報は、ユーザーが駅構内で改札・出口を見つけるのに十分な情報を提供していますか？unavailable状態でも、代替情報や部分的な情報が実質的に有用であればfalseを返してください。本当に情報が足りない場合のみtrueを返してください。",
+              {
+                true: "情報が不足しており、リトライが必要",
+                false: "十分な情報があり、リトライ不要",
+              }
+            ),
+          },
+        },
+        { signal: controller.signal }
+      );
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
     });
 
-    const state: Record<string, string | number | boolean | null> = {
-      facilityState: facility.state,
-    };
+    const result = await Promise.race([apiCallPromise, timeoutPromise]);
 
-    if (facility.state === "unavailable") {
-      state.facilityReason = facility.reason;
-    } else if (facility.state === "confirmed") {
-      state.hasPair = true;
-    } else if (facility.state === "alternatives") {
-      state.pairsCount = facility.pairs.length;
-    }
-
-    const result = await client.systemOne(
-      {
-        state,
-        questions: {
-          needsRetry: noul(
-            "この施設情報は、ユーザーが駅構内で改札・出口を見つけるのに十分な情報を提供していますか？unavailable状態でも、代替情報や部分的な情報が実質的に有用であればfalseを返してください。本当に情報が足りない場合のみtrueを返してください。",
-            {
-              true: "情報が不足しており、リトライが必要",
-              false: "十分な情報があり、リトライ不要",
-            }
-          ),
-        },
-      },
-      { signal: controller.signal }
-    );
-
-    const shouldRetry = result.answers.needsRetry.noul > 0.5;
+    const needsRetryNoul = (result.answers.needsRetry as { noul: number }).noul;
+    const shouldRetry = needsRetryNoul > 0.5;
 
     return {
       shouldRetry,
       reason: shouldRetry
-        ? `JEV判定: 情報不足（確信度: ${result.answers.needsRetry.noul.toFixed(2)}）`
-        : `JEV判定: 情報十分（確信度: ${(1 - result.answers.needsRetry.noul).toFixed(2)}）`,
+        ? `JEV判定: 情報不足（確信度: ${needsRetryNoul.toFixed(2)}）`
+        : `JEV判定: 情報十分（確信度: ${(1 - needsRetryNoul).toFixed(2)}）`,
     };
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      console.warn("[JevClient] Retry gate evaluation timed out, falling back to false");
-      return { shouldRetry: false, reason: "Timeout fallback" };
-    }
-    console.warn("[JevClient] Retry gate evaluation failed:", safeErrorMessage(error));
+    // Fail-open: 任意のエラー（タイムアウト、ネットワークエラー、SDKエラー等）で
+    // 検索全体を失敗させず、呼び出し側（isFacilityUnavailable）の
+    // 従来ルールベース判定へフォールバックさせる
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMsg = safeErrorMessage(error);
+    console.warn(`[JevClient] Retry gate evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`);
+    // 例外を再スローして、isFacilityUnavailableのcatchで従来判定（facility.state === "unavailable"）へ戻す
     throw error;
   } finally {
-    clearTimeout(timeoutId);
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
   }
 }
 
