@@ -26,6 +26,18 @@ export interface JevRouteConsistencyDecision {
   reason?: string;
 }
 
+/** JEV Facility完全性判定結果（Phase 2-C） */
+export interface JevFacilityCompletenessDecision {
+  /** gate・exitが両方揃っているか（または片方で十分か） */
+  isComplete: boolean;
+  /** 不足しているフィールド */
+  missingFields: Array<"gate" | "exit">;
+  /** retryで改善する見込みがあるか */
+  shouldRetry: boolean;
+  /** JEVによる判定理由（デバッグ用） */
+  reason?: string;
+}
+
 /** JEVクライアント設定 */
 interface JevClientConfig {
   apiKey: string;
@@ -232,6 +244,141 @@ export async function evaluateRouteConsistency(
     const errorName = error instanceof Error ? error.name : "UnknownError";
     const errorMsg = safeErrorMessage(error);
     console.warn(`[JevClient] Route consistency evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`);
+    throw error;
+  } finally {
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
+  }
+}
+
+/**
+ * Facility品質評価（Phase 2-C: exit安定化専用）。
+ * 
+ * facilityCandidatesが完全（gate・exit両方）かを判定し、
+ * 不完全な場合にretryで改善する見込みを評価する。
+ * 
+ * Phase 2-Cの目標:
+ * - 「改札は取れたが出口が取れない」問題の直接改善
+ * - gate/exitの片方のみの場合、もう片方を取得するretryの必要性を判定
+ * 
+ * ルールベース前段フィルタ（JEV呼び出し前に高速判定）:
+ * - unavailable → 確実にretry必要（JEV不要）
+ * - alternatives → 十分な情報（JEV不要）
+ * - confirmed + 両方あり → 完全（JEV不要）
+ * - confirmed + 片方のみ → JEVで詳細判定
+ * 
+ * Fail-open設計:
+ * - JEV失敗時は例外を再スロー、Phase 1（retry gate）へフォールバック
+ */
+export async function evaluateFacilityCompleteness(
+  facility: FacilityRecommendation<RawNamedFacility>,
+  config: JevClientConfig
+): Promise<JevFacilityCompletenessDecision> {
+  // ルールベース前段フィルタ: unavailable → 確実にretry
+  if (facility.state === "unavailable") {
+    return {
+      isComplete: false,
+      missingFields: ["gate", "exit"],
+      shouldRetry: true,
+      reason: "unavailable状態（両方未確認）",
+    };
+  }
+
+  // ルールベース前段フィルタ: alternatives → 十分な情報
+  if (facility.state === "alternatives") {
+    return {
+      isComplete: true,
+      missingFields: [],
+      shouldRetry: false,
+      reason: "alternatives状態（複数候補あり）",
+    };
+  }
+
+  // confirmed状態: gate/exitの有無を確認
+  const pair = facility.pair;
+  const hasGate = pair.gate !== null;
+  const hasExit = pair.exit !== null;
+  const missingFields: Array<"gate" | "exit"> = [];
+  if (!hasGate) missingFields.push("gate");
+  if (!hasExit) missingFields.push("exit");
+
+  // ルールベース前段フィルタ: 両方あり → 完全
+  if (hasGate && hasExit) {
+    return {
+      isComplete: true,
+      missingFields: [],
+      shouldRetry: false,
+      reason: "confirmed状態（gate・exit両方あり）",
+    };
+  }
+
+  // 片方のみ → JEVで詳細判定
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const apiCallPromise = (async () => {
+      const client = new TypeSafeClient({
+        apiKey: config.apiKey,
+        timeout: timeoutMs,
+      });
+
+      const state: Record<string, string | number | boolean | null> = {
+        hasGate,
+        hasExit,
+        gateName: pair.gate?.name ?? null,
+        exitName: pair.exit?.name ?? null,
+        gateConfidence: pair.gate?.confidenceLevel ?? null,
+        exitConfidence: pair.exit?.confidenceLevel ?? null,
+      };
+
+      return await client.systemOne(
+        {
+          state,
+          questions: {
+            isCompleteBothNeeded: noul(
+              "改札と出口は駅構内案内の2つの重要な要素です。この施設情報は、ユーザーが駅構内で迷わず目的地に到達するために十分な情報を提供していますか？改札のみ・出口のみの場合、もう片方の情報があればユーザー体験が明らかに改善するならfalseを返してください。両方が揃っている、または片方だけで十分なケース（小規模駅で改札=出口を兼ねる等）ならtrueを返してください。",
+              {
+                true: "十分な情報（retryで改善しない）",
+                false: "不完全（retryで改善する可能性）",
+              }
+            ),
+          },
+        },
+        { signal: controller.signal }
+      );
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([apiCallPromise, timeoutPromise]);
+
+    const isCompleteBothNeededNoul = (result.answers.isCompleteBothNeeded as { noul: number }).noul;
+    const isComplete = isCompleteBothNeededNoul > 0.5;
+
+    return {
+      isComplete,
+      missingFields,
+      shouldRetry: !isComplete,
+      reason: isComplete
+        ? `JEV判定: 十分な情報（確信度: ${isCompleteBothNeededNoul.toFixed(2)}）`
+        : `JEV判定: 不完全（確信度: ${(1 - isCompleteBothNeededNoul).toFixed(2)}）`,
+    };
+  } catch (error) {
+    // Fail-open: エラー時は例外を再スロー、Phase 1へフォールバック
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMsg = safeErrorMessage(error);
+    console.warn(`[JevClient] Facility completeness evaluation failed (${errorName}): ${errorMsg}, falling back to Phase 1`);
     throw error;
   } finally {
     clearTimeout(abortTimeoutId);

@@ -12,6 +12,7 @@ import {
   createJevConfig,
   evaluateRetryGate,
   evaluateRouteConsistency,
+  evaluateFacilityCompleteness,
 } from "@/lib/integrations/ai/JevClient";
 
 /**
@@ -412,26 +413,45 @@ async function attemptGenerateSingleCallNavigatorGuide(
  * Phase 1 JEV統合: JEV_API_KEYが設定されている場合、JEVによる意味的判定を
  * 使用してretry判定を改善する（機械的な件数ルールから意味理解ベースへ移行）。
  * JEV未設定時は従来の挙動（unavailableならretry）を維持。
+ * 
+ * Phase 2-C JEV統合: Facility完全性評価（exit安定化専用）。
+ * confirmedでもgate/exitの片方のみの場合、JEVで「retryで改善する見込み」を判定。
+ * Phase 2-C → Phase 1 → ルールベースの段階的フォールバック。
  */
 async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
-  // JEVが利用可能な場合は意味的判定を使用
+  // JEVが利用可能な場合、段階的判定を実施
   if (isJevAvailable()) {
     const jevConfig = createJevConfig();
     if (jevConfig) {
+      // Phase 2-C: Facility完全性評価（gate/exitの片方のみをキャッチ）
       try {
-        const decision = await evaluateRetryGate(guide.facility, jevConfig);
-        if (decision.reason) {
-          console.log(`[single-call-navigator] JEV retry decision: ${decision.shouldRetry} (${decision.reason})`);
+        const completenessDecision = await evaluateFacilityCompleteness(guide.facility, jevConfig);
+        if (completenessDecision.reason) {
+          console.log(`[single-call-navigator] JEV completeness: ${completenessDecision.reason}`);
         }
-        return decision.shouldRetry;
+        return completenessDecision.shouldRetry;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn("[single-call-navigator] JEV evaluation failed, falling back to rule-based:", message);
+        console.warn("[single-call-navigator] JEV completeness evaluation failed, falling back to Phase 1:", message);
+        // Phase 1へフォールバック
+      }
+      
+      // Phase 1へフォールバック: Retry gate判定
+      try {
+        const retryGateDecision = await evaluateRetryGate(guide.facility, jevConfig);
+        if (retryGateDecision.reason) {
+          console.log(`[single-call-navigator] JEV retry gate: ${retryGateDecision.shouldRetry} (${retryGateDecision.reason})`);
+        }
+        return retryGateDecision.shouldRetry;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV retry gate evaluation failed, falling back to rule-based:", message);
+        // ルールベースへフォールバック
       }
     }
   }
   
-  // フォールバック: 従来の件数ベース判定
+  // 最終フォールバック: 従来の件数ベース判定
   return guide.facility.state === "unavailable";
 }
 
