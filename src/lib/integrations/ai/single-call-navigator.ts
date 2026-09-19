@@ -411,9 +411,17 @@ async function attemptGenerateSingleCallNavigatorGuide(
  * Phase 1 JEV統合: JEV_API_KEYが設定されている場合、JEVによる意味的判定を
  * 使用してretry判定を改善する（機械的な件数ルールから意味理解ベースへ移行）。
  * JEV未設定時は従来の挙動（unavailableならretry）を維持。
+ * 
+ * 最適化（2026-09-19）: confirmed/alternativesは明らかに情報が十分なため、
+ * JEVを呼ばずに直ちにfalseを返す。unavailable状態のみJEVに判定を委ねる。
  */
 async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
-  // JEVが利用可能な場合は意味的判定を使用
+  // confirmed/alternatives: 情報が既に十分なので直ちにfalse（リトライ不要）
+  if (guide.facility.state === "confirmed" || guide.facility.state === "alternatives") {
+    return false;
+  }
+  
+  // unavailable: JEVが利用可能な場合は意味的判定を使用
   if (isJevAvailable()) {
     const jevConfig = createJevConfig();
     if (jevConfig) {
