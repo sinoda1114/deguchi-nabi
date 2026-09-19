@@ -575,14 +575,24 @@ describe("JevClient", () => {
 
   describe("selectBestFacilityPair (Phase 2-B)", () => {
     test("複数候補から最適な1つを選択（候補1を選択）", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          bestCandidateIndex: {
-            type: "noul",
-            noul: 0.0,
+      // 候補1のスコアが高い（0.9）、候補2のスコアが低い（0.3）
+      const mockSystemOne = vi.fn()
+        .mockResolvedValueOnce({
+          answers: {
+            isBestCandidate: {
+              type: "noul",
+              noul: 0.9,
+            },
           },
-        },
-      });
+        })
+        .mockResolvedValueOnce({
+          answers: {
+            isBestCandidate: {
+              type: "noul",
+              noul: 0.3,
+            },
+          },
+        });
 
       vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
         return {
@@ -604,18 +614,28 @@ describe("JevClient", () => {
       const result = await selectBestFacilityPair(pairs, context, { apiKey: "test_key" });
       expect(result.selectedIndex).toBe(0);
       expect(result.reason).toContain("候補1を選択");
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+      expect(mockSystemOne).toHaveBeenCalledTimes(2);
     });
 
     test("複数候補から最適な1つを選択（候補2を選択）", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          bestCandidateIndex: {
-            type: "noul",
-            noul: 1.0,
+      // 候補1のスコアが低い（0.2）、候補2のスコアが高い（0.85）
+      const mockSystemOne = vi.fn()
+        .mockResolvedValueOnce({
+          answers: {
+            isBestCandidate: {
+              type: "noul",
+              noul: 0.2,
+            },
           },
-        },
-      });
+        })
+        .mockResolvedValueOnce({
+          answers: {
+            isBestCandidate: {
+              type: "noul",
+              noul: 0.85,
+            },
+          },
+        });
 
       vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
         return {
@@ -637,7 +657,7 @@ describe("JevClient", () => {
       const result = await selectBestFacilityPair(pairs, context, { apiKey: "test_key" });
       expect(result.selectedIndex).toBe(1);
       expect(result.reason).toContain("候補2を選択");
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+      expect(mockSystemOne).toHaveBeenCalledTimes(2);
     });
 
     test("候補が1つ以下の場合は例外をスロー", async () => {
