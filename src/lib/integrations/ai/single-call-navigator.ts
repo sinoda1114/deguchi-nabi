@@ -7,6 +7,7 @@ import {
   isVerbatimInSearchText,
 } from "@/lib/domain/facility-recommendation";
 import { searchAndGenerateStructuredContentWithSearchText } from "@/lib/integrations/ai/GeminiClient";
+import { bearingDegrees, compassLabel } from "@/lib/geo/bearing";
 import {
   isJevAvailable,
   createJevConfig,
@@ -52,6 +53,8 @@ const MAX_REASON_LENGTH = 300;
 // 返してもそのまま採用してしまっていた)。
 const MAX_CAR_NUMBER = 16;
 
+const VALID_DIRECTIONS = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"] as const;
+
 // destination-exit-search-pipeline.ts・ai-route-generation.tsと同じ理由・値。
 // 検索を伴うAI生成は実行ごとの揺れ・一時的なエラーで結果がnullになりうるため、
 // nullの場合のみ丸ごと1回だけ再試行する(合計最大2試行)。
@@ -68,7 +71,9 @@ export interface RawNamedFacility {
   confidenceLevel: ConfidenceLevel;
 }
 
-export type RawFacilityPair = FacilityPair<RawNamedFacility>;
+export type RawFacilityPair = FacilityPair<RawNamedFacility> & {
+  exitDirection?: string | null;
+};
 export type RawFacilityRecommendation = FacilityRecommendation<RawNamedFacility>;
 
 export interface SingleCallNavigatorGuide {
@@ -95,6 +100,7 @@ export interface SingleCallNavigatorGuide {
 interface RawFacilityCandidate {
   gateName?: unknown;
   exitName?: unknown;
+  exitDirection?: unknown;
   confidence?: unknown;
   reason?: unknown;
 }
@@ -122,10 +128,18 @@ const FACILITY_CANDIDATE_SCHEMA = {
       type: "string",
       description: "出口名。本文に断定的に明記されている場合のみ含める(逐語で)。",
     },
+    exitDirection: {
+      type: "string",
+      enum: ["北", "北東", "東", "南東", "南", "南西", "西", "北西"],
+      description: "出口の方角（8方位）。目的地が駅のどの方向にあるか必ず明記する。出口名が確認できない場合でも方角は記載すること。",
+    },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
-    reason: { type: "string", description: "この組を選んだ理由(任意、1行程度)" },
+    reason: { 
+      type: "string", 
+      description: "この組を選んだ理由（必須、1行程度）。目的地の方角・距離・導線を含めること。" 
+    },
   },
-  required: ["confidence"],
+  required: ["confidence", "exitDirection", "reason"],
 };
 
 const EXTRACTION_SCHEMA = {
@@ -164,7 +178,7 @@ const EXTRACTION_INSTRUCTION = `以下の文章から、経路案内情報をJSO
 - transferCount・estimatedMinutes: 整数で抽出してください。
 - arrivalPlatformNumber: 到着番線が文中で確認できる場合のみ含めてください(不明なら省略)。
 - boardingCarNumber/boardingDoorPosition/boardingReason/boardingConfidence: 号車位置が断定されている場合のみ含めてください。文中で「未確認」「降車後は案内表示に従ってください」のように断定を避けている場合は、これらのフィールドを一切含めないでください。
-- facilityCandidates: 改札・出口の組を配列で抽出してください。単一の組に断定できる場合は要素1件、2〜3択に絞り込める場合は複数要素を列挙してください(例:「AまたはB」という記述は2要素)。gateName/exitNameは本文中に逐語で明記されている名称のみを使ってください(言い換え・要約・正規化はしないでください)。1つの要素のgateNameとexitNameは、本文中で同じ選択肢として一緒に説明されている組み合わせのみにしてください(別々の文脈で言及された改札名と出口名を推測で組み合わせないでください)。改札・出口のどちらも本文中で確認できない組は含めないでください。断定・候補のいずれも無い場合はこの配列を空にしてください。reasonにはその組を選んだ理由が本文にあれば1行程度で含めてください。
+- facilityCandidates: 改札・出口の組を配列で抽出してください。単一の組に断定できる場合は要素1件、2〜3択に絞り込める場合は複数要素を列挙してください(例:「AまたはB」という記述は2要素)。gateName/exitNameは本文中に逐語で明記されている名称のみを使ってください(言い換え・要約・正規化はしないでください)。1つの要素のgateNameとexitNameは、本文中で同じ選択肢として一緒に説明されている組み合わせのみにしてください(別々の文脈で言及された改札名と出口名を推測で組み合わせないでください)。exitDirectionは必ず含めてください（8方位: 北/北東/東/南東/南/南西/西/北西）。出口名が確認できない場合でも、方角は必ず抽出してください。reasonにはその組を選んだ理由を1行で記載してください（必須）。理由には目的地の方角を含めてください。改札・出口のどちらも本文中で確認できない組は含めないでください。断定・候補のいずれも無い場合はこの配列を空にしてください。
 本文に明記されていない情報を創作しないでください。confidenceは本文中の確信度の記述を参考に自己申告してください(不明な場合はlowとしてください)。`;
 
 function locationHint(station: Station): string {
@@ -209,13 +223,16 @@ export function buildNavigatorSearchPrompt(
 【改札・出口の決定手順(目的地からの逆算を厳守)】
 改札・出口は、駅名から直接検索して決めてはいけません。必ず以下の順序で決定してください。
 (a) まず${destinationHint ? "施設の正式な住所・所在地" : "目的地駅の代表出口"}を検索で特定する。
-(b) 到着駅の構内図・出口一覧から、その位置に最も近い出口を特定する。
+(b) 到着駅の構内図・出口一覧から、その位置に最も近い出口を特定する。同時に、駅から目的地への方角（北/北東/東/南東/南/南西/西/北西の8方位）を必ず確認する。
 (c) その出口に接続する改札を特定する。
 (d) その改札に近い号車・ドア位置を特定する。ただし号車・ドア位置は、到着ホーム・進行方向・編成両数まで確認できた場合のみ断定してよい。確認できない場合は「降車後、ホーム上の改札案内表示に従ってください」とし、号車・ドア位置は案内しない。
 この順序を飛ばして「到着駅名+利用路線+改札」のような検索から改札名を直接決定することは禁止します。特に到着駅に複数の改札がある場合、路線として通行可能というだけで改札を選んではいけません。
 
 【複数改札がある駅での比較】
-到着駅に複数の改札がある場合、今回の到着路線・到着ホームから通常利用でき、かつ営業時間内である改札に候補を絞った上で比較してください(駅の改札を無条件に「全て」比較する必要はありません)。比較は目的地への到達しやすさ(徒歩導線・階段の有無等)で行い、選んだ改札には短い理由を1行添えてください。理由が言語化できない改札は案内しないでください。
+到着駅に複数の改札がある場合、今回の到着路線・到着ホームから通常利用でき、かつ営業時間内である改札に候補を絞った上で比較してください(駅の改札を無条件に「全て」比較する必要はありません)。比較は目的地への到達しやすさ(徒歩導線・階段の有無等)で行い、選んだ改札には短い理由を1行添えてください。理由には目的地の方角を必ず含めてください（例:「目的地は東側のため、東口改札が最適」）。理由が言語化できない改札は案内しないでください。
+
+【方角情報の必須化】
+facilityCandidatesの各要素には、exitDirectionフィールドを必ず含めてください。これは目的地が駅のどの方向（8方位: 北/北東/東/南東/南/南西/西/北西）にあるかを示します。出口名が確認できない場合でも、方角情報は必ず記載してください。方角が確認できない場合は、構内図や地図から駅座標と目的地座標を参照して計算してください。
 
 【歩行距離・所要時間の評価軸】
 複数ルートが同等の場合は最も歩行距離の短いルートを優先してください。評価には、鉄道路線の乗換だけでなく、乗換駅構内・到着駅構内の移動、および改札・出口から目的地の実際の入口までの徒歩導線を含めてください。
@@ -234,7 +251,7 @@ export function buildNavigatorSearchPrompt(
 【出力順序】
 1. 最重要ポイント: 確証の条件を満たした項目のみ、乗るべき号車・降りる改札・利用する出口を簡潔に案内する。未確認の項目は断定を避ける。
 2. サマリー情報: 全体のルート概要(利用路線・乗換回数・所要時間目安)を簡潔に説明する。
-3. 詳細情報: 乗換え・号車位置・改札・出口を詳細に案内する。改札・出口を選んだ理由(目的地への導線上、なぜその改札/出口が最適か)を必ず1行添える。出口から先の徒歩ルートは含めない。
+3. 詳細情報: 乗換え・号車位置・改札・出口を詳細に案内する。改札・出口を選んだ理由(目的地への導線上、なぜその改札/出口が最適か、方角を含む)を必ず1行添える。出口から先の徒歩ルートは含めない。
 4. ファクトチェック結果: 所在地・改札出口配置それぞれについて、根拠とした情報源を簡潔に記載する。情報源間で矛盾があった場合はその旨を明記する。
 
 不要な雑談や広告は一切含めないでください。確認できた情報のみを正確かつ実用的に提供してください。
@@ -304,6 +321,35 @@ function extractNamedFacility(
   return { name, confidenceLevel };
 }
 
+/**
+ * Geminiが返した exitDirection を検証する。8方位のいずれかでなければ null を返す。
+ */
+function extractExitDirection(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (VALID_DIRECTIONS.includes(trimmed as typeof VALID_DIRECTIONS[number])) {
+    return trimmed;
+  }
+  return null;
+}
+
+/**
+ * 駅座標と目的地座標から方角ヒント（8方位）を計算する。
+ * bearing.ts の compassLabel を使用。
+ */
+function calculateDirectionHint(
+  stationCoordinates: Coordinates,
+  destinationCoordinates: Coordinates
+): string {
+  const bearing = bearingDegrees(
+    stationCoordinates.lat,
+    stationCoordinates.lng,
+    destinationCoordinates.lat,
+    destinationCoordinates.lng
+  );
+  return compassLabel(bearing);
+}
+
 // facilityCandidates配列の処理件数上限(安全弁)。classifyFacilityRecommendation
 // が4件以上でunavailableへ格下げするため実質的な上限はそちらだが、極端に
 // 大きい配列を無制限に処理しないよう、既存のMAX_WALKING_STEPS等と同じ考え方で
@@ -319,9 +365,15 @@ function extractFacilityCandidatePairs(raw: RawExtraction, searchText: string): 
     const candidate = item as RawFacilityCandidate;
     const gate = extractNamedFacility(candidate.gateName, candidate.confidence, searchText);
     const exit = extractNamedFacility(candidate.exitName, candidate.confidence, searchText);
+    
+    // exitDirection の抽出（8方位のバリデーション）
+    const exitDirection = extractExitDirection(candidate.exitDirection);
+    
+    // exit が null でも exitDirection があれば pair として保持する（approximate用）
     if (!gate && !exit) continue;
+    
     const reason = isNonEmptyBoundedText(candidate.reason, MAX_REASON_LENGTH) ? candidate.reason : null;
-    pairs.push({ gate, exit, reason });
+    pairs.push({ gate, exit, exitDirection, reason });
   }
   return pairs;
 }
@@ -341,6 +393,8 @@ async function toGuide(
   context: {
     destinationHint: string | null;
     arrivalStationName: string;
+    arrivalStationCoordinates: Coordinates;
+    destinationCoordinates: Coordinates | null;
   }
 ): Promise<SingleCallNavigatorGuide | null> {
   if (!Array.isArray(raw.lines) || raw.lines.length === 0) return null;
@@ -404,6 +458,48 @@ async function toGuide(
     }
   }
 
+  // 方角フォールバック: confirmed だが exit が null、かつ destinationCoordinates がある場合
+  if (
+    facility.state === "confirmed" &&
+    facility.pair.exit === null &&
+    context.destinationCoordinates
+  ) {
+    const pairs = extractFacilityCandidatePairs(raw, searchText);
+    const exitDirection = pairs[0]?.exitDirection;
+    
+    // Gemini の exitDirection を優先、なければ計算
+    const directionHint =
+      exitDirection ||
+      calculateDirectionHint(context.arrivalStationCoordinates, context.destinationCoordinates);
+
+    facility = {
+      state: "approximate",
+      pair: facility.pair,
+      directionHint,
+    };
+    
+    console.log(`[single-call-navigator] 方角フォールバック適用: ${directionHint}`);
+  }
+
+  // unavailable でも方角だけは提供できる場合のフォールバック
+  if (facility.state === "unavailable" && context.destinationCoordinates) {
+    const pairs = extractFacilityCandidatePairs(raw, searchText);
+    const exitDirection = pairs[0]?.exitDirection;
+    
+    const directionHint =
+      exitDirection ||
+      calculateDirectionHint(context.arrivalStationCoordinates, context.destinationCoordinates);
+    
+    // 最低限の pair を作成（gate/exit は null、directionHint のみ）
+    facility = {
+      state: "approximate",
+      pair: { gate: null, exit: null, reason: null },
+      directionHint,
+    };
+    
+    console.log(`[single-call-navigator] unavailable からの方角フォールバック: ${directionHint}`);
+  }
+
   const guide: SingleCallNavigatorGuide = {
     lines: raw.lines as string[],
     transferCount: raw.transferCount,
@@ -442,6 +538,11 @@ async function attemptGenerateSingleCallNavigatorGuide(
   return await toGuide(result.data, result.searchText, {
     destinationHint,
     arrivalStationName: destinationStation.stationName,
+    arrivalStationCoordinates: {
+      lat: destinationStation.latitude,
+      lng: destinationStation.longitude,
+    },
+    destinationCoordinates: destinationPlaceCoordinates,
   });
 }
 
@@ -513,7 +614,7 @@ export interface SingleCallNavigatorRun {
   final: Promise<SingleCallNavigatorGuide | null>;
 }
 
-const FACILITY_RANK = { unavailable: 0, alternatives: 1, confirmed: 2 } as const;
+const FACILITY_RANK = { unavailable: 0, approximate: 1, alternatives: 2, confirmed: 3 } as const;
 
 /**
  * 1回目と2回目の結果から最終結果を選択する。経路の整合性を保ちつつ、
@@ -521,6 +622,7 @@ const FACILITY_RANK = { unavailable: 0, alternatives: 1, confirmed: 2 } as const
  * 
  * 選択ルール:
  * - 片方null → もう一方を返す（現行バグ修正: 1回目を捨てない）
+ * - partial (gate-only) → full (gate+exit) の改善を検出
  * - 2回目の改札・出口が悪化 → 1回目を維持
  * - 経路不一致 → 1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
  * - 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口
@@ -533,6 +635,25 @@ export async function selectFinalGuide(
 ): Promise<SingleCallNavigatorGuide | null> {
   if (first === null) return second;
   if (second === null) return first;
+  
+  // partial → full 改善の検出
+  const firstIsPartial = 
+    first.facility.state === "confirmed" &&
+    (first.facility.pair.gate === null || first.facility.pair.exit === null);
+  const secondIsFull = 
+    second.facility.state === "confirmed" &&
+    second.facility.pair.gate !== null &&
+    second.facility.pair.exit !== null;
+  
+  // partial → full への改善があれば、経路一致を確認して採用
+  if (firstIsPartial && secondIsFull && (await isRouteConsistent(first, second))) {
+    console.log("[single-call-navigator] partial → full 改善を検出、2回目を採用");
+    return {
+      ...first,
+      facility: second.facility,
+      boarding: second.boarding,
+    };
+  }
   
   // 2回目が悪化していれば1回目を維持
   if (FACILITY_RANK[second.facility.state] <= FACILITY_RANK[first.facility.state]) {

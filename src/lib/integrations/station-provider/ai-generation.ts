@@ -69,8 +69,8 @@ function resolveFacilityPair(raw: RawFacilityPair): FacilityPair<NamedFacility> 
 /**
  * single-call-navigator.tsが返す生の3状態(自己申告のConfidenceLevelのみ)を、
  * 検証度Confidenceオブジェクトへ解決した3状態へ変換する。stateそのもの
- * (confirmed/alternatives/unavailable)は生成層で既に確定しているためここでは
- * 変えず、内側のconfidenceLevel→Confidence変換(groundedAiConfidence、
+ * (confirmed/alternatives/approximate/unavailable)は生成層で既に確定しているため
+ * ここでは変えず、内側のconfidenceLevel→Confidence変換(groundedAiConfidence、
  * ai_inferred上限medium)だけを行う。
  */
 export function resolveFacilityRecommendationConfidence(
@@ -81,6 +81,13 @@ export function resolveFacilityRecommendationConfidence(
   }
   if (raw.state === "alternatives") {
     return { state: "alternatives", pairs: raw.pairs.map(resolveFacilityPair) };
+  }
+  if (raw.state === "approximate") {
+    return { 
+      state: "approximate", 
+      pair: resolveFacilityPair(raw.pair), 
+      directionHint: raw.directionHint 
+    };
   }
   return raw;
 }

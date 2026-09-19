@@ -21,6 +21,12 @@ export interface NamedFacility {
    * (AI生成)由来のfacilityは常に"ai_inferred"を明示的に持つ。
    */
   provenance?: Provenance;
+  /**
+   * 出口名が取得できない場合の方角ヒント（8方位: 北/北東/東/南東/南/南西/西/北西）。
+   * 駅座標と目的地座標から計算される。confirmed/alternativesの場合は通常null。
+   * approximate状態（出口名なし、方角のみ）の場合に設定される。
+   */
+  directionHint?: string | null;
 }
 
 /**
@@ -49,6 +55,12 @@ export interface FacilityPair<F extends { name: string } = NamedFacility> {
 export type FacilityRecommendation<F extends { name: string } = NamedFacility> =
   | { state: "confirmed"; pair: FacilityPair<F> }
   | { state: "alternatives"; pairs: FacilityPair<F>[] }
+  | { 
+      state: "approximate"; 
+      pair: FacilityPair<F>; 
+      /** 方角ヒント（8方位）。approximate状態でのみ設定される。 */
+      directionHint: string;
+    }
   | { state: "unavailable"; reason: string };
 
 /**
