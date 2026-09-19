@@ -756,6 +756,32 @@ describe("generateSingleCallNavigatorGuide", () => {
         expect(result.facility.pair.exit).toBeNull();
       }
     });
+
+    test("2回目で confirmed full を取得した場合、3回目は試行せず早期終了", async () => {
+      mockIsJevAvailable.mockReturnValue(false);
+
+      // 1回目: unavailable, 2回目: confirmed full
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(
+          mockResult({
+            lines: ["相鉄・東急直通線"],
+            transferCount: 0,
+            estimatedMinutes: 35,
+          })
+        )
+        .mockResolvedValueOnce(mockResult(VALID_RAW));
+
+      const result = await generateSingleCallNavigatorGuide("test-api-key", NISHIYA, SHIBUYA, "ウエチャベ");
+
+      // 2回目で confirmed full を取得したので、3回目は試行しない
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+      expect(result).not.toBeNull();
+      expect(result?.facility.state).toBe("confirmed");
+      if (result?.facility.state === "confirmed") {
+        expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+        expect(result.facility.pair.exit?.name).toBe("A1出口");
+      }
+    });
   });
 });
 

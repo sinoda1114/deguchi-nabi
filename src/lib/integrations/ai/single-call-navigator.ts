@@ -693,22 +693,23 @@ export function generateSingleCallNavigatorRun(
   const final = attempt1.then(async (r1) => {
     let current = r1;
     let attemptCount = 1;
-    const MAX_ATTEMPTS = 3;
+    let lastRetryCheck: { shouldRetry: boolean; reason: string } | null = null;
+    const MAX_ATTEMPTS = 3;  // SAFETY: Never modify in loop, prevents infinite loops
     
     while (attemptCount < MAX_ATTEMPTS) {
       // 現在の結果が完全か判定
-      const retryCheck = current !== null ? await shouldRetryForFacility(current) : null;
-      if (current !== null && retryCheck && !retryCheck.shouldRetry) {
+      lastRetryCheck = current !== null ? await shouldRetryForFacility(current) : null;
+      if (current !== null && lastRetryCheck && !lastRetryCheck.shouldRetry) {
         // Retry 不要、完了
         console.log(
-          `[single-call-navigator] ${attemptCount}回目で完了: ${retryCheck.reason}`
+          `[single-call-navigator] ${attemptCount}回目で完了: ${lastRetryCheck.reason}`
         );
         break;
       }
       
       // Retry が必要
       attemptCount++;
-      const reason = current === null ? "結果がnullだった" : retryCheck!.reason;
+      const reason = current === null ? "結果がnullだった" : (lastRetryCheck?.reason ?? "再試行が必要");
       console.warn(
         `[single-call-navigator] ${attemptCount - 1}回目の試行で${reason}ため${attemptCount}回目を試行: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
       );
@@ -734,7 +735,7 @@ export function generateSingleCallNavigatorRun(
           merged.facility.pair.gate !== null && 
           merged.facility.pair.exit !== null) {
         console.log(
-          `[single-call-navigator] ${attemptCount}回目で confirmed full を取得、終了`
+          `[single-call-navigator] ${attemptCount}回attempt後に confirmed full を確認、終了`
         );
         return merged;
       }
@@ -742,13 +743,10 @@ export function generateSingleCallNavigatorRun(
       current = merged;
     }
     
-    if (attemptCount >= MAX_ATTEMPTS && current !== null) {
-      const finalCheck = await shouldRetryForFacility(current);
-      if (finalCheck.shouldRetry) {
-        console.warn(
-          `[single-call-navigator] ${MAX_ATTEMPTS}回の試行後も不完全: ${finalCheck.reason}`
-        );
-      }
+    if (attemptCount >= MAX_ATTEMPTS && lastRetryCheck?.shouldRetry) {
+      console.warn(
+        `[single-call-navigator] ${MAX_ATTEMPTS}回の試行後も不完全: ${lastRetryCheck.reason}`
+      );
     }
     
     return current;
