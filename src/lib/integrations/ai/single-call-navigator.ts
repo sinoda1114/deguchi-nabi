@@ -11,6 +11,7 @@ import {
   isJevAvailable,
   createJevConfig,
   evaluateRetryGate,
+  evaluateRouteConsistency,
 } from "@/lib/integrations/ai/JevClient";
 
 /**
@@ -456,11 +457,13 @@ const FACILITY_RANK = { unavailable: 0, alternatives: 1, confirmed: 2 } as const
  * - 2回目の改札・出口が悪化 → 1回目を維持
  * - 経路不一致 → 1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
  * - 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口
+ * 
+ * Phase 2: isRouteConsistent()の非同期化に伴い、selectFinalGuide()も非同期化。
  */
-export function selectFinalGuide(
+export async function selectFinalGuide(
   first: SingleCallNavigatorGuide | null,
   second: SingleCallNavigatorGuide | null
-): SingleCallNavigatorGuide | null {
+): Promise<SingleCallNavigatorGuide | null> {
   if (first === null) return second;
   if (second === null) return first;
   
@@ -470,7 +473,8 @@ export function selectFinalGuide(
   }
   
   // 経路不一致なら1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
-  if (!isRouteConsistent(first, second)) {
+  // Phase 2: JEV意味的判定により、表記揺れでの誤った不一致判定を軽減
+  if (!(await isRouteConsistent(first, second))) {
     console.warn(
       "[single-call-navigator] 再試行結果の経路が1回目と不一致のため改札・出口を採用しません",
       {
@@ -490,12 +494,13 @@ export function selectFinalGuide(
 }
 
 /**
- * 2つの結果が同一経路を表しているか判定する。
+ * 2つの結果が同一経路を表しているか判定する（ルールベース）。
  * 到着路線（末尾）・乗換回数・到着番線で比較。
  * 
  * 路線名・番線の表記揺れを吸収するため正規化して比較。
+ * Phase 2: JEV統合後もフォールバックとして維持。
  */
-export function isRouteConsistent(
+function isRouteConsistentRuleBased(
   a: SingleCallNavigatorGuide,
   b: SingleCallNavigatorGuide
 ): boolean {
@@ -522,6 +527,45 @@ export function isRouteConsistent(
   const samePlatform = !platformA || !platformB || platformA === platformB;
   
   return sameArrivalLine && a.transferCount === b.transferCount && samePlatform;
+}
+
+/**
+ * 2つの結果が同一経路を表しているか判定する（非同期版、JEV統合）。
+ * 
+ * Phase 2: ルールベース判定でfalseの場合、JEVで意味的判定を試行。
+ * JEV未設定時やエラー時はルールベース結果にフォールバック。
+ */
+export async function isRouteConsistent(
+  a: SingleCallNavigatorGuide,
+  b: SingleCallNavigatorGuide
+): Promise<boolean> {
+  // まずルールベース判定
+  const ruleBasedResult = isRouteConsistentRuleBased(a, b);
+  
+  // ルールベースでtrue → JEV呼び出し不要（レイテンシ0）
+  if (ruleBasedResult) {
+    return true;
+  }
+  
+  // ルールベースでfalse → JEVで意味的判定を試行（JEV利用可能な場合のみ）
+  if (isJevAvailable()) {
+    const jevConfig = createJevConfig();
+    if (jevConfig) {
+      try {
+        const decision = await evaluateRouteConsistency(a, b, jevConfig);
+        if (decision.reason) {
+          console.log(`[single-call-navigator] ${decision.reason}`);
+        }
+        return decision.isConsistent;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV route consistency evaluation failed, falling back to rule-based:", message);
+      }
+    }
+  }
+  
+  // フォールバック: ルールベース結果（false）を返す
+  return ruleBasedResult;
 }
 
 /**
@@ -577,7 +621,8 @@ export function generateSingleCallNavigatorRun(
       r2 = null;
     }
     
-    return selectFinalGuide(r1, r2);
+    // Phase 2: selectFinalGuide()の非同期化に対応
+    return await selectFinalGuide(r1, r2);
   });
   
   // first: 1回目の結果、またはnullならfinalと同時に決着

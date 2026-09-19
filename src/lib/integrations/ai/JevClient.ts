@@ -1,19 +1,27 @@
 /**
  * JEV (TypeSafe System One) クライアント
  * Phase 1: retry gate判定（single-call-navigator.tsのisFacilityUnavailable置換）
+ * Phase 2: 経路一貫性判定（isRouteConsistentの意味的判定強化）
  *
  * 環境変数: JEV_API_KEY（必須）
- * フォールバック: 環境変数未設定時は常にfalseを返す（既存挙動維持）
+ * フォールバック: 環境変数未設定時は既存挙動維持
  * タイムアウト: 1秒（判定に時間がかかる場合はフォールバック）
  */
 
 import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
-import type { RawNamedFacility } from "./single-call-navigator";
+import type { RawNamedFacility, SingleCallNavigatorGuide } from "./single-call-navigator";
 
 /** JEV判定結果（retry が必要かどうか） */
 export interface JevRetryGateDecision {
   shouldRetry: boolean;
+  /** JEVによる判定理由（デバッグ用） */
+  reason?: string;
+}
+
+/** JEV経路一貫性判定結果 */
+export interface JevRouteConsistencyDecision {
+  isConsistent: boolean;
   /** JEVによる判定理由（デバッグ用） */
   reason?: string;
 }
@@ -127,6 +135,103 @@ export async function evaluateRetryGate(
     const errorMsg = safeErrorMessage(error);
     console.warn(`[JevClient] Retry gate evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`);
     // 例外を再スローして、isFacilityUnavailableのcatchで従来判定（facility.state === "unavailable"）へ戻す
+    throw error;
+  } finally {
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
+  }
+}
+
+/**
+ * 2つの経路情報が同一の鉄道ルートを表しているか、意味的に判定する。
+ * 
+ * Phase 2の目標:
+ * - ルールベース判定（表記の厳密一致）の限界を克服
+ * - 「東横線」vs「東急東横線」、「3番線」vs「3番ホーム」のような
+ *   意味的に同じだが表記が異なる経路を一致と判定
+ * 
+ * 判定基準:
+ * - 路線名の意味的同値性（運営会社の省略、愛称表記の差異を許容）
+ * - 番線の意味的同値性（「番線」「番ホーム」「ホーム」の差異を許容）
+ * - 乗換回数は厳密に一致している必要がある（意味的判定でも緩和しない）
+ * 
+ * Fail-open設計:
+ * - JEV API呼び出しが失敗・タイムアウトした場合、例外をスローして
+ *   呼び出し元（isRouteConsistent）のルールベース判定へフォールバック
+ */
+export async function evaluateRouteConsistency(
+  a: SingleCallNavigatorGuide,
+  b: SingleCallNavigatorGuide,
+  config: JevClientConfig
+): Promise<JevRouteConsistencyDecision> {
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const apiCallPromise = (async () => {
+      const client = new TypeSafeClient({
+        apiKey: config.apiKey,
+        timeout: timeoutMs,
+      });
+
+      // 到着路線（末尾）を抽出
+      const lastLineA = a.lines[a.lines.length - 1];
+      const lastLineB = b.lines[b.lines.length - 1];
+
+      const state: Record<string, string | number | boolean | null> = {
+        lineA: lastLineA,
+        lineB: lastLineB,
+        transferCountA: a.transferCount,
+        transferCountB: b.transferCount,
+        platformA: a.arrivalPlatformNumber ?? "不明",
+        platformB: b.arrivalPlatformNumber ?? "不明",
+      };
+
+      return await client.systemOne(
+        {
+          state,
+          questions: {
+            sameRoute: noul(
+              "2つの経路情報（lineA/lineB、platformA/platformB）が、同一の鉄道ルートを表していますか？路線名・番線の表記揺れ（「東横線」vs「東急東横線」、「3番線」vs「3番ホーム」等）は許容し、意味的に同じルートならtrueを返してください。乗換回数が異なる場合や、明らかに異なる路線・方向の場合はfalseを返してください。",
+              {
+                true: "同一ルート（表記揺れあり）",
+                false: "異なるルート",
+              }
+            ),
+          },
+        },
+        { signal: controller.signal }
+      );
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([apiCallPromise, timeoutPromise]);
+
+    const sameRouteNoul = (result.answers.sameRoute as { noul: number }).noul;
+    const isConsistent = sameRouteNoul > 0.5;
+
+    return {
+      isConsistent,
+      reason: isConsistent
+        ? `JEV判定: 同一ルート（確信度: ${sameRouteNoul.toFixed(2)}）`
+        : `JEV判定: 異なるルート（確信度: ${(1 - sameRouteNoul).toFixed(2)}）`,
+    };
+  } catch (error) {
+    // Fail-open: エラー時は例外を再スローし、呼び出し元のルールベース判定へフォールバック
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMsg = safeErrorMessage(error);
+    console.warn(`[JevClient] Route consistency evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`);
     throw error;
   } finally {
     clearTimeout(abortTimeoutId);
