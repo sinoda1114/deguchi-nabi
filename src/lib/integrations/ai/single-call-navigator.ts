@@ -458,9 +458,11 @@ async function toGuide(
     }
   }
 
-  // 方角フォールバック: confirmed だが exit が null、かつ destinationCoordinates がある場合
+  // 方角フォールバック: confirmed だが exit が null、かつ gate が存在し、destinationCoordinates がある場合
+  // 新成功基準: gate AND exit の両方が必須。exit-only は失敗とする。
   if (
     facility.state === "confirmed" &&
+    facility.pair.gate !== null &&
     facility.pair.exit === null &&
     context.destinationCoordinates
   ) {
@@ -478,27 +480,11 @@ async function toGuide(
       directionHint,
     };
     
-    console.log(`[single-call-navigator] 方角フォールバック適用: ${directionHint}`);
+    console.log(`[single-call-navigator] 方角フォールバック適用（gate有り）: gate=${facility.pair.gate!.name}, direction=${directionHint}`);
   }
 
-  // unavailable でも方角だけは提供できる場合のフォールバック
-  if (facility.state === "unavailable" && context.destinationCoordinates) {
-    const pairs = extractFacilityCandidatePairs(raw, searchText);
-    const exitDirection = pairs[0]?.exitDirection;
-    
-    const directionHint =
-      exitDirection ||
-      calculateDirectionHint(context.arrivalStationCoordinates, context.destinationCoordinates);
-    
-    // 最低限の pair を作成（gate/exit は null、directionHint のみ）
-    facility = {
-      state: "approximate",
-      pair: { gate: null, exit: null, reason: null },
-      directionHint,
-    };
-    
-    console.log(`[single-call-navigator] unavailable からの方角フォールバック: ${directionHint}`);
-  }
+  // unavailable 状態では方角フォールバックを適用しない（gate AND exit 必須のため）
+  // gate がない場合は unavailable のまま維持し、retry で改善を試みる
 
   const guide: SingleCallNavigatorGuide = {
     lines: raw.lines as string[],
@@ -599,12 +585,26 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
     }
   }
   
-  // 最終フォールバック: 従来の件数ベース判定
-  // approximate状態でgate/exitの両方がnullの場合もretryの対象とする
-  return guide.facility.state === "unavailable" ||
-         (guide.facility.state === "approximate" &&
-          guide.facility.pair.gate === null &&
-          guide.facility.pair.exit === null);
+  // 最終フォールバック: gate AND exit 必須のルールベース判定
+  // 新成功基準: gate AND exit の両方が存在する場合のみ完全。
+  // gate OR exit が欠落している場合は retry して改善を試みる。
+  if (guide.facility.state === "unavailable") {
+    return true; // unavailable → retry必須
+  }
+  
+  if (guide.facility.state === "confirmed" || guide.facility.state === "approximate") {
+    const { gate, exit } = guide.facility.pair;
+    // gate OR exit が null → 不完全なので retry
+    if (gate === null || exit === null) {
+      console.log(`[single-call-navigator] Incomplete facility (gate=${gate?.name ?? 'null'}, exit=${exit?.name ?? 'null'}), will retry`);
+      return true;
+    }
+    // 両方存在 → 完全
+    return false;
+  }
+  
+  // alternatives → 複数候補があるので retry 不要
+  return false;
 }
 
 /**
