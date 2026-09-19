@@ -31,7 +31,7 @@ describe("JevClient", () => {
       process.env.JEV_API_KEY = "test-key";
       const { TypeSafeClient } = await import("@typesafe-ai/sdk");
       const mockSystemOne = vi.fn().mockResolvedValue({ answers: { pong: { noul: 1 } } });
-      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as unknown as InstanceType<typeof TypeSafeClient>);
 
       const result = await checkJevHealth();
 
@@ -46,7 +46,7 @@ describe("JevClient", () => {
       process.env.JEV_API_KEY = "test-key";
       const { TypeSafeClient } = await import("@typesafe-ai/sdk");
       const mockSystemOne = vi.fn().mockRejectedValue(new Error("API error"));
-      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as unknown as InstanceType<typeof TypeSafeClient>);
 
       const result = await checkJevHealth();
 
@@ -57,7 +57,7 @@ describe("JevClient", () => {
       process.env.JEV_API_KEY = "test-key";
       const { TypeSafeClient } = await import("@typesafe-ai/sdk");
       const mockSystemOne = vi.fn().mockRejectedValue(new Error("401 Unauthorized"));
-      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as unknown as InstanceType<typeof TypeSafeClient>);
 
       const result = await checkJevHealth();
 
@@ -68,7 +68,7 @@ describe("JevClient", () => {
       process.env.JEV_API_KEY = "test-key";
       const { TypeSafeClient } = await import("@typesafe-ai/sdk");
       const mockSystemOne = vi.fn().mockRejectedValue(new Error("timeout"));
-      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as unknown as InstanceType<typeof TypeSafeClient>);
 
       const result = await checkJevHealth();
 
@@ -81,7 +81,7 @@ describe("JevClient", () => {
       const error = new Error("Aborted");
       error.name = "AbortError";
       const mockSystemOne = vi.fn().mockRejectedValue(error);
-      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as any);
+      vi.mocked(TypeSafeClient).mockImplementation(() => ({ systemOne: mockSystemOne }) as unknown as InstanceType<typeof TypeSafeClient>);
 
       const result = await checkJevHealth();
 
