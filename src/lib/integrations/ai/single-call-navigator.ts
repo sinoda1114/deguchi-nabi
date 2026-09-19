@@ -60,6 +60,15 @@ const VALID_DIRECTIONS = ["北", "北東", "東", "南東", "南", "南西", "�
 // nullの場合のみ丸ごと1回だけ再試行する(合計最大2試行)。
 const MAX_ATTEMPTS = 2;
 
+// タイムアウト対策: retry予算管理
+// API Route全体のタイムアウト（Next.js App Routerのデフォルトは300秒）から
+// 安全マージンを引いた値。1回目の所要時間がこれを超えたら2回目をスキップ。
+const RETRY_BUDGET_MS = 200_000; // 200秒
+
+// 2回目の試行に必要な最小時間。Gemini平均55秒 + JEV・処理マージン = 60秒。
+// 残り時間がこれ未満なら2回目をスキップ（タイムアウトリスク回避）。
+const MIN_RETRY_TIME_MS = 60_000; // 60秒
+
 /** single-call-navigator.ts自身は自己申告のConfidenceLevel(生の文字列)しか
  * 持たず、検証度Confidenceオブジェクト(reasons/verifiedAt等)への変換は
  * AiStationAdapter層(groundedAiConfidence)の責務。domain/facility-
@@ -559,7 +568,8 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
         if (retryGateDecision.reason) {
           console.log(`[single-call-navigator] JEV retry gate: ${retryGateDecision.shouldRetry} (${retryGateDecision.reason})`);
         }
-        // Phase 1が retry不要と判定 → 確定（Phase 2-Cは呼ばない）
+        // Phase 1が retry不要と判定 → 確定（Phase 2-Cはスキップ）
+        // タイムアウト対策: 不要なJEV呼び出しを削減
         if (!retryGateDecision.shouldRetry) {
           return false;
         }
@@ -781,6 +791,8 @@ export async function isRouteConsistent(
  * 1回目がunavailableでも再試行で改善する可能性があるため、firstは先に公開し、
  * 2回目で経路整合性を保ちつつfacilityを昇格させる。2回目がnullまたは例外の場合、
  * firstがあればfinalはfirstにフォールバック（現行バグ修正：1回目を捨てない）。
+ * 
+ * タイムアウト対策: 1回目の所要時間を記録し、残り時間が不十分なら2回目をスキップ。
  */
 export function generateSingleCallNavigatorRun(
   apiKey: string,
@@ -798,18 +810,34 @@ export function generateSingleCallNavigatorRun(
       destinationPlaceCoordinates
     );
   
+  const startTime = Date.now();
   const attempt1 = attempt();
   
   const final = attempt1.then(async (r1) => {
+    const elapsedTime = Date.now() - startTime;
+    const remainingTime = RETRY_BUDGET_MS - elapsedTime;
+    
     // 1回目で完了（confirmed/alternatives または null）
     if (r1 !== null && !(await isFacilityUnavailable(r1))) {
+      return r1;
+    }
+    
+    // 残り時間チェック: 2回目を実行する時間が不十分ならスキップ
+    if (remainingTime < MIN_RETRY_TIME_MS) {
+      const reason = r1 === null ? "結果がnull" : "改札・出口の情報が不完全";
+      console.warn(
+        `[single-call-navigator] ${reason}だが、残り時間が不十分（${Math.floor(remainingTime / 1000)}秒）のため再試行をスキップ: ` +
+        `origin=${originStation.stationName}, destination=${destinationStation.stationName}`
+      );
+      // 1回目の結果を返す（不完全でもタイムアウトより良い）
       return r1;
     }
     
     // 再試行が必要
     const reason = r1 === null ? "結果がnullだった" : "改札・出口の情報が両方とも確認できなかった";
     console.warn(
-      `[single-call-navigator] 1回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
+      `[single-call-navigator] 1回目の試行で${reason}ため再試行します（残り時間: ${Math.floor(remainingTime / 1000)}秒）: ` +
+      `origin=${originStation.stationName}, destination=${destinationStation.stationName}`
     );
     
     let r2: SingleCallNavigatorGuide | null;

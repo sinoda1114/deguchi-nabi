@@ -53,7 +53,7 @@ interface JevClientConfig {
   timeoutMs?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 1000;
+const DEFAULT_TIMEOUT_MS = 2000; // タイムアウト対策: 1秒 → 2秒に延長（JEV成功率向上）
 
 /**
  * エラーメッセージを安全に文字列化（シークレット漏洩防止）
