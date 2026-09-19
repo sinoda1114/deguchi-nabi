@@ -24,10 +24,14 @@ const BENCHMARK_CONFIG = {
   // Number of runs to execute (N)
   runs: 10,
   
-  // Fixture test case: 西谷駅 (Nishiya) → 横浜駅 (Yokohama)
-  // This is a real-world case that exercises:
+  // Fixture test case: 西谷駅 (Nishitani) → 渋谷駅 (Shibuya)
+  // User-specified benchmark route. This exercises:
   // - Route generation (AI search + extract)
   // - Unified generation (gate/exit/boarding via single-call-navigator)
+  // 
+  // Note: User mentioned 「うえちゃべ」 (possible exit/landmark or STT error).
+  // Meaning not yet confirmed. If product UI has exit/poi field, this may be relevant.
+  // Current fixture uses station-to-station without additional exit specification.
   fixture: {
     origin: {
       type: "station" as const,
@@ -35,11 +39,11 @@ const BENCHMARK_CONFIG = {
     },
     destination: {
       type: "station" as const,
-      stationId: "yokohama", // 横浜駅
+      stationId: "shibuya", // 渋谷駅
     },
     mode: "easy" as RouteMode,
     originLabel: "西谷駅",
-    destinationLabel: "横浜駅",
+    destinationLabel: "渋谷駅",
   },
   
   // Alternative fixture with place destination (exercises destinationCoordinates path)

@@ -59,10 +59,12 @@ The API route has `export const maxDuration = 290;` to handle worst-case timing.
 
 ### Test Case
 
-- **Origin**: 西谷駅 (Nishiya) `stationId: "nishiya"`
-- **Destination**: 横浜駅 (Yokohama) `stationId: "yokohama"`
+- **Origin**: 西谷駅 (Nishitani) `stationId: "nishiya"`
+- **Destination**: 渋谷駅 (Shibuya) `stationId: "shibuya"`
 - **Mode**: `easy`
 - **Runs**: N=10
+
+**Note on 「うえちゃべ」**: User mentioned this phrase (possible exit/landmark or STT error). Meaning not yet confirmed. The current fixture uses station-to-station routing without additional exit specification. If the product UI supports specifying exits or POIs, this may become relevant for enhanced benchmark scenarios.
 
 This fixture exercises both:
 - AI route generation (Google Search Grounding + structured extract)

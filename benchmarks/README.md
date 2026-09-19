@@ -19,7 +19,9 @@ The exact 「一回生成／一回叩く」(one generation / one run) path:
 
 ### Test Case
 
-**Fixture**: 西谷駅 (Nishiya) → 横浜駅 (Yokohama), mode=easy
+**Fixture**: 西谷駅 (Nishitani) → 渋谷駅 (Shibuya), mode=easy
+
+**Note**: User mentioned 「うえちゃべ」 (possible exit/landmark or STT error). Meaning not yet confirmed. The current fixture uses station-to-station routing without additional exit specification. If the product UI supports exit/POI fields, this may become relevant for future tests.
 
 This exercises both:
 - Route generation (AI search + structured extract via Google Gemini Search Grounding)
