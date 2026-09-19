@@ -62,15 +62,24 @@ export async function evaluateRetryGate(
       timeout: timeoutMs,
     });
 
+    const state: Record<string, string | number | boolean | null> = {
+      facilityState: facility.state,
+    };
+
+    if (facility.state === "unavailable") {
+      state.facilityReason = facility.reason;
+    } else if (facility.state === "confirmed") {
+      state.hasPair = true;
+    } else if (facility.state === "alternatives") {
+      state.pairsCount = facility.pairs.length;
+    }
+
     const result = await client.systemOne(
       {
-        state: JSON.parse(JSON.stringify({
-          facilityState: facility.state,
-          facilityData: facility,
-        })),
+        state,
         questions: {
           needsRetry: noul(
-            "この施設情報は、ユーザーが駅構内で改札・出口を見つけるのに十分な情報を提供していますか？unavailable状態でも、代替情報や部分的な情報が実質的に有用であればfalseを返してください。本当に情報が不足している場合のみtrueを返してください。",
+            "この施設情報は、ユーザーが駅構内で改札・出口を見つけるのに十分な情報を提供していますか？unavailable状態でも、代替情報や部分的な情報が実質的に有用であればfalseを返してください。本当に情報が足りない場合のみtrueを返してください。",
             {
               true: "情報が不足しており、リトライが必要",
               false: "十分な情報があり、リトライ不要",
@@ -90,7 +99,7 @@ export async function evaluateRetryGate(
         : `JEV判定: 情報十分（確信度: ${(1 - result.answers.needsRetry.noul).toFixed(2)}）`,
     };
   } catch (error) {
-    if ((error as Error).name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError") {
       console.warn("[JevClient] Retry gate evaluation timed out, falling back to false");
       return { shouldRetry: false, reason: "Timeout fallback" };
     }
