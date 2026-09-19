@@ -5,6 +5,7 @@ import {
   evaluateRetryGate,
   evaluateRouteConsistency,
   evaluateFacilityCompleteness,
+  selectBestFacilityPair,
 } from "../JevClient";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
 import type { RawNamedFacility, SingleCallNavigatorGuide } from "../single-call-navigator";
@@ -569,6 +570,144 @@ describe("JevClient", () => {
       };
 
       await expect(evaluateFacilityCompleteness(facility, { apiKey: "test_key" })).rejects.toThrow("Network error");
+    });
+  });
+
+  describe("selectBestFacilityPair (Phase 2-B)", () => {
+    test("複数候補から最適な1つを選択（候補1を選択）", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          bestCandidateIndex: {
+            type: "noul",
+            noul: 0.0,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const pairs = [
+        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: "目的地に最も近い" },
+        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: null },
+      ];
+
+      const context = {
+        destinationHint: "ウエチャベ",
+        arrivalStationName: "渋谷駅",
+        searchText: "A1出口が目的地に最も近いです。",
+      };
+
+      const result = await selectBestFacilityPair(pairs, context, { apiKey: "test_key" });
+      expect(result.selectedIndex).toBe(0);
+      expect(result.reason).toContain("候補1を選択");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+    });
+
+    test("複数候補から最適な1つを選択（候補2を選択）", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          bestCandidateIndex: {
+            type: "noul",
+            noul: 1.0,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const pairs = [
+        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null },
+        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: "エレベーターあり" },
+      ];
+
+      const context = {
+        destinationHint: "ウエチャベ",
+        arrivalStationName: "渋谷駅",
+        searchText: "A2出口にはエレベーターがあり、目的地へのアクセスが便利です。",
+      };
+
+      const result = await selectBestFacilityPair(pairs, context, { apiKey: "test_key" });
+      expect(result.selectedIndex).toBe(1);
+      expect(result.reason).toContain("候補2を選択");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+    });
+
+    test("候補が1つ以下の場合は例外をスロー", async () => {
+      const mockSystemOne = vi.fn();
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const pairs = [{ gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null }];
+
+      const context = {
+        destinationHint: "ウエチャベ",
+        arrivalStationName: "渋谷駅",
+        searchText: "",
+      };
+
+      await expect(selectBestFacilityPair(pairs, context, { apiKey: "test_key" })).rejects.toThrow("at least 2 pairs");
+      expect(mockSystemOne).not.toHaveBeenCalled();
+    });
+
+    test("タイムアウト時は例外を再スロー（alternatives維持）", async () => {
+      const abortError = new Error("AbortError");
+      abortError.name = "AbortError";
+
+      const mockSystemOne = vi.fn().mockRejectedValue(abortError);
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const pairs = [
+        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null },
+        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: null },
+      ];
+
+      const context = {
+        destinationHint: "ウエチャベ",
+        arrivalStationName: "渋谷駅",
+        searchText: "",
+      };
+
+      await expect(selectBestFacilityPair(pairs, context, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow("AbortError");
+    });
+
+    test("API呼び出しエラー時は例外を再スロー（alternatives維持）", async () => {
+      const mockSystemOne = vi.fn().mockRejectedValue(new Error("Network error"));
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const pairs = [
+        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null },
+        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: null },
+      ];
+
+      const context = {
+        destinationHint: "ウエチャベ",
+        arrivalStationName: "渋谷駅",
+        searchText: "",
+      };
+
+      await expect(selectBestFacilityPair(pairs, context, { apiKey: "test_key" })).rejects.toThrow("Network error");
     });
   });
 });

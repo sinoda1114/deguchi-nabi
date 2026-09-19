@@ -38,6 +38,14 @@ export interface JevFacilityCompletenessDecision {
   reason?: string;
 }
 
+/** JEV 候補選択判定結果（Phase 2-B） */
+export interface JevCandidateSelectionDecision {
+  /** 選択された候補のindex（0-based） */
+  selectedIndex: number;
+  /** 選択理由（デバッグ用） */
+  reason?: string;
+}
+
 /** JEVクライアント設定 */
 interface JevClientConfig {
   apiKey: string;
@@ -375,6 +383,120 @@ export async function evaluateFacilityCompleteness(
     const errorName = error instanceof Error ? error.name : "UnknownError";
     const errorMsg = safeErrorMessage(error);
     console.warn(`[JevClient] Facility completeness evaluation failed (${errorName}): ${errorMsg}, falling back to Phase 1`);
+    throw error;
+  } finally {
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
+  }
+}
+
+/**
+ * 複数の施設候補から最適な1つを選択する（Phase 2-B: Candidate Selection）。
+ * 
+ * スコープ: alternatives（2-3件の複数候補）から最適な1つを選択。
+ * 目的: alternatives → confirmed への昇格により、exit安定化・UX向上。
+ * 
+ * Phase 2-Bの目標:
+ * - 「A または B」と複数候補がある場合、目的地への距離・導線を考慮して1つに絞る
+ * - alternatives発生率 15-20% → 5-10% に削減
+ * - exit安定化の本丸施策
+ * 
+ * 判定基準:
+ * - 目的地への距離（searchTextから読み取る）
+ * - 導線の明確さ（階段・エレベーター等の情報）
+ * - 営業時間の制約（24時間 vs 限定時間）
+ * 
+ * Fail-open設計:
+ * - JEV失敗時は例外を再スロー、alternatives のまま維持
+ */
+export async function selectBestFacilityPair(
+  pairs: Array<{ gate: { name: string } | null; exit: { name: string } | null; reason: string | null }>,
+  context: {
+    destinationHint: string | null;
+    arrivalStationName: string;
+    searchText: string;
+  },
+  config: JevClientConfig
+): Promise<JevCandidateSelectionDecision> {
+  if (pairs.length <= 1) {
+    throw new Error("Phase 2-B: selectBestFacilityPair requires at least 2 pairs");
+  }
+
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const apiCallPromise = (async () => {
+      const client = new TypeSafeClient({
+        apiKey: config.apiKey,
+        timeout: timeoutMs,
+      });
+
+      // 各候補のスコアを個別に評価
+      const scores: number[] = [];
+      for (let i = 0; i < pairs.length; i++) {
+        const pair = pairs[i];
+        const gateName = pair.gate?.name ?? "（改札不明）";
+        const exitName = pair.exit?.name ?? "（出口不明）";
+        const reason = pair.reason || "";
+
+        const state: Record<string, string | number | boolean | null> = {
+          destinationHint: context.destinationHint,
+          arrivalStationName: context.arrivalStationName,
+          gateName,
+          exitName,
+          reason,
+          candidateIndex: i + 1,
+        };
+
+        const result = await client.systemOne(
+          {
+            state,
+            questions: {
+              isBestCandidate: noul(
+                `この改札・出口の組み合わせは、目的地「${context.destinationHint ?? "駅"}」への到達に最適ですか？判断基準: (1) 目的地への距離が近い、(2) 導線が明確（階段・エレベーターの記述あり）、(3) 営業時間の制約が少ない。\n\n改札: ${gateName}\n出口: ${exitName}\n理由: ${reason || "（記載なし）"}`,
+                {
+                  true: "この候補が最適",
+                  false: "他の候補の方が良い",
+                }
+              ),
+            },
+          },
+          { signal: controller.signal }
+        );
+
+        const isBestNoul = (result.answers.isBestCandidate as { noul: number }).noul;
+        scores.push(isBestNoul);
+      }
+
+      // 最も高いスコアの候補を選択
+      const selectedIndex = scores.indexOf(Math.max(...scores));
+
+      return {
+        selectedIndex,
+        reason: `JEV判定: 候補${selectedIndex + 1}を選択（スコア: ${scores[selectedIndex].toFixed(2)}, 全スコア: ${scores.map(s => s.toFixed(2)).join(", ")}）`,
+      };
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([apiCallPromise, timeoutPromise]);
+    return result;
+  } catch (error) {
+    // Fail-open: エラー時は例外を再スロー、alternatives のまま維持
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMsg = safeErrorMessage(error);
+    console.warn(`[JevClient] Candidate selection failed (${errorName}): ${errorMsg}, keeping alternatives`);
     throw error;
   } finally {
     clearTimeout(abortTimeoutId);

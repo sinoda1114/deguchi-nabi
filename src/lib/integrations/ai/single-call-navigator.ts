@@ -13,6 +13,7 @@ import {
   evaluateRetryGate,
   evaluateRouteConsistency,
   evaluateFacilityCompleteness,
+  selectBestFacilityPair,
 } from "@/lib/integrations/ai/JevClient";
 
 /**
@@ -334,7 +335,14 @@ function isValidGuide(value: unknown): value is SingleCallNavigatorGuide {
   );
 }
 
-function toGuide(raw: RawExtraction, searchText: string): SingleCallNavigatorGuide | null {
+async function toGuide(
+  raw: RawExtraction,
+  searchText: string,
+  context: {
+    destinationHint: string | null;
+    arrivalStationName: string;
+  }
+): Promise<SingleCallNavigatorGuide | null> {
   if (!Array.isArray(raw.lines) || raw.lines.length === 0) return null;
   if (
     !raw.lines.every(
@@ -364,13 +372,45 @@ function toGuide(raw: RawExtraction, searchText: string): SingleCallNavigatorGui
     return null;
   }
 
+  let facility = classifyFacilityRecommendation(extractFacilityCandidatePairs(raw, searchText));
+
+  // Phase 2-B: Candidate Selection（alternatives → confirmed への昇格）
+  if (facility.state === "alternatives" && isJevAvailable()) {
+    const jevConfig = createJevConfig();
+    if (jevConfig) {
+      try {
+        const selection = await selectBestFacilityPair(
+          facility.pairs,
+          {
+            destinationHint: context.destinationHint,
+            arrivalStationName: context.arrivalStationName,
+            searchText,
+          },
+          jevConfig
+        );
+        if (selection.reason) {
+          console.log(`[single-call-navigator] JEV candidate selection: ${selection.reason}`);
+        }
+        // alternatives → confirmed へ昇格
+        facility = {
+          state: "confirmed",
+          pair: facility.pairs[selection.selectedIndex],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV candidate selection failed, keeping alternatives:", message);
+        // JEV失敗 → alternatives のまま維持
+      }
+    }
+  }
+
   const guide: SingleCallNavigatorGuide = {
     lines: raw.lines as string[],
     transferCount: raw.transferCount,
     estimatedMinutes: raw.estimatedMinutes,
     arrivalPlatformNumber: extractArrivalPlatformNumber(raw.arrivalPlatformNumber),
     boarding: extractBoarding(raw),
-    facility: classifyFacilityRecommendation(extractFacilityCandidatePairs(raw, searchText)),
+    facility,
   };
 
   return isValidGuide(guide) ? guide : null;
@@ -399,7 +439,10 @@ async function attemptGenerateSingleCallNavigatorGuide(
   );
 
   if (!result) return null;
-  return toGuide(result.data, result.searchText);
+  return await toGuide(result.data, result.searchText, {
+    destinationHint,
+    arrivalStationName: destinationStation.stationName,
+  });
 }
 
 /**
