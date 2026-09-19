@@ -372,6 +372,48 @@ describe("generateSingleCallNavigatorGuide", () => {
   });
 
   describe("JEV統合（Phase 1: retry gate判定）", () => {
+    test("confirmed状態ではJEVを呼ばずに直ちにretry不要と判定", async () => {
+      mockIsJevAvailable.mockReturnValue(true);
+      mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
+      
+      searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(mockResult(VALID_RAW));
+
+      const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+      
+      // confirmedなので1回のみ（retryなし）、JEVも呼ばれない
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+      expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
+      expect(result?.facility.state).toBe("confirmed");
+    });
+
+    test("alternatives状態ではJEVを呼ばずに直ちにretry不要と判定", async () => {
+      mockIsJevAvailable.mockReturnValue(true);
+      mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
+      
+      const searchText = "利用する出口はみなみ西口または5番街方面出口のいずれかです。改札は1階改札です。";
+      searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+        mockResult(
+          {
+            lines: ["相鉄本線"],
+            transferCount: 0,
+            estimatedMinutes: 10,
+            facilityCandidates: [
+              { gateName: "1階改札", exitName: "みなみ西口", confidence: "medium" },
+              { gateName: "1階改札", exitName: "5番街方面出口", confidence: "medium" },
+            ],
+          },
+          searchText
+        )
+      );
+
+      const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+      
+      // alternativesなので1回のみ（retryなし）、JEVも呼ばれない
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+      expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
+      expect(result?.facility.state).toBe("alternatives");
+    });
+
     test("JEV_API_KEYが設定されていない場合、従来のルールベース判定を使用する", async () => {
       mockIsJevAvailable.mockReturnValue(false);
       searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
@@ -416,9 +458,7 @@ describe("generateSingleCallNavigatorGuide", () => {
     test("JEVがshouldRetry=trueを返した場合、retryを実行する", async () => {
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
-      mockEvaluateRetryGate
-        .mockResolvedValueOnce({ shouldRetry: true, reason: "JEV判定でretry必要" })
-        .mockResolvedValueOnce({ shouldRetry: false });
+      mockEvaluateRetryGate.mockResolvedValueOnce({ shouldRetry: true, reason: "JEV判定でretry必要" });
 
       searchAndGenerateStructuredContentWithSearchText
         .mockResolvedValueOnce(
@@ -432,9 +472,10 @@ describe("generateSingleCallNavigatorGuide", () => {
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
       
-      // 1回目でJEVがretryと判定、2回目で成功
+      // 1回目: unavailable→JEV判定でretry必要→retry実行
+      // 2回目: confirmed→JEV呼び出しなし（confirmedでは早期return）
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
-      expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(2);
+      expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(1);
       expect(result?.facility.state).toBe("confirmed");
     });
 
