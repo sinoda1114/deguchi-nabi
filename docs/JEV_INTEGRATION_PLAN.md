@@ -721,7 +721,7 @@ if (process.env.JEV_API_KEY) {
 }
 
 // ❌ 誤り: TYPESAFE_API_KEY（内部名を外部に露出）
-if (process.env.TYPESAFE_API_KEY) {
+if (process.env.JEV_API_KEY) {
   // ...
 }
 ```
