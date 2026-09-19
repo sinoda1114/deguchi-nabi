@@ -418,7 +418,9 @@ async function attemptGenerateSingleCallNavigatorGuide(
 async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
   // confirmed/alternatives: 情報が既に十分なので直ちにfalse（リトライ不要）
   if (guide.facility.state === "confirmed" || guide.facility.state === "alternatives") {
-    console.log(`[single-call-navigator] Skipping JEV for ${guide.facility.state} state (early return optimization)`);
+    if (process.env.DEBUG_JEV === "true") {
+      console.log(`[single-call-navigator] Skipping JEV for ${guide.facility.state} state (early return optimization)`);
+    }
     return false;
   }
   
