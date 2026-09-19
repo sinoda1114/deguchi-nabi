@@ -1,20 +1,48 @@
 /**
  * JEV (TypeSafe System One) クライアント
  * Phase 1: retry gate判定（single-call-navigator.tsのisFacilityUnavailable置換）
+ * Phase 2: 経路一貫性判定（isRouteConsistentの意味的判定強化）
  *
  * 環境変数: JEV_API_KEY（必須）
- * フォールバック: 環境変数未設定時は常にfalseを返す（既存挙動維持）
+ * フォールバック: 環境変数未設定時は既存挙動維持
  * タイムアウト: 1秒（判定に時間がかかる場合はフォールバック）
  */
 
 import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
-import type { RawNamedFacility } from "./single-call-navigator";
+import type { RawNamedFacility, SingleCallNavigatorGuide } from "./single-call-navigator";
 
 /** JEV判定結果（retry が必要かどうか） */
 export interface JevRetryGateDecision {
   shouldRetry: boolean;
   /** JEVによる判定理由（デバッグ用） */
+  reason?: string;
+}
+
+/** JEV経路一貫性判定結果 */
+export interface JevRouteConsistencyDecision {
+  isConsistent: boolean;
+  /** JEVによる判定理由（デバッグ用） */
+  reason?: string;
+}
+
+/** JEV Facility完全性判定結果（Phase 2-C） */
+export interface JevFacilityCompletenessDecision {
+  /** gate・exitが両方揃っているか（または片方で十分か） */
+  isComplete: boolean;
+  /** 不足しているフィールド */
+  missingFields: Array<"gate" | "exit">;
+  /** retryで改善する見込みがあるか */
+  shouldRetry: boolean;
+  /** JEVによる判定理由（デバッグ用） */
+  reason?: string;
+}
+
+/** JEV 候補選択判定結果（Phase 2-B） */
+export interface JevCandidateSelectionDecision {
+  /** 選択された候補のindex（0-based） */
+  selectedIndex: number;
+  /** 選択理由（デバッグ用） */
   reason?: string;
 }
 
@@ -127,6 +155,348 @@ export async function evaluateRetryGate(
     const errorMsg = safeErrorMessage(error);
     console.warn(`[JevClient] Retry gate evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`);
     // 例外を再スローして、isFacilityUnavailableのcatchで従来判定（facility.state === "unavailable"）へ戻す
+    throw error;
+  } finally {
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
+  }
+}
+
+/**
+ * 2つの経路情報が同一の鉄道ルートを表しているか、意味的に判定する。
+ * 
+ * Phase 2の目標:
+ * - ルールベース判定（表記の厳密一致）の限界を克服
+ * - 「東横線」vs「東急東横線」、「3番線」vs「3番ホーム」のような
+ *   意味的に同じだが表記が異なる経路を一致と判定
+ * 
+ * 判定基準:
+ * - 路線名の意味的同値性（運営会社の省略、愛称表記の差異を許容）
+ * - 番線の意味的同値性（「番線」「番ホーム」「ホーム」の差異を許容）
+ * - 乗換回数は厳密に一致している必要がある（意味的判定でも緩和しない）
+ * 
+ * Fail-open設計:
+ * - JEV API呼び出しが失敗・タイムアウトした場合、例外をスローして
+ *   呼び出し元（isRouteConsistent）のルールベース判定へフォールバック
+ */
+export async function evaluateRouteConsistency(
+  a: SingleCallNavigatorGuide,
+  b: SingleCallNavigatorGuide,
+  config: JevClientConfig
+): Promise<JevRouteConsistencyDecision> {
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const apiCallPromise = (async () => {
+      const client = new TypeSafeClient({
+        apiKey: config.apiKey,
+        timeout: timeoutMs,
+      });
+
+      // 到着路線（末尾）を抽出
+      const lastLineA = a.lines[a.lines.length - 1];
+      const lastLineB = b.lines[b.lines.length - 1];
+
+      const state: Record<string, string | number | boolean | null> = {
+        lineA: lastLineA,
+        lineB: lastLineB,
+        transferCountA: a.transferCount,
+        transferCountB: b.transferCount,
+        platformA: a.arrivalPlatformNumber ?? "不明",
+        platformB: b.arrivalPlatformNumber ?? "不明",
+      };
+
+      return await client.systemOne(
+        {
+          state,
+          questions: {
+            sameRoute: noul(
+              "2つの経路情報（lineA/lineB、platformA/platformB）が、同一の鉄道ルートを表していますか？路線名・番線の表記揺れ（「東横線」vs「東急東横線」、「3番線」vs「3番ホーム」等）は許容し、意味的に同じルートならtrueを返してください。乗換回数が異なる場合や、明らかに異なる路線・方向の場合はfalseを返してください。",
+              {
+                true: "同一ルート（表記揺れあり）",
+                false: "異なるルート",
+              }
+            ),
+          },
+        },
+        { signal: controller.signal }
+      );
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([apiCallPromise, timeoutPromise]);
+
+    const sameRouteNoul = (result.answers.sameRoute as { noul: number }).noul;
+    const isConsistent = sameRouteNoul > 0.5;
+
+    return {
+      isConsistent,
+      reason: isConsistent
+        ? `JEV判定: 同一ルート（確信度: ${sameRouteNoul.toFixed(2)}）`
+        : `JEV判定: 異なるルート（確信度: ${(1 - sameRouteNoul).toFixed(2)}）`,
+    };
+  } catch (error) {
+    // Fail-open: エラー時は例外を再スローし、呼び出し元のルールベース判定へフォールバック
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMsg = safeErrorMessage(error);
+    console.warn(`[JevClient] Route consistency evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`);
+    throw error;
+  } finally {
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
+  }
+}
+
+/**
+ * Facility品質評価（Phase 2-C: exit安定化専用）。
+ * 
+ * **スコープ**: confirmed状態でgate/exitの片方のみの場合に特化。
+ * unavailable/alternativesの判定はPhase 1（retry gate）に委ねる。
+ * 
+ * Phase 2-Cの目標:
+ * - 「改札は取れたが出口が取れない」問題の直接改善
+ * - confirmedでもgate/exitの片方のみの場合、retryで改善する見込みを評価
+ * 
+ * ルールベース前段フィルタ（JEV呼び出し前に高速判定）:
+ * - alternatives → 十分な情報（JEV不要）
+ * - confirmed + 両方あり → 完全（JEV不要）
+ * - confirmed + 片方のみ → JEVで詳細判定
+ * - unavailable → Phase 1に委ねる（この関数は呼ばれない）
+ * 
+ * Fail-open設計:
+ * - JEV失敗時は例外を再スロー、Phase 1（retry gate）へフォールバック
+ */
+export async function evaluateFacilityCompleteness(
+  facility: FacilityRecommendation<RawNamedFacility>,
+  config: JevClientConfig
+): Promise<JevFacilityCompletenessDecision> {
+  // Phase 2-Cはconfirmed状態のgate/exit片方のみに特化
+  // unavailableの判定はPhase 1に委ねる
+  if (facility.state === "unavailable") {
+    throw new Error("Phase 2-C: unavailable state should be handled by Phase 1 (retry gate)");
+  }
+
+  // ルールベース前段フィルタ: alternatives → 十分な情報
+  if (facility.state === "alternatives") {
+    return {
+      isComplete: true,
+      missingFields: [],
+      shouldRetry: false,
+      reason: "alternatives状態（複数候補あり）",
+    };
+  }
+
+  // confirmed状態: gate/exitの有無を確認
+  const pair = facility.pair;
+  const hasGate = pair.gate !== null;
+  const hasExit = pair.exit !== null;
+  const missingFields: Array<"gate" | "exit"> = [];
+  if (!hasGate) missingFields.push("gate");
+  if (!hasExit) missingFields.push("exit");
+
+  // ルールベース前段フィルタ: 両方あり → 完全
+  if (hasGate && hasExit) {
+    return {
+      isComplete: true,
+      missingFields: [],
+      shouldRetry: false,
+      reason: "confirmed状態（gate・exit両方あり）",
+    };
+  }
+
+  // 片方のみ → JEVで詳細判定
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const apiCallPromise = (async () => {
+      const client = new TypeSafeClient({
+        apiKey: config.apiKey,
+        timeout: timeoutMs,
+      });
+
+      const state: Record<string, string | number | boolean | null> = {
+        hasGate,
+        hasExit,
+        gateName: pair.gate?.name ?? null,
+        exitName: pair.exit?.name ?? null,
+        gateConfidence: pair.gate?.confidenceLevel ?? null,
+        exitConfidence: pair.exit?.confidenceLevel ?? null,
+      };
+
+      return await client.systemOne(
+        {
+          state,
+          questions: {
+            isCompleteBothNeeded: noul(
+              "改札と出口は駅構内案内の2つの重要な要素です。この施設情報は、ユーザーが駅構内で迷わず目的地に到達するために十分な情報を提供していますか？改札のみ・出口のみの場合、もう片方の情報があればユーザー体験が明らかに改善するならfalseを返してください。両方が揃っている、または片方だけで十分なケース（小規模駅で改札=出口を兼ねる等）ならtrueを返してください。",
+              {
+                true: "十分な情報（retryで改善しない）",
+                false: "不完全（retryで改善する可能性）",
+              }
+            ),
+          },
+        },
+        { signal: controller.signal }
+      );
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([apiCallPromise, timeoutPromise]);
+
+    const isCompleteBothNeededNoul = (result.answers.isCompleteBothNeeded as { noul: number }).noul;
+    const isComplete = isCompleteBothNeededNoul > 0.5;
+
+    return {
+      isComplete,
+      missingFields,
+      shouldRetry: !isComplete,
+      reason: isComplete
+        ? `JEV判定: 十分な情報（確信度: ${isCompleteBothNeededNoul.toFixed(2)}）`
+        : `JEV判定: 不完全（確信度: ${(1 - isCompleteBothNeededNoul).toFixed(2)}）`,
+    };
+  } catch (error) {
+    // Fail-open: エラー時は例外を再スロー、Phase 1へフォールバック
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMsg = safeErrorMessage(error);
+    console.warn(`[JevClient] Facility completeness evaluation failed (${errorName}): ${errorMsg}, falling back to Phase 1`);
+    throw error;
+  } finally {
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
+  }
+}
+
+/**
+ * 複数の施設候補から最適な1つを選択する（Phase 2-B: Candidate Selection）。
+ * 
+ * スコープ: alternatives（2-3件の複数候補）から最適な1つを選択。
+ * 目的: alternatives → confirmed への昇格により、exit安定化・UX向上。
+ * 
+ * Phase 2-Bの目標:
+ * - 「A または B」と複数候補がある場合、目的地への距離・導線を考慮して1つに絞る
+ * - alternatives発生率 15-20% → 5-10% に削減
+ * - exit安定化の本丸施策
+ * 
+ * 判定基準:
+ * - 目的地への距離（searchTextから読み取る）
+ * - 導線の明確さ（階段・エレベーター等の情報）
+ * - 営業時間の制約（24時間 vs 限定時間）
+ * 
+ * Fail-open設計:
+ * - JEV失敗時は例外を再スロー、alternatives のまま維持
+ */
+export async function selectBestFacilityPair(
+  pairs: Array<{ gate: { name: string } | null; exit: { name: string } | null; reason: string | null }>,
+  context: {
+    destinationHint: string | null;
+    arrivalStationName: string;
+    searchText: string;
+  },
+  config: JevClientConfig
+): Promise<JevCandidateSelectionDecision> {
+  if (pairs.length <= 1) {
+    throw new Error("Phase 2-B: selectBestFacilityPair requires at least 2 pairs");
+  }
+
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const apiCallPromise = (async () => {
+      const client = new TypeSafeClient({
+        apiKey: config.apiKey,
+        timeout: timeoutMs,
+      });
+
+      // 各候補のスコアを個別に評価
+      const scores: number[] = [];
+      for (let i = 0; i < pairs.length; i++) {
+        const pair = pairs[i];
+        const gateName = pair.gate?.name ?? "（改札不明）";
+        const exitName = pair.exit?.name ?? "（出口不明）";
+        const reason = pair.reason || "";
+
+        const state: Record<string, string | number | boolean | null> = {
+          destinationHint: context.destinationHint,
+          arrivalStationName: context.arrivalStationName,
+          gateName,
+          exitName,
+          reason,
+          candidateIndex: i + 1,
+        };
+
+        const result = await client.systemOne(
+          {
+            state,
+            questions: {
+              isBestCandidate: noul(
+                `この改札・出口の組み合わせは、目的地「${context.destinationHint ?? "駅"}」への到達に最適ですか？判断基準: (1) 目的地への距離が近い、(2) 導線が明確（階段・エレベーターの記述あり）、(3) 営業時間の制約が少ない。\n\n改札: ${gateName}\n出口: ${exitName}\n理由: ${reason || "（記載なし）"}`,
+                {
+                  true: "この候補が最適",
+                  false: "他の候補の方が良い",
+                }
+              ),
+            },
+          },
+          { signal: controller.signal }
+        );
+
+        const isBestNoul = (result.answers.isBestCandidate as { noul: number }).noul;
+        scores.push(isBestNoul);
+      }
+
+      // 最も高いスコアの候補を選択
+      const selectedIndex = scores.indexOf(Math.max(...scores));
+
+      return {
+        selectedIndex,
+        reason: `JEV判定: 候補${selectedIndex + 1}を選択（スコア: ${scores[selectedIndex].toFixed(2)}, 全スコア: ${scores.map(s => s.toFixed(2)).join(", ")}）`,
+      };
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([apiCallPromise, timeoutPromise]);
+    return result;
+  } catch (error) {
+    // Fail-open: エラー時は例外を再スロー、alternatives のまま維持
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMsg = safeErrorMessage(error);
+    console.warn(`[JevClient] Candidate selection failed (${errorName}): ${errorMsg}, keeping alternatives`);
     throw error;
   } finally {
     clearTimeout(abortTimeoutId);

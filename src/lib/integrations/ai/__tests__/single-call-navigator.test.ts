@@ -4,6 +4,9 @@ import {
   buildSharedGuideCacheKey,
   generateSingleCallNavigatorGuide,
   getSharedSingleCallNavigatorGuide,
+  isRouteConsistent,
+  selectFinalGuide,
+  type SingleCallNavigatorGuide,
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
 
@@ -517,5 +520,221 @@ describe("buildSharedGuideCacheKey", () => {
       lng: 139.1,
     });
     expect(keyA).toBe(keyB);
+  });
+});
+
+describe("isRouteConsistent", () => {
+  const createGuide = (
+    lines: string[],
+    transferCount: number,
+    platform: string | null
+  ): SingleCallNavigatorGuide => ({
+    lines,
+    transferCount,
+    estimatedMinutes: 35,
+    arrivalPlatformNumber: platform,
+    boarding: null,
+    facility: { state: "unavailable", reason: "テスト用" },
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    mockIsJevAvailable.mockReturnValue(false);
+  });
+
+  test("同じ路線・乗換回数・番線なら一致", async () => {
+    const a = createGuide(["相鉄本線", "東急東横線"], 1, "3");
+    const b = createGuide(["相鉄本線", "東急東横線"], 1, "3");
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("番線表記が異なっても数字が一致すれば一致（「3」vs「3番線」）", async () => {
+    const a = createGuide(["東急東横線"], 0, "3");
+    const b = createGuide(["東急東横線"], 0, "3番線");
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("番線表記が異なっても数字が一致すれば一致（「2」vs「2番ホーム」）", async () => {
+    const a = createGuide(["東急東横線"], 0, "2");
+    const b = createGuide(["東急東横線"], 0, "2番ホーム");
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("番線が片方nullなら一致とみなす", async () => {
+    const a = createGuide(["東急東横線"], 0, "3");
+    const b = createGuide(["東急東横線"], 0, null);
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("番線の数字が異なれば不一致", async () => {
+    const a = createGuide(["東急東横線"], 0, "3");
+    const b = createGuide(["東急東横線"], 0, "5");
+    expect(await isRouteConsistent(a, b)).toBe(false);
+  });
+
+  test("路線名の中黒の有無は吸収される（「相鉄・JR直通線」vs「相鉄JR直通線」）", async () => {
+    const a = createGuide(["相鉄・JR直通線"], 0, null);
+    const b = createGuide(["相鉄JR直通線"], 0, null);
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("路線名の末尾「線」の有無は吸収される（「東急東横線」vs「東急東横」）", async () => {
+    const a = createGuide(["東急東横線"], 0, null);
+    const b = createGuide(["東急東横"], 0, null);
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("路線名の空白は吸収される（「東急 東横線」vs「東急東横線」）", async () => {
+    const a = createGuide(["東急 東横線"], 0, null);
+    const b = createGuide(["東急東横線"], 0, null);
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("路線名の部分一致は許容される（「東急東横線」⊃「東横線」）", async () => {
+    const a = createGuide(["東急東横線"], 0, null);
+    const b = createGuide(["東横線"], 0, null);
+    expect(await isRouteConsistent(a, b)).toBe(true);
+  });
+
+  test("乗換回数が異なれば不一致", async () => {
+    const a = createGuide(["相鉄本線", "東急東横線"], 1, "3");
+    const b = createGuide(["相鉄本線", "東急東横線"], 0, "3");
+    expect(await isRouteConsistent(a, b)).toBe(false);
+  });
+
+  test("到着路線（末尾）が異なれば不一致", async () => {
+    const a = createGuide(["相鉄本線"], 0, null);
+    const b = createGuide(["東急東横線"], 0, null);
+    expect(await isRouteConsistent(a, b)).toBe(false);
+  });
+
+  test("ルールベースでtrue → JEV呼び出し不要（レイテンシ0）", async () => {
+    // JEVが有効でも、ルールベースでtrueなら即座にtrueを返す
+    mockIsJevAvailable.mockReturnValue(true);
+    mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
+    
+    const a = createGuide(["東急東横線"], 0, "3");
+    const b = createGuide(["東急東横線"], 0, "3");
+    
+    const result = await isRouteConsistent(a, b);
+    
+    expect(result).toBe(true);
+  });
+
+  test("ルールベースでfalse + JEV未設定 → ルールベース結果（false）", async () => {
+    mockIsJevAvailable.mockReturnValue(false);
+    
+    const a = createGuide(["相鉄本線"], 0, null);
+    const b = createGuide(["東急東横線"], 0, null);
+    
+    const result = await isRouteConsistent(a, b);
+    
+    expect(result).toBe(false);
+  });
+});
+
+describe("selectFinalGuide", () => {
+  const createGuide = (
+    lines: string[],
+    transferCount: number,
+    platform: string | null,
+    facilityState: "unavailable" | "alternatives" | "confirmed"
+  ): SingleCallNavigatorGuide => ({
+    lines,
+    transferCount,
+    estimatedMinutes: 35,
+    arrivalPlatformNumber: platform,
+    boarding: null,
+    facility:
+      facilityState === "unavailable"
+        ? { state: "unavailable", reason: "テスト用" }
+        : facilityState === "alternatives"
+          ? {
+              state: "alternatives",
+              pairs: [
+                {
+                  gate: { name: "道玄坂改札", confidenceLevel: "medium" },
+                  exit: { name: "A1出口", confidenceLevel: "medium" },
+                  reason: null,
+                },
+              ],
+            }
+          : {
+              state: "confirmed",
+              pair: {
+                gate: { name: "道玄坂改札", confidenceLevel: "high" },
+                exit: { name: "A1出口", confidenceLevel: "high" },
+                reason: null,
+              },
+            },
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    mockIsJevAvailable.mockReturnValue(false);
+  });
+
+  test("1回目がnull、2回目が正常なら2回目を返す", async () => {
+    const first = null;
+    const second = createGuide(["東急東横線"], 0, "3", "confirmed");
+    expect(await selectFinalGuide(first, second)).toBe(second);
+  });
+
+  test("1回目が正常、2回目がnullなら1回目を返す", async () => {
+    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
+    const second = null;
+    expect(await selectFinalGuide(first, second)).toBe(first);
+  });
+
+  test("2回目が悪化（confirmed→alternatives）なら1回目を維持", async () => {
+    const first = createGuide(["東急東横線"], 0, "3", "confirmed");
+    const second = createGuide(["東急東横線"], 0, "3", "alternatives");
+    expect(await selectFinalGuide(first, second)).toBe(first);
+  });
+
+  test("2回目が悪化（alternatives→unavailable）なら1回目を維持", async () => {
+    const first = createGuide(["東急東横線"], 0, "3", "alternatives");
+    const second = createGuide(["東急東横線"], 0, "3", "unavailable");
+    expect(await selectFinalGuide(first, second)).toBe(first);
+  });
+
+  test("経路不一致なら1回目を維持（改善があっても矛盾を防ぐ）", async () => {
+    const first = createGuide(["相鉄本線"], 0, null, "unavailable");
+    const second = createGuide(["東急東横線"], 0, null, "confirmed");
+    expect(await selectFinalGuide(first, second)).toBe(first);
+  });
+
+  test("経路一致 & 改善（unavailable→confirmed）なら2回目のfacilityを採用", async () => {
+    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
+    const second = createGuide(["東急東横線"], 0, "3", "confirmed");
+    const result = await selectFinalGuide(first, second);
+    
+    expect(result?.lines).toEqual(first.lines);
+    expect(result?.facility.state).toBe("confirmed");
+  });
+
+  test("経路一致 & 改善（unavailable→alternatives）なら2回目のfacilityを採用", async () => {
+    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
+    const second = createGuide(["東急東横線"], 0, "3", "alternatives");
+    const result = await selectFinalGuide(first, second);
+    
+    expect(result?.lines).toEqual(first.lines);
+    expect(result?.facility.state).toBe("alternatives");
+  });
+
+  test("番線表記が異なっても数字一致なら経路一致として改善を採用（「3」vs「3番線」）", async () => {
+    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
+    const second = createGuide(["東急東横線"], 0, "3番線", "confirmed");
+    const result = await selectFinalGuide(first, second);
+    
+    expect(result?.facility.state).toBe("confirmed");
+  });
+
+  test("路線名の中黒有無が異なっても経路一致として改善を採用", async () => {
+    const first = createGuide(["相鉄・東急直通線"], 0, null, "unavailable");
+    const second = createGuide(["相鉄東急直通線"], 0, null, "confirmed");
+    const result = await selectFinalGuide(first, second);
+    
+    expect(result?.facility.state).toBe("confirmed");
   });
 });

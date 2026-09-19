@@ -11,6 +11,9 @@ import {
   isJevAvailable,
   createJevConfig,
   evaluateRetryGate,
+  evaluateRouteConsistency,
+  evaluateFacilityCompleteness,
+  selectBestFacilityPair,
 } from "@/lib/integrations/ai/JevClient";
 
 /**
@@ -332,7 +335,14 @@ function isValidGuide(value: unknown): value is SingleCallNavigatorGuide {
   );
 }
 
-function toGuide(raw: RawExtraction, searchText: string): SingleCallNavigatorGuide | null {
+async function toGuide(
+  raw: RawExtraction,
+  searchText: string,
+  context: {
+    destinationHint: string | null;
+    arrivalStationName: string;
+  }
+): Promise<SingleCallNavigatorGuide | null> {
   if (!Array.isArray(raw.lines) || raw.lines.length === 0) return null;
   if (
     !raw.lines.every(
@@ -362,13 +372,45 @@ function toGuide(raw: RawExtraction, searchText: string): SingleCallNavigatorGui
     return null;
   }
 
+  let facility = classifyFacilityRecommendation(extractFacilityCandidatePairs(raw, searchText));
+
+  // Phase 2-B: Candidate Selection（alternatives → confirmed への昇格）
+  if (facility.state === "alternatives" && isJevAvailable()) {
+    const jevConfig = createJevConfig();
+    if (jevConfig) {
+      try {
+        const selection = await selectBestFacilityPair(
+          facility.pairs,
+          {
+            destinationHint: context.destinationHint,
+            arrivalStationName: context.arrivalStationName,
+            searchText,
+          },
+          jevConfig
+        );
+        if (selection.reason) {
+          console.log(`[single-call-navigator] JEV candidate selection: ${selection.reason}`);
+        }
+        // alternatives → confirmed へ昇格
+        facility = {
+          state: "confirmed",
+          pair: facility.pairs[selection.selectedIndex],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV candidate selection failed, keeping alternatives:", message);
+        // JEV失敗 → alternatives のまま維持
+      }
+    }
+  }
+
   const guide: SingleCallNavigatorGuide = {
     lines: raw.lines as string[],
     transferCount: raw.transferCount,
     estimatedMinutes: raw.estimatedMinutes,
     arrivalPlatformNumber: extractArrivalPlatformNumber(raw.arrivalPlatformNumber),
     boarding: extractBoarding(raw),
-    facility: classifyFacilityRecommendation(extractFacilityCandidatePairs(raw, searchText)),
+    facility,
   };
 
   return isValidGuide(guide) ? guide : null;
@@ -397,7 +439,10 @@ async function attemptGenerateSingleCallNavigatorGuide(
   );
 
   if (!result) return null;
-  return toGuide(result.data, result.searchText);
+  return await toGuide(result.data, result.searchText, {
+    destinationHint,
+    arrivalStationName: destinationStation.stationName,
+  });
 }
 
 /**
@@ -411,26 +456,49 @@ async function attemptGenerateSingleCallNavigatorGuide(
  * Phase 1 JEV統合: JEV_API_KEYが設定されている場合、JEVによる意味的判定を
  * 使用してretry判定を改善する（機械的な件数ルールから意味理解ベースへ移行）。
  * JEV未設定時は従来の挙動（unavailableならretry）を維持。
+ * 
+ * Phase 2-C JEV統合: Facility完全性評価（exit安定化専用）。
+ * confirmedでもgate/exitの片方のみの場合、JEVで「retryで改善する見込み」を判定。
+ * Phase 1 → Phase 2-C → ルールベースの段階的フォールバック（Phase 1のretry削減効果を維持）。
  */
 async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
-  // JEVが利用可能な場合は意味的判定を使用
+  // JEVが利用可能な場合、段階的判定を実施
   if (isJevAvailable()) {
     const jevConfig = createJevConfig();
     if (jevConfig) {
+      // Phase 1: Retry gate判定（unavailableの意味的判定によるretry削減 -3〜4秒）
       try {
-        const decision = await evaluateRetryGate(guide.facility, jevConfig);
-        if (decision.reason) {
-          console.log(`[single-call-navigator] JEV retry decision: ${decision.shouldRetry} (${decision.reason})`);
+        const retryGateDecision = await evaluateRetryGate(guide.facility, jevConfig);
+        if (retryGateDecision.reason) {
+          console.log(`[single-call-navigator] JEV retry gate: ${retryGateDecision.shouldRetry} (${retryGateDecision.reason})`);
         }
-        return decision.shouldRetry;
+        // Phase 1が retry不要と判定 → 確定（Phase 2-Cは呼ばない）
+        if (!retryGateDecision.shouldRetry) {
+          return false;
+        }
+        // Phase 1が retry必要と判定 → Phase 2-Cでさらに詳細判定
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn("[single-call-navigator] JEV evaluation failed, falling back to rule-based:", message);
+        console.warn("[single-call-navigator] JEV retry gate evaluation failed, falling back to Phase 2-C:", message);
+        // Phase 2-Cへフォールバック
+      }
+      
+      // Phase 2-C: Facility完全性評価（confirmedでgate/exitの片方のみをキャッチ）
+      try {
+        const completenessDecision = await evaluateFacilityCompleteness(guide.facility, jevConfig);
+        if (completenessDecision.reason) {
+          console.log(`[single-call-navigator] JEV completeness: ${completenessDecision.reason}`);
+        }
+        return completenessDecision.shouldRetry;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV completeness evaluation failed, falling back to rule-based:", message);
+        // ルールベースへフォールバック
       }
     }
   }
   
-  // フォールバック: 従来の件数ベース判定
+  // 最終フォールバック: 従来の件数ベース判定
   return guide.facility.state === "unavailable";
 }
 
@@ -456,11 +524,13 @@ const FACILITY_RANK = { unavailable: 0, alternatives: 1, confirmed: 2 } as const
  * - 2回目の改札・出口が悪化 → 1回目を維持
  * - 経路不一致 → 1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
  * - 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口
+ * 
+ * Phase 2: isRouteConsistent()の非同期化に伴い、selectFinalGuide()も非同期化。
  */
-export function selectFinalGuide(
+export async function selectFinalGuide(
   first: SingleCallNavigatorGuide | null,
   second: SingleCallNavigatorGuide | null
-): SingleCallNavigatorGuide | null {
+): Promise<SingleCallNavigatorGuide | null> {
   if (first === null) return second;
   if (second === null) return first;
   
@@ -470,7 +540,8 @@ export function selectFinalGuide(
   }
   
   // 経路不一致なら1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
-  if (!isRouteConsistent(first, second)) {
+  // Phase 2: JEV意味的判定により、表記揺れでの誤った不一致判定を軽減
+  if (!(await isRouteConsistent(first, second))) {
     console.warn(
       "[single-call-navigator] 再試行結果の経路が1回目と不一致のため改札・出口を採用しません",
       {
@@ -490,30 +561,78 @@ export function selectFinalGuide(
 }
 
 /**
- * 2つの結果が同一経路を表しているか判定する。
+ * 2つの結果が同一経路を表しているか判定する（ルールベース）。
  * 到着路線（末尾）・乗換回数・到着番線で比較。
  * 
- * 路線名の揺れ（全角/半角スペース等）を吸収するため正規化して比較。
+ * 路線名・番線の表記揺れを吸収するため正規化して比較。
+ * Phase 2: JEV統合後もフォールバックとして維持。
  */
-export function isRouteConsistent(
+function isRouteConsistentRuleBased(
   a: SingleCallNavigatorGuide,
   b: SingleCallNavigatorGuide
 ): boolean {
-  const normalize = (s: string) => s.replace(/\s+/g, "");
-  const lastLineA = normalize(a.lines[a.lines.length - 1]);
-  const lastLineB = normalize(b.lines[b.lines.length - 1]);
+  // 路線名の正規化: 空白・中黒・末尾の「線」を削除
+  const normalizeLine = (s: string) =>
+    s
+      .replace(/\s+/g, "")
+      .replace(/[・･]/g, "")
+      .replace(/線$/, "");
+  
+  const lastLineA = normalizeLine(a.lines[a.lines.length - 1]);
+  const lastLineB = normalizeLine(b.lines[b.lines.length - 1]);
   
   // 到着路線の一致（完全一致 or 部分一致）
   const sameArrivalLine =
     lastLineA === lastLineB || lastLineA.includes(lastLineB) || lastLineB.includes(lastLineA);
   
-  // 番線の一致（片方がnullなら一致とみなす）
-  const samePlatform =
-    !a.arrivalPlatformNumber ||
-    !b.arrivalPlatformNumber ||
-    a.arrivalPlatformNumber === b.arrivalPlatformNumber;
+  // 番線の正規化: 数字部分のみを抽出して比較（「3」「3番線」「3番ホーム」を統一）
+  const normalizePlatform = (p: string | null) => p?.match(/\d+/)?.[0] ?? null;
+  const platformA = normalizePlatform(a.arrivalPlatformNumber);
+  const platformB = normalizePlatform(b.arrivalPlatformNumber);
+  
+  // 番線の一致（片方がnullなら一致とみなす + 数字部分が一致）
+  const samePlatform = !platformA || !platformB || platformA === platformB;
   
   return sameArrivalLine && a.transferCount === b.transferCount && samePlatform;
+}
+
+/**
+ * 2つの結果が同一経路を表しているか判定する（非同期版、JEV統合）。
+ * 
+ * Phase 2: ルールベース判定でfalseの場合、JEVで意味的判定を試行。
+ * JEV未設定時やエラー時はルールベース結果にフォールバック。
+ */
+export async function isRouteConsistent(
+  a: SingleCallNavigatorGuide,
+  b: SingleCallNavigatorGuide
+): Promise<boolean> {
+  // まずルールベース判定
+  const ruleBasedResult = isRouteConsistentRuleBased(a, b);
+  
+  // ルールベースでtrue → JEV呼び出し不要（レイテンシ0）
+  if (ruleBasedResult) {
+    return true;
+  }
+  
+  // ルールベースでfalse → JEVで意味的判定を試行（JEV利用可能な場合のみ）
+  if (isJevAvailable()) {
+    const jevConfig = createJevConfig();
+    if (jevConfig) {
+      try {
+        const decision = await evaluateRouteConsistency(a, b, jevConfig);
+        if (decision.reason) {
+          console.log(`[single-call-navigator] ${decision.reason}`);
+        }
+        return decision.isConsistent;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV route consistency evaluation failed, falling back to rule-based:", message);
+      }
+    }
+  }
+  
+  // フォールバック: ルールベース結果（false）を返す
+  return ruleBasedResult;
 }
 
 /**
@@ -569,7 +688,8 @@ export function generateSingleCallNavigatorRun(
       r2 = null;
     }
     
-    return selectFinalGuide(r1, r2);
+    // Phase 2: selectFinalGuide()の非同期化に対応
+    return await selectFinalGuide(r1, r2);
   });
   
   // first: 1回目の結果、またはnullならfinalと同時に決着
