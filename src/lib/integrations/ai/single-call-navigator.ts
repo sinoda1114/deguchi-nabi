@@ -600,7 +600,11 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
   }
   
   // 最終フォールバック: 従来の件数ベース判定
-  return guide.facility.state === "unavailable";
+  // approximate状態でgate/exitの両方がnullの場合もretryの対象とする
+  return guide.facility.state === "unavailable" ||
+         (guide.facility.state === "approximate" &&
+          guide.facility.pair.gate === null &&
+          guide.facility.pair.exit === null);
 }
 
 /**

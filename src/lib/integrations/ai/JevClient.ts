@@ -109,6 +109,9 @@ export async function evaluateRetryGate(
         state.hasPair = true;
       } else if (facility.state === "alternatives") {
         state.pairsCount = facility.pairs.length;
+      } else if (facility.state === "approximate") {
+        state.directionHint = facility.directionHint;
+        state.hasPartialInfo = true;
       }
 
       return await client.systemOne(
