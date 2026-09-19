@@ -101,39 +101,47 @@ The harness reports:
 
 ## 3. Baseline Results
 
-### Status: BLOCKED ON ENVIRONMENT
+### Real Measurements (2026-09-19 JST)
 
-**Required for BEFORE (baseline)**: `GEMINI_API_KEY`
+**Test Route**: 西谷 → 居酒屋ウエチャベ (道玄坂2-9-2, Shibuya)
 
-**Current Status**: Not set in cloud VM environment
+#### Measured Timings
 
-**To Unblock BEFORE Measurement**:
-1. Set `GEMINI_API_KEY` in your environment
-2. Run `npm run benchmark`
-3. Update this document with actual BEFORE numbers
+| Configuration | Model | Latency | Result | Notes |
+|---------------|-------|---------|--------|---------|
+| **BEFORE (1)** | gemini-3.6-flash | **~107s** | Success (道玄坂改札・A2出口) | Production (https://deguchi-nabi.vercel.app) |
+| **BEFORE (2)** | gemini-3.8-flash | **~60s** | Success (道玄坂改札・A1出口) | Preview (PR #118), not yet on production |
+| **AFTER** | gemini-3.8 + JEV | TBD | Pending JEV implementation | Target: <50s (estimated) |
+
+#### Three-Point Comparison Plan
+
+1. ✅ **3.6-flash baseline** (107s): Measured on production main
+2. ⏳ **3.8-flash baseline** (60s): Measured on preview; recheck after PR #118 merges to production
+3. ⏳ **3.8-flash + JEV** (target <50s): After JEV integration (Phase 1: retry gate)
+
+**Key Finding**: gemini-3.8-flash shows **44% improvement** over 3.6-flash (107s → 60s). This is the new baseline before JEV integration.
+
+### Comparison to Code Analysis Estimates
+
+**Code comments estimated**: 70-175s (route 70s + unified 105s)
+**Reality**: 
+- 3.6-flash: 107s (within estimate range)
+- 3.8-flash: 60s (faster than estimated, likely model improvements)
+
+### Environment Requirements
+
+**For Current BEFORE Measurement**:
+- Requires: `GEMINI_API_KEY`
+- Models: gemini-3.6-flash (production) or gemini-3.8-flash (preview/after PR #118)
 
 **For AFTER (JEV) Measurement** (plan-only, not yet implemented):
-- Will require `JEV_API_KEY` (canonical name, available on Grok Bot box)
-- Cloud VMs do NOT auto-inherit box secrets
-- Run AFTER measurement from environment with `JEV_API_KEY` configured
-- Or configure Cloud Agents environment variable before AFTER run
+- Requires: `GEMINI_API_KEY` + `JEV_API_KEY` (canonical name)
+- `JEV_API_KEY` available on Grok Bot box (manual Cloud Agents setup needed)
 - Note: JEV integration is planned but not yet implemented in product code
-
-### Expected Baseline (from code analysis)
-
-Based on code comments and timeout values:
-
-| Metric | Expected Value |
-|--------|---------------|
-| Normal case (sequential) | 175s (route 70s + unified 105s) |
-| Worst case (with fallback) | 245s (route 70s + unified 105s + boarding 70s) |
-| API timeout | 290s (`maxDuration`) |
-
-**Real measurements pending API key availability.**
 
 ---
 
-## 4. For AFTER Comparison (JEV Integration)
+## 4.
 
 ### Reusing This Harness
 
