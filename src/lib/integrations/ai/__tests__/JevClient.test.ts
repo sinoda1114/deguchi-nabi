@@ -3,9 +3,10 @@ import {
   isJevAvailable,
   createJevConfig,
   evaluateRetryGate,
+  evaluateRouteConsistency,
 } from "../JevClient";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
-import type { RawNamedFacility } from "../single-call-navigator";
+import type { RawNamedFacility, SingleCallNavigatorGuide } from "../single-call-navigator";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 
 vi.mock("@typesafe-ai/sdk", () => ({
@@ -222,6 +223,130 @@ describe("JevClient", () => {
       };
 
       await expect(evaluateRetryGate(facility, { apiKey: "test_key" })).rejects.toThrow("Network error");
+    });
+  });
+
+  describe("evaluateRouteConsistency", () => {
+    const createGuide = (
+      lines: string[],
+      transferCount: number,
+      platform: string | null
+    ): SingleCallNavigatorGuide => ({
+      lines,
+      transferCount,
+      estimatedMinutes: 35,
+      arrivalPlatformNumber: platform,
+      boarding: null,
+      facility: { state: "unavailable", reason: "テスト用" },
+    });
+
+    test("JEVが意味的に一致と判定（「東横線」vs「東急東横線」）", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          sameRoute: {
+            type: "noul",
+            noul: 0.9,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const a = createGuide(["東横線"], 0, "3");
+      const b = createGuide(["東急東横線"], 0, "3");
+
+      const result = await evaluateRouteConsistency(a, b, { apiKey: "test_key" });
+      expect(result.isConsistent).toBe(true);
+      expect(result.reason).toContain("同一ルート");
+      expect(result.reason).toContain("0.90");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+    });
+
+    test("JEVが不一致と判定（「相鉄本線」vs「東急東横線」）", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          sameRoute: {
+            type: "noul",
+            noul: 0.1,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const a = createGuide(["相鉄本線"], 0, null);
+      const b = createGuide(["東急東横線"], 0, null);
+
+      const result = await evaluateRouteConsistency(a, b, { apiKey: "test_key" });
+      expect(result.isConsistent).toBe(false);
+      expect(result.reason).toContain("異なるルート");
+      expect(result.reason).toContain("0.90");
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+    });
+
+    test("番線表記揺れ（「3番線」vs「3番ホーム」）をJEVが吸収", async () => {
+      const mockSystemOne = vi.fn().mockResolvedValue({
+        answers: {
+          sameRoute: {
+            type: "noul",
+            noul: 0.95,
+          },
+        },
+      });
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const a = createGuide(["東急東横線"], 0, "3番線");
+      const b = createGuide(["東急東横線"], 0, "3番ホーム");
+
+      const result = await evaluateRouteConsistency(a, b, { apiKey: "test_key" });
+      expect(result.isConsistent).toBe(true);
+      expect(mockSystemOne).toHaveBeenCalledTimes(1);
+    });
+
+    test("タイムアウト時は例外を再スロー（呼び出し側でルールベース判定へフォールバック）", async () => {
+      const abortError = new Error("AbortError");
+      abortError.name = "AbortError";
+
+      const mockSystemOne = vi.fn().mockRejectedValue(abortError);
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const a = createGuide(["東急東横線"], 0, "3");
+      const b = createGuide(["東急東横線"], 0, "3番線");
+
+      await expect(evaluateRouteConsistency(a, b, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow("AbortError");
+    });
+
+    test("API呼び出しエラー時は例外を再スロー（呼び出し側でルールベース判定へフォールバック）", async () => {
+      const mockSystemOne = vi.fn().mockRejectedValue(new Error("Network error"));
+
+      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
+        return {
+          systemOne: mockSystemOne,
+        } as unknown as TypeSafeClient;
+      } as unknown as typeof TypeSafeClient);
+
+      const a = createGuide(["東急東横線"], 0, "3");
+      const b = createGuide(["東急東横線"], 0, "3番線");
+
+      await expect(evaluateRouteConsistency(a, b, { apiKey: "test_key" })).rejects.toThrow("Network error");
     });
   });
 });
