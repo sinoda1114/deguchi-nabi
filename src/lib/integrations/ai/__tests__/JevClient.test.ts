@@ -443,7 +443,7 @@ describe("JevClient", () => {
       expect(mockSystemOne).not.toHaveBeenCalled();
     });
 
-    test("unavailable状態の場合、ルールベースで確実にretry（JEV呼び出しなし）", async () => {
+    test("unavailable状態の場合、Phase 1に委ねる（例外をスロー）", async () => {
       const mockSystemOne = vi.fn();
 
       vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
@@ -457,11 +457,7 @@ describe("JevClient", () => {
         reason: "改札・出口の情報が確認できませんでした",
       };
 
-      const result = await evaluateFacilityCompleteness(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(true);
-      expect(result.isComplete).toBe(false);
-      expect(result.missingFields).toEqual(["gate", "exit"]);
-      expect(result.reason).toContain("unavailable状態");
+      await expect(evaluateFacilityCompleteness(facility, { apiKey: "test_key" })).rejects.toThrow("Phase 2-C: unavailable state should be handled by Phase 1");
       expect(mockSystemOne).not.toHaveBeenCalled();
     });
 

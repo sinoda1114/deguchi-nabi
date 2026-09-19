@@ -416,14 +416,31 @@ async function attemptGenerateSingleCallNavigatorGuide(
  * 
  * Phase 2-C JEV統合: Facility完全性評価（exit安定化専用）。
  * confirmedでもgate/exitの片方のみの場合、JEVで「retryで改善する見込み」を判定。
- * Phase 2-C → Phase 1 → ルールベースの段階的フォールバック。
+ * Phase 1 → Phase 2-C → ルールベースの段階的フォールバック（Phase 1のretry削減効果を維持）。
  */
 async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
   // JEVが利用可能な場合、段階的判定を実施
   if (isJevAvailable()) {
     const jevConfig = createJevConfig();
     if (jevConfig) {
-      // Phase 2-C: Facility完全性評価（gate/exitの片方のみをキャッチ）
+      // Phase 1: Retry gate判定（unavailableの意味的判定によるretry削減 -3〜4秒）
+      try {
+        const retryGateDecision = await evaluateRetryGate(guide.facility, jevConfig);
+        if (retryGateDecision.reason) {
+          console.log(`[single-call-navigator] JEV retry gate: ${retryGateDecision.shouldRetry} (${retryGateDecision.reason})`);
+        }
+        // Phase 1が retry不要と判定 → 確定（Phase 2-Cは呼ばない）
+        if (!retryGateDecision.shouldRetry) {
+          return false;
+        }
+        // Phase 1が retry必要と判定 → Phase 2-Cでさらに詳細判定
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[single-call-navigator] JEV retry gate evaluation failed, falling back to Phase 2-C:", message);
+        // Phase 2-Cへフォールバック
+      }
+      
+      // Phase 2-C: Facility完全性評価（confirmedでgate/exitの片方のみをキャッチ）
       try {
         const completenessDecision = await evaluateFacilityCompleteness(guide.facility, jevConfig);
         if (completenessDecision.reason) {
@@ -432,20 +449,7 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
         return completenessDecision.shouldRetry;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn("[single-call-navigator] JEV completeness evaluation failed, falling back to Phase 1:", message);
-        // Phase 1へフォールバック
-      }
-      
-      // Phase 1へフォールバック: Retry gate判定
-      try {
-        const retryGateDecision = await evaluateRetryGate(guide.facility, jevConfig);
-        if (retryGateDecision.reason) {
-          console.log(`[single-call-navigator] JEV retry gate: ${retryGateDecision.shouldRetry} (${retryGateDecision.reason})`);
-        }
-        return retryGateDecision.shouldRetry;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn("[single-call-navigator] JEV retry gate evaluation failed, falling back to rule-based:", message);
+        console.warn("[single-call-navigator] JEV completeness evaluation failed, falling back to rule-based:", message);
         // ルールベースへフォールバック
       }
     }

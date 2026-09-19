@@ -256,18 +256,18 @@ export async function evaluateRouteConsistency(
 /**
  * Facility品質評価（Phase 2-C: exit安定化専用）。
  * 
- * facilityCandidatesが完全（gate・exit両方）かを判定し、
- * 不完全な場合にretryで改善する見込みを評価する。
+ * **スコープ**: confirmed状態でgate/exitの片方のみの場合に特化。
+ * unavailable/alternativesの判定はPhase 1（retry gate）に委ねる。
  * 
  * Phase 2-Cの目標:
  * - 「改札は取れたが出口が取れない」問題の直接改善
- * - gate/exitの片方のみの場合、もう片方を取得するretryの必要性を判定
+ * - confirmedでもgate/exitの片方のみの場合、retryで改善する見込みを評価
  * 
  * ルールベース前段フィルタ（JEV呼び出し前に高速判定）:
- * - unavailable → 確実にretry必要（JEV不要）
  * - alternatives → 十分な情報（JEV不要）
  * - confirmed + 両方あり → 完全（JEV不要）
  * - confirmed + 片方のみ → JEVで詳細判定
+ * - unavailable → Phase 1に委ねる（この関数は呼ばれない）
  * 
  * Fail-open設計:
  * - JEV失敗時は例外を再スロー、Phase 1（retry gate）へフォールバック
@@ -276,14 +276,10 @@ export async function evaluateFacilityCompleteness(
   facility: FacilityRecommendation<RawNamedFacility>,
   config: JevClientConfig
 ): Promise<JevFacilityCompletenessDecision> {
-  // ルールベース前段フィルタ: unavailable → 確実にretry
+  // Phase 2-Cはconfirmed状態のgate/exit片方のみに特化
+  // unavailableの判定はPhase 1に委ねる
   if (facility.state === "unavailable") {
-    return {
-      isComplete: false,
-      missingFields: ["gate", "exit"],
-      shouldRetry: true,
-      reason: "unavailable状態（両方未確認）",
-    };
+    throw new Error("Phase 2-C: unavailable state should be handled by Phase 1 (retry gate)");
   }
 
   // ルールベース前段フィルタ: alternatives → 十分な情報
