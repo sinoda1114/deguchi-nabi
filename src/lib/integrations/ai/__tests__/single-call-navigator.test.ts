@@ -7,8 +7,10 @@ import {
   isRouteConsistent,
   selectFinalGuide,
   type SingleCallNavigatorGuide,
+  type RawFacilityRecommendation,
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
+import type { ConfidenceLevel } from "@/lib/domain/confidence";
 
 const searchAndGenerateStructuredContentWithSearchText = vi.fn();
 vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
@@ -546,27 +548,20 @@ describe("generateSingleCallNavigatorGuide", () => {
       expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
     });
 
-    test("confirmed状態で改札・出口両方ありの場合、Phase 2-Cがretry不要と判定しPhase 1をスキップ", async () => {
+    test("confirmed状態で改札・出口両方ありの場合、ルールベースで retry 不要と判定し JEV をスキップ", async () => {
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
-      mockEvaluateFacilityCompleteness.mockResolvedValue({
-        isComplete: true,
-        missingFields: [],
-        shouldRetry: false,
-        reason: "confirmed状態（gate・exit両方あり）",
-      });
 
       searchAndGenerateStructuredContentWithSearchText.mockResolvedValueOnce(mockResult(VALID_RAW));
 
       const result = await generateSingleCallNavigatorGuide("test-api-key", NISHIYA, SHIBUYA, "ウエチャベ");
 
-      // Phase 2-Cがretry不要と判定したので1回のみ
+      // 両方ありなので1回のみ（ルールベースで早期 return、JEV 呼び出し不要）
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
       expect(result).not.toBeNull();
       expect(result?.facility.state).toBe("confirmed");
-      // Phase 2-Cが呼ばれたことを確認
-      expect(mockEvaluateFacilityCompleteness).toHaveBeenCalledTimes(1);
-      // Phase 1（evaluateRetryGate）は呼ばれない（confirmedの場合Phase 2-Cで確定）
+      // JEV は呼ばれない（ルールベースで完全と判定）
+      expect(mockEvaluateFacilityCompleteness).not.toHaveBeenCalled();
       expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
     });
 
@@ -596,6 +591,77 @@ describe("generateSingleCallNavigatorGuide", () => {
       expect(mockEvaluateFacilityCompleteness).not.toHaveBeenCalled();
       // Phase 1が呼ばれたことを確認
       expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(1);
+    });
+
+    test("JEV disabled + confirmed gate-only の場合、ルールベースで retry を実行", async () => {
+      mockIsJevAvailable.mockReturnValue(false);
+
+      // 1回目: gateのみ、exitなし
+      const gateOnlySearchText = "詳細情報: 降りる改札は道玄坂改札です。";
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(
+          mockResult(
+            {
+              lines: ["相鉄・東急直通線"],
+              transferCount: 0,
+              estimatedMinutes: 35,
+              facilityCandidates: [{ gateName: "道玄坂改札", confidence: "medium" }],
+            },
+            gateOnlySearchText
+          )
+        )
+        .mockResolvedValueOnce(mockResult(VALID_RAW));
+
+      const result = await generateSingleCallNavigatorGuide("test-api-key", NISHIYA, SHIBUYA, "ウエチャベ");
+
+      // JEV が無効でも retry が実行される（ルールベース判定）
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+      expect(result).not.toBeNull();
+      expect(result?.facility.state).toBe("confirmed");
+      if (result?.facility.state === "confirmed") {
+        expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+        expect(result.facility.pair.exit?.name).toBe("A1出口");
+      }
+      // JEV は呼ばれない
+      expect(mockEvaluateFacilityCompleteness).not.toHaveBeenCalled();
+      expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
+    });
+
+    test("Phase 2-C rejection → ルールベースで retry を実行", async () => {
+      mockIsJevAvailable.mockReturnValue(true);
+      mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
+      mockEvaluateFacilityCompleteness.mockRejectedValue(new Error("JEV API timeout"));
+
+      // 1回目: gateのみ、exitなし
+      const gateOnlySearchText = "詳細情報: 降りる改札は道玄坂改札です。";
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(
+          mockResult(
+            {
+              lines: ["相鉄・東急直通線"],
+              transferCount: 0,
+              estimatedMinutes: 35,
+              facilityCandidates: [{ gateName: "道玄坂改札", confidence: "medium" }],
+            },
+            gateOnlySearchText
+          )
+        )
+        .mockResolvedValueOnce(mockResult(VALID_RAW));
+
+      const result = await generateSingleCallNavigatorGuide("test-api-key", NISHIYA, SHIBUYA, "ウエチャベ");
+
+      // Phase 2-C エラー時も retry が実行される（ルールベースにフォールバック）
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+      expect(result).not.toBeNull();
+      expect(result?.facility.state).toBe("confirmed");
+      if (result?.facility.state === "confirmed") {
+        expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+        expect(result.facility.pair.exit?.name).toBe("A1出口");
+      }
+      // Phase 2-C が呼ばれたが失敗した
+      expect(mockEvaluateFacilityCompleteness).toHaveBeenCalledTimes(1);
+      // Phase 1 は呼ばれない（confirmed の場合）
+      expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
     });
   });
 });
@@ -761,39 +827,43 @@ describe("isRouteConsistent", () => {
 
 describe("selectFinalGuide", () => {
   const createGuide = (
-    lines: string[],
-    transferCount: number,
-    platform: string | null,
-    facilityState: "unavailable" | "alternatives" | "confirmed"
-  ): SingleCallNavigatorGuide => ({
-    lines,
-    transferCount,
-    estimatedMinutes: 35,
-    arrivalPlatformNumber: platform,
-    boarding: null,
-    facility:
-      facilityState === "unavailable"
-        ? { state: "unavailable", reason: "テスト用" }
-        : facilityState === "alternatives"
-          ? {
-              state: "alternatives",
-              pairs: [
-                {
-                  gate: { name: "道玄坂改札", confidenceLevel: "medium" },
-                  exit: { name: "A1出口", confidenceLevel: "medium" },
-                  reason: null,
-                },
-              ],
-            }
-          : {
-              state: "confirmed",
-              pair: {
-                gate: { name: "道玄坂改札", confidenceLevel: "high" },
-                exit: { name: "A1出口", confidenceLevel: "high" },
-                reason: null,
-              },
-            },
-  });
+    facility: 
+      | { state: "unavailable" }
+      | { state: "alternatives"; pairs: Array<{ gate: string | null; exit: string | null }> }
+      | { state: "confirmed"; pair: { gate: string | null; exit: string | null } },
+    boarding?: { carNumber: number; doorPosition: string; reason: string; confidenceLevel: ConfidenceLevel }
+  ): SingleCallNavigatorGuide => {
+    let facilityRecommendation: RawFacilityRecommendation;
+    if (facility.state === "unavailable") {
+      facilityRecommendation = { state: "unavailable", reason: "テスト用" };
+    } else if (facility.state === "alternatives") {
+      facilityRecommendation = {
+        state: "alternatives",
+        pairs: facility.pairs.map((p) => ({
+          gate: p.gate ? { name: p.gate, confidenceLevel: "medium" as const } : null,
+          exit: p.exit ? { name: p.exit, confidenceLevel: "medium" as const } : null,
+          reason: null,
+        })),
+      };
+    } else {
+      facilityRecommendation = {
+        state: "confirmed",
+        pair: {
+          gate: facility.pair.gate ? { name: facility.pair.gate, confidenceLevel: "medium" as const } : null,
+          exit: facility.pair.exit ? { name: facility.pair.exit, confidenceLevel: "medium" as const } : null,
+          reason: null,
+        },
+      };
+    }
+    return {
+      lines: ["相鉄・東急直通線"],
+      transferCount: 0,
+      estimatedMinutes: 35,
+      arrivalPlatformNumber: "3",
+      boarding: boarding || null,
+      facility: facilityRecommendation,
+    };
+  };
 
   afterEach(() => {
     vi.clearAllMocks();
@@ -801,66 +871,101 @@ describe("selectFinalGuide", () => {
   });
 
   test("1回目がnull、2回目が正常なら2回目を返す", async () => {
-    const first = null;
-    const second = createGuide(["東急東横線"], 0, "3", "confirmed");
-    expect(await selectFinalGuide(first, second)).toBe(second);
+    const second = createGuide({ state: "confirmed", pair: { gate: "道玄坂改札", exit: "A1出口" } });
+    const result = await selectFinalGuide(null, second);
+    expect(result).toBe(second);
   });
 
   test("1回目が正常、2回目がnullなら1回目を返す", async () => {
-    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
-    const second = null;
-    expect(await selectFinalGuide(first, second)).toBe(first);
+    const first = createGuide({ state: "unavailable" });
+    const result = await selectFinalGuide(first, null);
+    expect(result).toBe(first);
   });
 
   test("2回目が悪化（confirmed→alternatives）なら1回目を維持", async () => {
-    const first = createGuide(["東急東横線"], 0, "3", "confirmed");
-    const second = createGuide(["東急東横線"], 0, "3", "alternatives");
-    expect(await selectFinalGuide(first, second)).toBe(first);
+    const first = createGuide({ state: "confirmed", pair: { gate: "改札A", exit: "出口A" } });
+    const second = createGuide({
+      state: "alternatives",
+      pairs: [
+        { gate: "改札A", exit: "出口A" },
+        { gate: "改札B", exit: "出口B" },
+      ],
+    });
+
+    const result = await selectFinalGuide(first, second);
+    expect(result).toBe(first);
   });
 
   test("2回目が悪化（alternatives→unavailable）なら1回目を維持", async () => {
-    const first = createGuide(["東急東横線"], 0, "3", "alternatives");
-    const second = createGuide(["東急東横線"], 0, "3", "unavailable");
-    expect(await selectFinalGuide(first, second)).toBe(first);
-  });
+    const first = createGuide({
+      state: "alternatives",
+      pairs: [
+        { gate: "改札A", exit: "出口A" },
+        { gate: "改札B", exit: "出口B" },
+      ],
+    });
+    const second = createGuide({ state: "unavailable" });
 
-  test("経路不一致なら1回目を維持（改善があっても矛盾を防ぐ）", async () => {
-    const first = createGuide(["相鉄本線"], 0, null, "unavailable");
-    const second = createGuide(["東急東横線"], 0, null, "confirmed");
-    expect(await selectFinalGuide(first, second)).toBe(first);
-  });
-
-  test("経路一致 & 改善（unavailable→confirmed）なら2回目のfacilityを採用", async () => {
-    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
-    const second = createGuide(["東急東横線"], 0, "3", "confirmed");
     const result = await selectFinalGuide(first, second);
-    
-    expect(result?.lines).toEqual(first.lines);
+    expect(result).toBe(first);
+  });
+
+  test("confirmed partial → confirmed full は改善として採用", async () => {
+    const first = createGuide({ state: "confirmed", pair: { gate: "道玄坂改札", exit: null } });
+    const second = createGuide({ state: "confirmed", pair: { gate: "道玄坂改札", exit: "A1出口" } });
+
+    const result = await selectFinalGuide(first, second);
+    expect(result).not.toBe(first);
     expect(result?.facility.state).toBe("confirmed");
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+      expect(result.facility.pair.exit?.name).toBe("A1出口");
+    }
   });
 
-  test("経路一致 & 改善（unavailable→alternatives）なら2回目のfacilityを採用", async () => {
-    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
-    const second = createGuide(["東急東横線"], 0, "3", "alternatives");
+  test("confirmed full → confirmed partial は悪化として1回目を維持", async () => {
+    const first = createGuide({ state: "confirmed", pair: { gate: "道玄坂改札", exit: "A1出口" } });
+    const second = createGuide({ state: "confirmed", pair: { gate: "道玄坂改札", exit: null } });
+
     const result = await selectFinalGuide(first, second);
-    
-    expect(result?.lines).toEqual(first.lines);
-    expect(result?.facility.state).toBe("alternatives");
+    expect(result).toBe(first);
   });
 
-  test("番線表記が異なっても数字一致なら経路一致として改善を採用（「3」vs「3番線」）", async () => {
-    const first = createGuide(["東急東横線"], 0, "3", "unavailable");
-    const second = createGuide(["東急東横線"], 0, "3番線", "confirmed");
+  test("confirmed partial (gate) → confirmed partial (exit) は横ばい（lateral）として1回目を維持", async () => {
+    const first = createGuide({ state: "confirmed", pair: { gate: "道玄坂改札", exit: null } });
+    const second = createGuide({ state: "confirmed", pair: { gate: null, exit: "A1出口" } });
+
     const result = await selectFinalGuide(first, second);
-    
+    expect(result).toBe(first);
+  });
+
+  test("confirmed partial → confirmed partial は横ばいとして1回目を維持（boarding も保持）", async () => {
+    const first = createGuide(
+      { state: "confirmed", pair: { gate: "道玄坂改札", exit: null } },
+      { carNumber: 5, doorPosition: "前寄り", reason: "階段が近い", confidenceLevel: "medium" }
+    );
+    const second = createGuide({ state: "confirmed", pair: { gate: "別の改札", exit: null } });
+
+    const result = await selectFinalGuide(first, second);
+    expect(result).toBe(first);
+    expect(result?.boarding?.carNumber).toBe(5);
+  });
+
+  test("改善時に2回目の boarding が null なら1回目の boarding を保持", async () => {
+    const first = createGuide(
+      { state: "confirmed", pair: { gate: "道玄坂改札", exit: null } },
+      { carNumber: 5, doorPosition: "前寄り", reason: "階段が近い", confidenceLevel: "medium" }
+    );
+    const second = createGuide({ state: "confirmed", pair: { gate: "道玄坂改札", exit: "A1出口" } });
+
+    const result = await selectFinalGuide(first, second);
+    expect(result).not.toBe(first);
+    expect(result?.boarding?.carNumber).toBe(5);
     expect(result?.facility.state).toBe("confirmed");
-  });
-
-  test("路線名の中黒有無が異なっても経路一致として改善を採用", async () => {
-    const first = createGuide(["相鉄・東急直通線"], 0, null, "unavailable");
-    const second = createGuide(["相鉄東急直通線"], 0, null, "confirmed");
-    const result = await selectFinalGuide(first, second);
-    
-    expect(result?.facility.state).toBe("confirmed");
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.exit?.name).toBe("A1出口");
+    }
   });
 });
+
+

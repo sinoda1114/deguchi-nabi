@@ -446,48 +446,57 @@ async function attemptGenerateSingleCallNavigatorGuide(
 }
 
 /**
- * 改札・出口の情報が両方とも確認できない(facility.state === "unavailable")
- * 結果か判定する。この状態は本来最もユーザーに見せたくない結果(乗換自体は
- * 成功したのに改札・出口だけ「確認できません」になる)であり、実機検証で
- * 一定確率(3回中1回)で発生することを確認したため、丸ごとnullの場合と
- * 同様に再試行の対象にする。alternatives(複数候補)は「情報が出せた」状態
- * として扱い、再試行の対象にしない。
+ * 改札・出口の情報が不完全で retry が必要か判定する。
  * 
- * Phase 1 JEV統合: JEV_API_KEYが設定されている場合、JEVによる意味的判定を
- * 使用してretry判定を改善する（機械的な件数ルールから意味理解ベースへ移行）。
- * JEV未設定時は従来の挙動（unavailableならretry）を維持。
+ * 判定基準:
+ * - unavailable: retry 必要
+ * - alternatives: retry 不要（情報が出せた状態）
+ * - confirmed で gate/exit の片方のみ: retry 必要（completeness check）
+ * - confirmed で両方あり: retry 不要
  * 
- * Phase 2-C JEV統合: Facility完全性評価（exit安定化専用）。
- * confirmedでもgate/exitの片方のみの場合、JEVで「retryで改善する見込み」を判定。
- * 修正: Phase 2-C → Phase 1 の順に実行（confirmed片方のみを先に検出してPhase 1のバイパスを防ぐ）。
+ * Completeness check は純粋なデータ判定（JEV 不要）なので、JEV が利用不可/タイムアウトの場合でも動作する。
+ * JEV は意味的な判定（unavailable でも実質的に有用か、小規模駅で片方だけで十分か）に使用。
  */
-async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
-  // JEVが利用可能な場合、段階的判定を実施
+async function shouldRetryForFacility(guide: SingleCallNavigatorGuide): Promise<{ shouldRetry: boolean; reason: string }> {
+  // confirmed で片方のみ: JEV 不要の pure data check で retry 判定
+  if (guide.facility.state === "confirmed") {
+    const hasGate = guide.facility.pair.gate !== null;
+    const hasExit = guide.facility.pair.exit !== null;
+    if (!hasGate || !hasExit) {
+      const missing = !hasGate ? "改札" : "出口";
+      // JEV が利用可能なら意味的判定（小規模駅で片方だけで十分か）
+      if (isJevAvailable()) {
+        const jevConfig = createJevConfig();
+        if (jevConfig) {
+          try {
+            const completenessDecision = await evaluateFacilityCompleteness(guide.facility, jevConfig);
+            return {
+              shouldRetry: completenessDecision.shouldRetry,
+              reason: completenessDecision.reason || `${missing}が確認できなかった`,
+            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn("[single-call-navigator] JEV completeness evaluation failed, falling back to rule-based:", message);
+          }
+        }
+      }
+      // JEV 利用不可 or エラー時: confirmed で片方のみは retry（保守的）
+      return { shouldRetry: true, reason: `${missing}が確認できなかった` };
+    }
+    // confirmed で両方あり: retry 不要
+    return { shouldRetry: false, reason: "confirmed状態（gate・exit両方あり）" };
+  }
+  
+  // unavailable / alternatives: Phase 1 で判定
   if (isJevAvailable()) {
     const jevConfig = createJevConfig();
     if (jevConfig) {
-      // Phase 2-C: Facility完全性評価（confirmedでgate/exitの片方のみを先に検出）
-      // confirmed状態の場合のみ Phase 2-C を実行（Phase 1 が confirmed を誤って十分と判定するのを防ぐ）
-      if (guide.facility.state === "confirmed") {
-        try {
-          const completenessDecision = await evaluateFacilityCompleteness(guide.facility, jevConfig);
-          if (completenessDecision.reason) {
-            console.log(`[single-call-navigator] JEV completeness: ${completenessDecision.reason}`);
-          }
-          return completenessDecision.shouldRetry;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn("[single-call-navigator] JEV completeness evaluation failed, falling back to Phase 1:", message);
-        }
-      }
-      
-      // Phase 1: Retry gate判定（unavailable/alternativesの意味的判定によるretry削減 -3〜4秒）
       try {
         const retryGateDecision = await evaluateRetryGate(guide.facility, jevConfig);
-        if (retryGateDecision.reason) {
-          console.log(`[single-call-navigator] JEV retry gate: ${retryGateDecision.shouldRetry} (${retryGateDecision.reason})`);
-        }
-        return retryGateDecision.shouldRetry;
+        return {
+          shouldRetry: retryGateDecision.shouldRetry,
+          reason: retryGateDecision.reason || "Phase 1 retry gate judgment",
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn("[single-call-navigator] JEV retry gate evaluation failed, falling back to rule-based:", message);
@@ -495,8 +504,12 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
     }
   }
   
-  // 最終フォールバック: 従来の件数ベース判定
-  return guide.facility.state === "unavailable";
+  // JEV 利用不可 or エラー時: ルールベース判定
+  if (guide.facility.state === "unavailable") {
+    return { shouldRetry: true, reason: "改札・出口の情報が両方とも確認できなかった" };
+  }
+  // alternatives は retry 不要
+  return { shouldRetry: false, reason: "alternatives状態（複数候補あり）" };
 }
 
 /**
@@ -510,19 +523,34 @@ export interface SingleCallNavigatorRun {
   final: Promise<SingleCallNavigatorGuide | null>;
 }
 
-const FACILITY_RANK = { unavailable: 0, alternatives: 1, confirmed: 2 } as const;
+/**
+ * facility の完全性スコアを計算する。gate/exit の有無を考慮。
+ * - unavailable: 0
+ * - alternatives: 1
+ * - confirmed (partial, gate または exit のみ): 2
+ * - confirmed (full, gate と exit 両方): 3
+ */
+function facilityScore(facility: RawFacilityRecommendation): number {
+  if (facility.state === "unavailable") return 0;
+  if (facility.state === "alternatives") return 1;
+  // confirmed: gate/exit の有無で 2 (partial) または 3 (full)
+  const hasGate = facility.pair.gate !== null;
+  const hasExit = facility.pair.exit !== null;
+  return 2 + (hasGate && hasExit ? 1 : 0);
+}
 
 /**
  * 1回目と2回目の結果から最終結果を選択する。経路の整合性を保ちつつ、
  * 改札・出口の品質を向上させる。
  * 
  * 選択ルール:
- * - 片方null → もう一方を返す（現行バグ修正: 1回目を捨てない）
- * - 2回目の改札・出口が悪化 → 1回目を維持
+ * - 片方null → もう一方を返す
+ * - 2回目が悪化または横ばい（改善なし）→ 1回目を維持
  * - 経路不一致 → 1回目を維持（ヘッダと改札・出口の矛盾を防ぐ）
- * - 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口
+ * - 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口 + boarding merge
  * 
- * Phase 2: isRouteConsistent()の非同期化に伴い、selectFinalGuide()も非同期化。
+ * facilityScore は gate/exit の completeness を考慮:
+ * unavailable=0 < alternatives=1 < confirmed partial=2 < confirmed full=3
  */
 export async function selectFinalGuide(
   first: SingleCallNavigatorGuide | null,
@@ -531,8 +559,10 @@ export async function selectFinalGuide(
   if (first === null) return second;
   if (second === null) return first;
   
-  // 2回目が悪化していれば1回目を維持
-  if (FACILITY_RANK[second.facility.state] < FACILITY_RANK[first.facility.state]) {
+  // 2回目が悪化または横ばい（改善なし）なら1回目を維持
+  const firstScore = facilityScore(first.facility);
+  const secondScore = facilityScore(second.facility);
+  if (secondScore <= firstScore) {
     return first;
   }
   
@@ -549,11 +579,11 @@ export async function selectFinalGuide(
     return first;
   }
   
-  // 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口・乗車位置
+  // 経路一致 & 改善 → 1回目の経路 + 2回目の改札・出口 + boarding は両方の情報を保持
   return {
     ...first,
     facility: second.facility,
-    boarding: second.boarding,
+    boarding: second.boarding ?? first.boarding,
   };
 }
 
@@ -662,12 +692,13 @@ export function generateSingleCallNavigatorRun(
   
   const final = attempt1.then(async (r1) => {
     // 1回目で完了（confirmed/alternatives または null）
-    if (r1 !== null && !(await isFacilityUnavailable(r1))) {
+    const retryCheck = r1 !== null ? await shouldRetryForFacility(r1) : null;
+    if (r1 !== null && retryCheck && !retryCheck.shouldRetry) {
       return r1;
     }
     
     // 再試行が必要
-    const reason = r1 === null ? "結果がnullだった" : "改札・出口の情報が両方とも確認できなかった";
+    const reason = r1 === null ? "結果がnullだった" : retryCheck!.reason;
     console.warn(
       `[single-call-navigator] 1回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
     );
