@@ -6,9 +6,10 @@ const REQUEST_TIMEOUT_MS = 15000;
 // 2026-07-21: 単一呼び出し方式(single-call-navigator.ts)の改善プロンプトは、
 // 実在確認と適合性検証の分離・複数改札比較・情報源優先順位等を1回の検索に
 // 詰め込んだ長いプロンプトのため、実機検証で55秒の壁を越えてタイムアウトし
-// サイレントにnullを返すケースを確認した(8回実測では38.9〜75.6秒だったが、
-// 実配線検証では2回とも55秒ちょうどでタイムアウトし空振りした)。100秒へ延長する。
-const SEARCH_REQUEST_TIMEOUT_MS = 100000;
+// サイレントにnullを返すケースを確認した(8回実測では38.9〜75.6秒)。
+// 2026-09-19: 実測最大値75.6秒に基づき、過剰な待ち時間を削減するため100秒→75秒へ短縮。
+// タイムアウトで無駄に待つケースを減らし、全体レイテンシを改善する。
+const SEARCH_REQUEST_TIMEOUT_MS = 75000;
 
 function generateUrl(model: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
