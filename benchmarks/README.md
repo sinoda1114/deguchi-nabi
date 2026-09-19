@@ -88,16 +88,23 @@ Based on `src/app/api/routes/search/route.ts` comments:
 
 The API route has `maxDuration = 290` seconds to accommodate these timings.
 
-### For AFTER (JEV Integration)
+### For AFTER (JEV Integration) — Future
 
-When implementing JEV speedups:
+**NOTE**: JEV integration is **planned but not yet implemented**. This section describes the future AFTER measurement process.
+
+When JEV is integrated:
 
 1. Keep this harness unchanged (same fixture, same N=10 runs)
-2. Run `npm run benchmark` to get AFTER numbers
-3. Compare with BEFORE baseline
-4. Document speedup: `(BEFORE - AFTER) / BEFORE * 100%`
+2. Set both `GEMINI_API_KEY` and `JEV_API_KEY`
+3. Run `npm run benchmark` to get AFTER numbers
+4. Compare with BEFORE baseline
+5. Document speedup: `(BEFORE - AFTER) / BEFORE * 100%`
 
-JEV (TypeSafe System One) is designed for fast (~70-500ms) classification/routing/gating decisions, NOT prose generation. The planned speedups will replace slow LLM-based decision points (confidence gates, route quality checks, facility selection logic) while keeping LLM for actual text/structured generation where needed.
+**JEV Scope** (TypeSafe System One, ~70-500ms decisions):
+- ✅ Classification, routing, gating, confidence scoring
+- ❌ NOT prose generation or grounded search (stays Gemini)
+
+Planned speedups target slow decision points (retry gates, facility selection) while keeping LLM for text/structured generation.
 
 ### Troubleshooting
 
