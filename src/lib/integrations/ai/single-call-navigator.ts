@@ -691,33 +691,67 @@ export function generateSingleCallNavigatorRun(
   const attempt1 = attempt();
   
   const final = attempt1.then(async (r1) => {
-    // 1回目で完了（confirmed/alternatives または null）
-    const retryCheck = r1 !== null ? await shouldRetryForFacility(r1) : null;
-    if (r1 !== null && retryCheck && !retryCheck.shouldRetry) {
-      return r1;
-    }
+    let current = r1;
+    let attemptCount = 1;
+    const MAX_ATTEMPTS = 3;
     
-    // 再試行が必要
-    const reason = r1 === null ? "結果がnullだった" : retryCheck!.reason;
-    console.warn(
-      `[single-call-navigator] 1回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
-    );
-    
-    let r2: SingleCallNavigatorGuide | null;
-    try {
-      r2 = await attempt();
-    } catch (error) {
-      // 2回目が例外で失敗
-      if (r1 === null) throw error; // 見せられる結果が無い
+    while (attemptCount < MAX_ATTEMPTS) {
+      // 現在の結果が完全か判定
+      const retryCheck = current !== null ? await shouldRetryForFacility(current) : null;
+      if (current !== null && retryCheck && !retryCheck.shouldRetry) {
+        // Retry 不要、完了
+        console.log(
+          `[single-call-navigator] ${attemptCount}回目で完了: ${retryCheck.reason}`
+        );
+        break;
+      }
+      
+      // Retry が必要
+      attemptCount++;
+      const reason = current === null ? "結果がnullだった" : retryCheck!.reason;
       console.warn(
-        "[single-call-navigator] 再試行が例外で失敗、1回目の結果を採用",
-        error instanceof Error ? error.message : String(error)
+        `[single-call-navigator] ${attemptCount - 1}回目の試行で${reason}ため${attemptCount}回目を試行: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
       );
-      r2 = null;
+      
+      let next: SingleCallNavigatorGuide | null;
+      try {
+        next = await attempt();
+      } catch (error) {
+        // Retry が例外で失敗
+        if (current === null) throw error; // 見せられる結果が無い
+        console.warn(
+          `[single-call-navigator] ${attemptCount}回目の試行が例外で失敗、${attemptCount - 1}回目の結果を採用`,
+          error instanceof Error ? error.message : String(error)
+        );
+        next = null;
+      }
+      
+      // Phase 2: selectFinalGuide()の非同期化に対応
+      const merged = await selectFinalGuide(current, next);
+      
+      // confirmed full を得たら即座に終了（効率化）
+      if (merged?.facility.state === "confirmed" && 
+          merged.facility.pair.gate !== null && 
+          merged.facility.pair.exit !== null) {
+        console.log(
+          `[single-call-navigator] ${attemptCount}回目で confirmed full を取得、終了`
+        );
+        return merged;
+      }
+      
+      current = merged;
     }
     
-    // Phase 2: selectFinalGuide()の非同期化に対応
-    return await selectFinalGuide(r1, r2);
+    if (attemptCount >= MAX_ATTEMPTS && current !== null) {
+      const finalCheck = await shouldRetryForFacility(current);
+      if (finalCheck.shouldRetry) {
+        console.warn(
+          `[single-call-navigator] ${MAX_ATTEMPTS}回の試行後も不完全: ${finalCheck.reason}`
+        );
+      }
+    }
+    
+    return current;
   });
   
   // first: 1回目の結果、またはnullならfinalと同時に決着

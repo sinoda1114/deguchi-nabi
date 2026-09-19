@@ -280,7 +280,7 @@ describe("generateSingleCallNavigatorGuide", () => {
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result).toBeNull();
-    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(3);
   });
 
   test("改札名に異常に長い文字列が来た場合は採用しない(セキュリティ: 後段プロンプトへの汚染防止)", async () => {
@@ -335,12 +335,12 @@ describe("generateSingleCallNavigatorGuide", () => {
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
   });
 
-  test("2回ともnullの場合、最終的にnullを返し3回目は試行しない", async () => {
+  test("3回ともnullの場合、最終的にnullを返す", async () => {
     searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(null);
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(result).toBeNull();
-    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(3);
   });
 
   test("改札・出口の情報が両方とも確認できない(facility unavailable)場合も再試行する。経路一致なら2回目を採用", async () => {
@@ -367,7 +367,7 @@ describe("generateSingleCallNavigatorGuide", () => {
     });
   });
 
-  test("再試行しても改札・出口が両方未確認のままの場合、経路情報は捨てず直近の結果を返す", async () => {
+  test("3回試行しても改札・出口が両方未確認のままの場合、経路情報は捨てず直近の結果を返す", async () => {
     searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
       mockResult({
         lines: ["相鉄本線"],
@@ -377,7 +377,7 @@ describe("generateSingleCallNavigatorGuide", () => {
     );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(3);
     expect(result).not.toBeNull();
     expect(result?.lines).toEqual(["相鉄本線"]);
     expect(result?.facility.state).toBe("unavailable");
@@ -393,21 +393,31 @@ describe("generateSingleCallNavigatorGuide", () => {
   describe("JEV統合（Phase 1: retry gate判定）", () => {
     test("JEV_API_KEYが設定されていない場合、従来のルールベース判定を使用する", async () => {
       mockIsJevAvailable.mockReturnValue(false);
-      searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
-        mockResult({
-          lines: ["相鉄本線"],
-          transferCount: 0,
-          estimatedMinutes: 13,
-        })
-      );
+      const CONSISTENT_VALID_RAW = { ...VALID_RAW, lines: ["相鉄本線"] }; // 経路を統一
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(
+          mockResult({
+            lines: ["相鉄本線"],
+            transferCount: 0,
+            estimatedMinutes: 13,
+          })
+        )
+        .mockResolvedValueOnce(
+          mockResult({
+            lines: ["相鉄本線"],
+            transferCount: 0,
+            estimatedMinutes: 13,
+          })
+        )
+        .mockResolvedValueOnce(mockResult(CONSISTENT_VALID_RAW));
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
       
-      // unavailableなのでretryされる（従来挙動）
-      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+      // unavailableなのでretryされる（従来挙動）、3回目で成功
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(3);
       expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
       expect(result).not.toBeNull();
-      expect(result?.facility.state).toBe("unavailable");
+      expect(result?.facility.state).toBe("confirmed");
     });
 
     test("JEV_API_KEYが設定されている場合、JEVによる判定を使用する", async () => {
@@ -461,6 +471,7 @@ describe("generateSingleCallNavigatorGuide", () => {
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
       mockEvaluateRetryGate.mockRejectedValue(new Error("JEV API error"));
 
+      const CONSISTENT_VALID_RAW = { ...VALID_RAW, lines: ["相鉄本線"] }; // 経路を統一
       searchAndGenerateStructuredContentWithSearchText
         .mockResolvedValueOnce(
           mockResult({
@@ -475,16 +486,17 @@ describe("generateSingleCallNavigatorGuide", () => {
             transferCount: 0,
             estimatedMinutes: 13,
           })
-        );
+        )
+        .mockResolvedValueOnce(mockResult(CONSISTENT_VALID_RAW));
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-      
+
       // JEVエラー時はルールベースへフォールバック、unavailableなのでretryされる
-      // 両方unavailableなので1回目を維持
-      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+      // 3回目で成功
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(3);
       expect(mockEvaluateRetryGate).toHaveBeenCalled();
       expect(result).not.toBeNull();
-      expect(result?.facility.state).toBe("unavailable");
+      expect(result?.facility.state).toBe("confirmed");
     });
   });
 
@@ -662,6 +674,87 @@ describe("generateSingleCallNavigatorGuide", () => {
       expect(mockEvaluateFacilityCompleteness).toHaveBeenCalledTimes(1);
       // Phase 1 は呼ばれない（confirmed の場合）
       expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
+    });
+
+    test("3回の retry: 1回目 gate-only, 2回目 gate-only, 3回目 gate+exit → 3回目を採用", async () => {
+      mockIsJevAvailable.mockReturnValue(true);
+      mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
+      mockEvaluateFacilityCompleteness.mockResolvedValue({
+        isComplete: false,
+        missingFields: ["exit"],
+        shouldRetry: true,
+        reason: "exit が確認できなかった",
+      });
+
+      // 1回目・2回目: gate-only
+      const gateOnlySearchText = "詳細情報: 降りる改札は道玄坂改札です。";
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(
+          mockResult(
+            {
+              lines: ["相鉄・東急直通線"],
+              transferCount: 0,
+              estimatedMinutes: 35,
+              facilityCandidates: [{ gateName: "道玄坂改札", confidence: "medium" }],
+            },
+            gateOnlySearchText
+          )
+        )
+        .mockResolvedValueOnce(
+          mockResult(
+            {
+              lines: ["相鉄・東急直通線"],
+              transferCount: 0,
+              estimatedMinutes: 35,
+              facilityCandidates: [{ gateName: "道玄坂改札", confidence: "medium" }],
+            },
+            gateOnlySearchText
+          )
+        )
+        .mockResolvedValueOnce(mockResult(VALID_RAW));
+
+      const result = await generateSingleCallNavigatorGuide("test-api-key", NISHIYA, SHIBUYA, "ウエチャベ");
+
+      // 3回目で gate+exit を取得
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(3);
+      expect(result).not.toBeNull();
+      expect(result?.facility.state).toBe("confirmed");
+      if (result?.facility.state === "confirmed") {
+        expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+        expect(result.facility.pair.exit?.name).toBe("A1出口");
+      }
+    });
+
+    test("3回すべて gate-only → 最後の試行結果を採用", async () => {
+      mockIsJevAvailable.mockReturnValue(false);
+
+      // 3回とも gate-only
+      const gateOnlySearchText = "詳細情報: 降りる改札は道玄坂改札です。";
+      const gateOnlyResult = mockResult(
+        {
+          lines: ["相鉄・東急直通線"],
+          transferCount: 0,
+          estimatedMinutes: 35,
+          facilityCandidates: [{ gateName: "道玄坂改札", confidence: "medium" }],
+        },
+        gateOnlySearchText
+      );
+
+      searchAndGenerateStructuredContentWithSearchText
+        .mockResolvedValueOnce(gateOnlyResult)
+        .mockResolvedValueOnce(gateOnlyResult)
+        .mockResolvedValueOnce(gateOnlyResult);
+
+      const result = await generateSingleCallNavigatorGuide("test-api-key", NISHIYA, SHIBUYA, "ウエチャベ");
+
+      // 3回試行したが全て gate-only
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(3);
+      expect(result).not.toBeNull();
+      expect(result?.facility.state).toBe("confirmed");
+      if (result?.facility.state === "confirmed") {
+        expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+        expect(result.facility.pair.exit).toBeNull();
+      }
     });
   });
 });
