@@ -412,21 +412,26 @@ async function attemptGenerateSingleCallNavigatorGuide(
  * 4. フォールバック: unavailableなら無条件にリトライ
  * 
  * この優先順位により、不要な2回目のGemini呼び出し（約50秒）を削減し、
- * タイムアウト短縮（100秒→75秒）と合わせて最大50秒以上の高速化を実現する。
+ * タイムアウト短縮（100秒→90秒）と合わせて最大40秒以上の高速化を実現する。
  */
 async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<boolean> {
-  // confirmed/alternativesは十分な情報があるのでリトライ不要
+  // Priority 1: confirmed/alternatives → no retry
   if (guide.facility.state !== "unavailable") {
     return false;
   }
   
+  // Priority 2: complete route info → no retry
   // unavailableでも経路情報が完全に取れていれば、改札・出口の再試行は不要。
   // ユーザーは駅まで到達でき、降車後に案内表示で改札を見つけられる。
   // 実機検証で「経路は合っているが改札・出口がunavailable」は十分に有用と判明した。
+  //
+  // 意味的検証を追加（Thermos指摘対応）：構造的な存在だけでなく、基本的な妥当性も確認する。
   const hasCompleteRouteInfo = 
     guide.lines.length > 0 &&
     guide.transferCount >= 0 &&
-    guide.estimatedMinutes > 0;
+    guide.transferCount <= MAX_TRANSFER_COUNT && // 日本の一般的な乗り換え回数（10回）の範囲内
+    guide.estimatedMinutes > 0 &&
+    guide.estimatedMinutes <= MAX_DURATION_MINUTES; // 既定の最大所要時間（600分）の範囲内
   
   if (hasCompleteRouteInfo) {
     console.log(

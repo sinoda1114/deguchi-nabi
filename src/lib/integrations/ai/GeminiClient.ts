@@ -7,9 +7,10 @@ const REQUEST_TIMEOUT_MS = 15000;
 // 実在確認と適合性検証の分離・複数改札比較・情報源優先順位等を1回の検索に
 // 詰め込んだ長いプロンプトのため、実機検証で55秒の壁を越えてタイムアウトし
 // サイレントにnullを返すケースを確認した(8回実測では38.9〜75.6秒)。
-// 2026-09-19: 実測最大値75.6秒に基づき、過剰な待ち時間を削減するため100秒→75秒へ短縮。
-// タイムアウトで無駄に待つケースを減らし、全体レイテンシを改善する。
-const SEARCH_REQUEST_TIMEOUT_MS = 75000;
+// 2026-09-19: 実測最大値75.6秒に対し19%の安全マージンを確保し、100秒→90秒へ短縮。
+// 信頼性工学の原則（タイムアウトはp99レイテンシを超えるべき）に従い、10秒削減しつつ
+// ネットワーク変動・API負荷・地理的ルーティング差異に対する十分なバッファを維持。
+const SEARCH_REQUEST_TIMEOUT_MS = 90000;
 
 function generateUrl(model: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -45,7 +46,13 @@ async function callGemini(
 
     const data = (await res.json()) as GeminiResponse;
     return data.candidates?.[0] ?? null;
-  } catch {
+  } catch (error) {
+    // タイムアウトのテレメトリ（診断用）
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.warn(`[GeminiClient] Request timeout after ${timeoutMs}ms (model: ${model})`);
+    } else if (error instanceof Error && error.name === 'TimeoutError') {
+      console.warn(`[GeminiClient] Request timeout after ${timeoutMs}ms (model: ${model})`);
+    }
     return null;
   }
 }
