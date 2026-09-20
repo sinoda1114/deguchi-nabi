@@ -1,5 +1,10 @@
-import type { StationProviderPort } from "./StationProviderPort";
-import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-generation";
+import type { ArrivalRide, StationProviderPort } from "./StationProviderPort";
+import {
+  generateBoardingPosition,
+  generateBoardingPositionForChosenGate,
+  isPlainArrivalPlatformLabel,
+} from "./ai-generation";
+import type { UniqueChosenGate } from "@/lib/domain/facility-recommendation";
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import {
@@ -204,6 +209,24 @@ export class AiStationAdapter implements StationProviderPort {
       stationName,
       line,
       direction,
+      boardingPlatformId,
+      arrivalPlatformNumber
+    );
+  }
+
+  async getBoardingForChosenGate(
+    ride: ArrivalRide,
+    gate: UniqueChosenGate
+  ): Promise<BoardingPosition | null> {
+    const boardingPlatformId = lineBoardingPlatformId(ride.fromStationId, ride.line, ride.direction);
+    const arrivalPlatformNumber = isPlainArrivalPlatformLabel(ride.platformId)
+      ? ride.platformId
+      : null;
+
+    return generateBoardingPositionForChosenGate(
+      this.geminiApiKey,
+      ride,
+      gate,
       boardingPlatformId,
       arrivalPlatformNumber
     );

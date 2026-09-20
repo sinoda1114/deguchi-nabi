@@ -3,6 +3,7 @@ import {
   classifyFacilityRecommendation,
   facilityCandidatesOf,
   isVerbatimInSearchText,
+  uniqueChosenGateOf,
 } from "@/lib/domain/facility-recommendation";
 import type { FacilityPair, NamedFacility } from "@/lib/domain/facility-recommendation";
 import { lowConfidence } from "@/lib/domain/confidence";
@@ -133,6 +134,33 @@ describe("facilityCandidatesOf", () => {
 
     const unavailable = classifyFacilityRecommendation([]);
     expect(facilityCandidatesOf(unavailable, (p) => p.gate)).toHaveLength(0);
+  });
+});
+
+describe("uniqueChosenGateOf", () => {
+  test("confirmed で改札が1つならその名前を返す", () => {
+    const rec = classifyFacilityRecommendation([pair("道玄坂改札", "A1出口")]);
+    expect(uniqueChosenGateOf(rec)).toEqual({ name: "道玄坂改札" });
+  });
+
+  test("alternatives で改札名が2つなら null（単一号車を複数改札に接続しない）", () => {
+    const rec = classifyFacilityRecommendation([
+      pair("道玄坂改札", "A1出口"),
+      pair("ハチ公改札", "ハチ公口"),
+    ]);
+    expect(uniqueChosenGateOf(rec)).toBeNull();
+  });
+
+  test("alternatives で出口だけ複数・改札名が1つなら成功", () => {
+    const rec = classifyFacilityRecommendation([
+      pair("道玄坂改札", "A1出口"),
+      pair("道玄坂改札", "A2出口"),
+    ]);
+    expect(uniqueChosenGateOf(rec)).toEqual({ name: "道玄坂改札" });
+  });
+
+  test("unavailable は null", () => {
+    expect(uniqueChosenGateOf(classifyFacilityRecommendation([]))).toBeNull();
   });
 });
 

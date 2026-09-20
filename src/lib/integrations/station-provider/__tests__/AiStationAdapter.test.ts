@@ -29,6 +29,7 @@ vi.mock("@/lib/store/kv-cache-store", () => ({
 }));
 
 const generateBoardingPosition = vi.fn();
+const generateBoardingPositionForChosenGate = vi.fn();
 const generateStationFacilities = vi.fn(async (..._args: unknown[]) => [] as unknown[]);
 vi.mock("../ai-generation", async () => {
   // isPlainArrivalPlatformLabel は実実装をそのまま使う(AiStationAdapter側の
@@ -38,6 +39,8 @@ vi.mock("../ai-generation", async () => {
   return {
     ...actual,
     generateBoardingPosition: (...args: unknown[]) => generateBoardingPosition(...args),
+    generateBoardingPositionForChosenGate: (...args: unknown[]) =>
+      generateBoardingPositionForChosenGate(...args),
     generateStationFacilities: (...args: unknown[]) => generateStationFacilities(...args),
   };
 });
@@ -919,5 +922,44 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     expect(result?.boardingPosition).toBeNull();
     expect(result?.omitIndependentBoarding).toBe(true);
     expect(result?.walkingSteps).toEqual([]);
+  });
+});
+
+describe("AiStationAdapter.getBoardingForChosenGate", () => {
+  beforeEach(() => {
+    generateBoardingPositionForChosenGate.mockReset();
+  });
+
+  test("指定改札向け生成器へ ride と改札名を渡し、無条件 generateBoardingPosition は呼ばない", async () => {
+    generateBoardingPositionForChosenGate.mockResolvedValue(AI_POSITION);
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getBoardingForChosenGate(
+      {
+        fromStationId: "st_nishiya",
+        fromStationName: "西谷駅",
+        arrivalStationName: "渋谷駅",
+        platformId: "3",
+        line: "東急東横線",
+        direction: "渋谷方面",
+      },
+      { name: "道玄坂改札" }
+    );
+
+    expect(result?.carNumber).toBe(4);
+    expect(generateBoardingPosition).not.toHaveBeenCalled();
+    expect(generateBoardingPositionForChosenGate).toHaveBeenCalledWith(
+      "test-key",
+      {
+        fromStationId: "st_nishiya",
+        fromStationName: "西谷駅",
+        arrivalStationName: "渋谷駅",
+        platformId: "3",
+        line: "東急東横線",
+        direction: "渋谷方面",
+      },
+      { name: "道玄坂改札" },
+      "st_nishiya::line::東急東横線::渋谷方面",
+      "3"
+    );
   });
 });

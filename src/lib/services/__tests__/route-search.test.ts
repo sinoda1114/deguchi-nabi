@@ -219,6 +219,54 @@ describe("searchRouteGuide", () => {
     expect(result.route.confidenceSummary.gate).toBe("high");
   });
 
+  test("収録 BothHit(西谷→道玄坂2-9-2)でも乗車位置 AND 改札 AND 出口が揃う(無条件号車は呼ばない)", async () => {
+    const getBoardingPosition = vi.fn(async () => null);
+    const getBoardingForChosenGate = vi.fn(async () => ({
+      boardingPositionId: "bp_gate",
+      platformId: PLATFORM.platformId,
+      trainFormation: 0,
+      carNumber: 8,
+      doorPosition: "前方" as const,
+      targetFacilityId: null,
+      reason: "道玄坂改札に近いため",
+      confidence: highConfidence,
+      verifiedAt: null,
+    }));
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "道玄坂改札", confidence: highConfidence },
+          exit: { name: "A1出口", confidence: highConfidence },
+          reason: "目的地座標に最も近い収録出口と、その接続改札",
+        },
+      },
+      walkingSteps: [],
+      omitIndependentBoarding: true,
+    }));
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider([]),
+      getUnifiedArrivalGuide,
+      getBoardingPosition,
+      getBoardingForChosenGate,
+    };
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider,
+    };
+    const result = await searchRouteGuide({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(getBoardingPosition).not.toHaveBeenCalled();
+    expect(getBoardingForChosenGate).toHaveBeenCalledTimes(1);
+    expect(getBoardingForChosenGate.mock.calls[0]?.[1]).toEqual({ name: "道玄坂改札" });
+    expect(result.route.keyInstruction.text).toBe("8号車付近に乗車、道玄坂改札、A1出口へ。");
+    expect(result.route.keyInstruction.text).not.toContain("確認できません");
+    expect(getUnifiedArrivalGuide).toHaveBeenCalled();
+  });
+
   test("easy モードで到着駅のarrivalGuideにticket_gate/street_exitステップを含む", async () => {
     const deps: RouteSearchDeps = {
       routeProvider: buildRouteProvider(true),
@@ -641,6 +689,75 @@ describe("buildTrainSegments", () => {
     expect(getBoardingPositionSpy).not.toHaveBeenCalled();
     expect(segments[0].boardingPosition).toBeNull();
   });
+
+  test("omitIndependentBoarding でも改札1択なら getBoardingForChosenGate を呼び無条件 getBoardingPosition は呼ばない", async () => {
+    const getBoardingPositionSpy = vi.fn(async () => null);
+    const getBoardingForChosenGate = vi.fn(async () => ({
+      boardingPositionId: "bp_gate",
+      platformId: PLATFORM.platformId,
+      trainFormation: 0,
+      carNumber: 8,
+      doorPosition: "前方" as const,
+      targetFacilityId: null,
+      reason: "道玄坂改札に近いため",
+      confidence: highConfidence,
+      verifiedAt: null,
+    }));
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getBoardingPosition: getBoardingPositionSpy,
+      getBoardingForChosenGate,
+    };
+    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
+    const candidate = await resolveRouteCandidate({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const segments = await buildTrainSegments(
+      candidate.chosen,
+      deps,
+      null,
+      true,
+      { name: "道玄坂改札" }
+    );
+    expect(getBoardingPositionSpy).not.toHaveBeenCalled();
+    expect(getBoardingForChosenGate).toHaveBeenCalledTimes(1);
+    expect(getBoardingForChosenGate.mock.calls[0][1]).toEqual({ name: "道玄坂改札" });
+    expect(segments[0].boardingPosition).toEqual({
+      carNumber: 8,
+      doorPosition: "前方",
+      reason: "道玄坂改札に近いため",
+    });
+  });
+
+  test("omitIndependentBoarding で改札が無いときは getBoardingForChosenGate も呼ばず号車は null", async () => {
+    const getBoardingPositionSpy = vi.fn(async () => null);
+    const getBoardingForChosenGate = vi.fn(async () => ({
+      boardingPositionId: "bp_gate",
+      platformId: PLATFORM.platformId,
+      trainFormation: 0,
+      carNumber: 8,
+      doorPosition: "前方" as const,
+      targetFacilityId: null,
+      reason: "should not run",
+      confidence: highConfidence,
+      verifiedAt: null,
+    }));
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getBoardingPosition: getBoardingPositionSpy,
+      getBoardingForChosenGate,
+    };
+    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
+    const candidate = await resolveRouteCandidate({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const segments = await buildTrainSegments(candidate.chosen, deps, null, true, null);
+    expect(getBoardingPositionSpy).not.toHaveBeenCalled();
+    expect(getBoardingForChosenGate).not.toHaveBeenCalled();
+    expect(segments[0].boardingPosition).toBeNull();
+  });
 });
 
 describe("buildTransferAndExitSegments", () => {
@@ -820,6 +937,40 @@ describe("buildTransferAndExitSegments", () => {
     }
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(outcome.result.arrivalGuide.steps.some((s) => s.title === "見出し")).toBe(true);
+  });
+
+  test("omitIndependentBoarding の統合生成は chosenArrivalGate に単一改札名を載せる", async () => {
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "道玄坂改札", confidence: highConfidence },
+          exit: { name: "A1出口", confidence: highConfidence },
+          reason: null,
+        },
+      },
+      walkingSteps: [],
+      omitIndependentBoarding: true,
+    }));
+    const deps: RouteSearchDeps = {
+      routeProvider: buildRouteProvider(true),
+      stationProvider: { ...buildStationProvider([]), getUnifiedArrivalGuide },
+    };
+    const candidate = await resolveRouteCandidate({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const outcome = await buildTransferAndExitSegments(candidate, { ...BASE_INPUT, mode: "easy" }, deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.omitIndependentBoarding).toBe(true);
+    expect(outcome.result.unifiedBoardingPosition).toBeNull();
+    expect(outcome.result.chosenArrivalGate).toEqual({ name: "道玄坂改札" });
+    if (outcome.result.facilityRecommendation.state === "confirmed") {
+      expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("道玄坂改札");
+      expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("A1出口");
+    }
   });
 
   test("destinationCoordinatesがある場合、routeProvider.findRailRoutesとstationProvider.getUnifiedArrivalGuideへ同じdestinationHintを渡す(単一呼び出し方式のキャッシュ共有が成立する前提。DESTINATION_HINT_ENABLED未設定でも一致すること)", async () => {

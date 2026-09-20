@@ -158,7 +158,8 @@ export interface UnifiedArrivalGuide {
   /**
    * true のとき、boardingPosition が null でも独立した getBoardingPosition を
    * 走らせない。収録カタログで改札・出口だけ確定し、号車は同一セッションに
-   * 無い場合に使う(無関係な号車生成を防ぐ)。
+   * 無い場合に使う(無関係な号車生成を防ぐ)。到着区間の号車は
+   * getBoardingForChosenGate（選んだ改札向け）で別途埋める。
    */
   omitIndependentBoarding?: boolean;
 }

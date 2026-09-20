@@ -113,7 +113,8 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
             candidate.chosen,
             { stationProvider },
             outcome.ok ? outcome.result.unifiedBoardingPosition : null,
-            outcome.ok ? outcome.result.omitIndependentBoarding : false
+            outcome.ok ? outcome.result.omitIndependentBoarding : false,
+            outcome.ok ? outcome.result.chosenArrivalGate : null
           )
         );
 

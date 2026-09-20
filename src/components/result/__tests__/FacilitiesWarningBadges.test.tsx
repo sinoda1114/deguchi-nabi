@@ -52,6 +52,7 @@ function buildResult(hasApproximateGuidance: boolean): FacilitiesSearchResult {
       approximateDirectionLabel: hasApproximateGuidance ? "西" : null,
       unifiedBoardingPosition: null,
       omitIndependentBoarding: false,
+      chosenArrivalGate: null,
       arrivalGuide: {
         steps: [],
         destinationDirection: hasApproximateGuidance ? "西" : null,

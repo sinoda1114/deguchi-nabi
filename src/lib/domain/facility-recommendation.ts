@@ -113,6 +113,27 @@ function dedupeByName<F extends { name: string }>(facilities: F[]): F[] {
 }
 
 /**
+ * 改札が名前重複排除後ちょうど1つに定まったときだけ存在する。
+ * uniqueChosenGateOf 以外から作ってはいけない（任意文字列の注入口にしない）。
+ */
+export type UniqueChosenGate = {
+  readonly name: string;
+};
+
+/**
+ * recommendation の gate 候補が1件ならその名前を返す。
+ * 0件・2件以上（改札が複数の alternatives）は null。
+ * 出口だけ複数で改札名が1つのときは成功する。
+ */
+export function uniqueChosenGateOf(
+  recommendation: FacilityRecommendation
+): UniqueChosenGate | null {
+  const gates = facilityCandidatesOf(recommendation, (pair) => pair.gate);
+  if (gates.length !== 1) return null;
+  return { name: gates[0].name };
+}
+
+/**
  * 3状態から、実際に案内可能な施設(NamedFacility等)の配列を取り出す共有処理。
  * confirmedなら0〜1件、alternativesなら2〜3件、unavailableなら0件になる。
  * route-search.ts(セグメント・サマリー組み立て)・arrival-guide.ts(GuideStep
