@@ -425,15 +425,6 @@ async function attemptGenerateSingleCallNavigatorGuide(
 }
 
 /**
- * 再試行するか。合格線は BothHit（改札 AND 出口）。
- * JEV が「片方で十分」と言っても retry を止めない（Option A 不採用）。
- * 部分表示はそのまま残し、合格率には数えない。
- */
-function needsFacilityRetry(guide: SingleCallNavigatorGuide): boolean {
-  return !isScoringBothHit(guide.facility);
-}
-
-/**
  * 二段階生成用: first（最初の非null結果）とfinal（再試行・整合性チェック後）
  * の両方のPromiseを含む実行オブジェクト。
  */
@@ -611,8 +602,7 @@ export function generateSingleCallNavigatorRun(
   const attempt1 = attempt();
   
   const final = attempt1.then(async (r1) => {
-    // 1回目で完了（confirmed/alternatives または null）
-    if (r1 !== null && !needsFacilityRetry(r1)) {
+    if (r1 !== null && isScoringBothHit(r1.facility)) {
       return r1;
     }
     

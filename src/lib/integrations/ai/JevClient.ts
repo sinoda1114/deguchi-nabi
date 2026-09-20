@@ -1,10 +1,5 @@
 /**
- * JEV (TypeSafe System One) クライアント
- * 判断パイプライン: 改札・出口の採用/スキップ/候補スコア（evaluateFacilityJudgment）
- * 経路一貫性: isRouteConsistent の意味的判定（evaluateRouteConsistency）
- *
- * 環境変数: JEV_API_KEY
- * タイムアウト: 1秒。失敗時は例外を再スローし、呼び出し側が fail-open する。
+ * JEV (TypeSafe System One)。認証は JEV_API_KEY。失敗時は再スローし呼び出し側が fail-open する。
  */
 
 import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
@@ -157,10 +152,6 @@ export function createJevConfig(): JevClientConfig | null {
   return { apiKey };
 }
 
-/**
- * 改札・出口の採用・スキップ・候補スコアを1回のsystemOneで取る。
- * BothHitの定義はここでは決めない（パイプラインがクランプする）。
- */
 export async function evaluateFacilityJudgment(
   input: JevFacilityJudgmentInput,
   config: JevClientConfig
@@ -208,12 +199,10 @@ export async function evaluateFacilityJudgment(
 
       for (let i = 0; i < input.geminiPairs.length; i++) {
         const pair = input.geminiPairs[i];
-        const gateName = pair.gate?.name ?? "（改札不明）";
-        const exitName = pair.exit?.name ?? "（出口不明）";
         state[`geminiGate${i}`] = pair.gate?.name ?? null;
         state[`geminiExit${i}`] = pair.exit?.name ?? null;
         questions[`preferCandidate${i}`] = noul(
-          `目的地「${input.destinationHint ?? "駅"}」への到達として、候補${i + 1}（改札: ${gateName} / 出口: ${exitName}）は他候補より適切ですか。OSM名は照合用であり、候補に無い名前を足してはいけません。`,
+          "state の destinationHint とこの候補番号の geminiGate/geminiExit を見て、他候補より目的地への到達に適切なら true。OSM 名は照合用。候補に無い名前を足してはいけない。",
           {
             true: "この候補が相対的に適切",
             false: "他の候補の方が良い",

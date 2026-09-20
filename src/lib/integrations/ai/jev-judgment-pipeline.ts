@@ -27,10 +27,6 @@ export interface JudgmentOutcome<F extends { name: string } = RawNamedFacility> 
   skipGeminiFacility: boolean;
 }
 
-/**
- * main には収録カタログが無い。#135 相当のソースが載ったら Map に足す。
- * 空は fail-open（地名を捏造しない）。
- */
 const optionalCatalogPairs = new Map<string, FacilityPair<RawNamedFacility>>();
 
 export function loadOptionalCatalogPair(stationName: string): FacilityPair<RawNamedFacility> | null {
@@ -99,10 +95,6 @@ function adoptCatalog<F extends { name: string }>(
   return finish({ state: "confirmed", pair: catalogPair }, true);
 }
 
-/**
- * 判断ゲートの単一入口。長文生成は呼ばない。
- * BothHit（改札AND出口）は JEV の「片方で十分」を無視してクランプする。
- */
 export async function runFacilityJudgmentPipeline<F extends { name: string }>(
   snapshot: JudgmentSnapshot<F>,
   config: JevClientConfig | null
