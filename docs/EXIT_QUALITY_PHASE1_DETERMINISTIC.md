@@ -32,7 +32,7 @@ PR #132（プロンプト精緻化 + 方角フォールバック + 厳格 retry�
 - 残す: #128 二段階ストリーミング、#129 JEV 判断スライス、Gemini 経路生成。
 - マージしない: #132（superseded）、#133 Option A。
 - やらない: 旧 `st_*` fixture 全体復活、方角フォールバックを合格に数えること、無制限 retry。
-- 収録 BothHit 時は無条件の号車 AI（`getBoardingPosition`）を抑制する（改札と無関係な号車を出さない）。号車は **選んだ改札向け** の別生成（`getBoardingForChosenGate`）で埋める。生成失敗時のみ未確認。
+- 収録 BothHit 時は無条件の号車 AI（`getBoardingPosition`）を抑制する（改札と無関係な号車を出さない）。号車は経路ヘッダと同じ共有 `.first` を、選んだ改札と矛盾しなければ採用する。無いときだけ **選んだ改札向け** の別生成（`getBoardingForChosenGate`）。生成失敗時のみ未確認。
 
 ## 残存リスク
 

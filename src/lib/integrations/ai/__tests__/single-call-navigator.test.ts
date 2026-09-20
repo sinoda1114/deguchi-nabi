@@ -4,7 +4,9 @@ import {
   buildSharedGuideCacheKey,
   generateSingleCallNavigatorGuide,
   getSharedSingleCallNavigatorGuide,
+  getSharedSingleCallNavigatorRun,
   isRouteConsistent,
+  peekSharedSingleCallNavigatorRun,
   selectFinalGuide,
   type SingleCallNavigatorGuide,
 } from "../single-call-navigator";
@@ -494,6 +496,26 @@ describe("getSharedSingleCallNavigatorGuide", () => {
     await getSharedSingleCallNavigatorGuide(keyB, generator);
 
     expect(generator).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("peekSharedSingleCallNavigatorRun", () => {
+  test("未登録キーは null で、generator は起動しない", () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "peek-miss");
+    expect(peekSharedSingleCallNavigatorRun(key)).toBeNull();
+  });
+
+  test("共有済み run を generator なしで返す", async () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "peek-hit");
+    const generator = vi.fn(() => ({
+      first: Promise.resolve(null),
+      final: Promise.resolve(null),
+    }));
+    getSharedSingleCallNavigatorRun(key, generator);
+    const peeked = peekSharedSingleCallNavigatorRun(key);
+    expect(peeked).not.toBeNull();
+    expect(generator).toHaveBeenCalledTimes(1);
+    await peeked?.first;
   });
 });
 

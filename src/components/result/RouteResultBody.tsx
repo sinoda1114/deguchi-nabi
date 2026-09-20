@@ -101,7 +101,8 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
   // へ渡すことで、両者が無関係な改札を基準にした号車を独立に返してしまう
   // 不整合を防ぐ(西谷駅→横浜駅の実機検証で確認済みの不具合)。
   // Gemini .final の号車がある政策(unified)では追加の号車 AI は走らない。
-  // 収録 BothHit(forGate)は改札条件付き号車 Gemini を trains 側で1回足す。
+  // 収録 BothHit は経路ヘッダの共有 .first 号車を採用する。無いときだけ
+  // 改札条件付き号車 Gemini を trains 側で1回足す。
   const facilitiesPromise = buildTransferAndExitSegments(candidate, searchInput, {
     stationProvider,
   });

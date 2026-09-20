@@ -53,11 +53,14 @@ vi.mock("../arrival-guide-ai-generation", () => ({
 
 const generateSingleCallNavigatorGuide = vi.fn();
 const generateSingleCallNavigatorRun = vi.fn();
+const peekSharedSingleCallNavigatorRun = vi.fn();
 vi.mock("@/lib/integrations/ai/single-call-navigator", () => ({
   generateSingleCallNavigatorGuide: (...args: unknown[]) =>
     generateSingleCallNavigatorGuide(...args),
   generateSingleCallNavigatorRun: (...args: unknown[]) =>
     generateSingleCallNavigatorRun(...args),
+  peekSharedSingleCallNavigatorRun: (...args: unknown[]) =>
+    peekSharedSingleCallNavigatorRun(...args),
   buildSharedGuideCacheKey: (a: string, b: string, c: string | null) => `${a}::${b}::${c ?? ""}`,
   // テストではキャッシュ挙動自体を検証しないため、generatorを素通しするだけの
   // 単純な実装に差し替える(モジュール単位のキャッシュがテスト間で汚染しないようにする)。
@@ -607,6 +610,8 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   beforeEach(() => {
     generateSingleCallNavigatorGuide.mockReset();
     generateSingleCallNavigatorRun.mockReset();
+    peekSharedSingleCallNavigatorRun.mockReset();
+    peekSharedSingleCallNavigatorRun.mockReturnValue(null);
     decodeHeartRailsStationId.mockReset();
     decodeHeartRailsStationId.mockReturnValue(null);
     fetchNearestStationsFromHeartRails.mockReset();
@@ -923,6 +928,85 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     expect(result?.boardingPosition).toBeNull();
     expect(result?.omitIndependentBoarding).toBe(true);
     expect(result?.walkingSteps).toEqual([]);
+  });
+
+  test("収録 BothHit でも経路ヘッダの共有 .first 号車があれば採用し .final は起動しない", async () => {
+    peekSharedSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        lines: ["東急東横線"],
+        transferCount: 0,
+        estimatedMinutes: 20,
+        arrivalPlatformNumber: "3",
+        boarding: {
+          carNumber: 8,
+          doorPosition: "前方",
+          reason: "道玄坂方面の階段に近いため",
+          confidenceLevel: "medium",
+        },
+        facility: { state: "unavailable", reason: "test" },
+      }),
+      final: Promise.resolve(null),
+    });
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
+    expect(result?.boardingPosition?.carNumber).toBe(8);
+    expect(result?.boardingPosition?.doorPosition).toBe("前方");
+    expect(result?.omitIndependentBoarding).toBe(true);
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+      expect(result.facility.pair.exit?.name).toBe("A1出口");
+    }
+  });
+
+  test("共有 .first 号車が他改札だけを理由にしているときは捨てる", async () => {
+    peekSharedSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        lines: ["東急東横線"],
+        transferCount: 0,
+        estimatedMinutes: 20,
+        arrivalPlatformNumber: null,
+        boarding: {
+          carNumber: 2,
+          doorPosition: "後方",
+          reason: "ハチ公改札の階段に近いため",
+          confidenceLevel: "medium",
+        },
+        facility: { state: "unavailable", reason: "test" },
+      }),
+      final: Promise.resolve(null),
+    });
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
+    expect(result?.boardingPosition).toBeNull();
+    expect(result?.omitIndependentBoarding).toBe(true);
   });
 });
 

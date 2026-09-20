@@ -276,6 +276,45 @@ describe("searchRouteGuide", () => {
     expect(getUnifiedArrivalGuide).toHaveBeenCalled();
   });
 
+  test("収録 BothHit で共有 .first 号車があれば unified として採用し forGate Gemini は呼ばない", async () => {
+    const getBoardingPosition = vi.fn(async () => null);
+    const getBoardingForChosenGate = vi.fn(async () => null);
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: {
+        carNumber: 8,
+        doorPosition: "前方",
+        reason: "道玄坂方面の階段に近いため",
+        confidence: highConfidence,
+      },
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "道玄坂改札", confidence: highConfidence },
+          exit: { name: "A1出口", confidence: highConfidence },
+          reason: "目的地座標に最も近い収録出口と、その接続改札",
+        },
+      },
+      walkingSteps: [],
+      omitIndependentBoarding: true,
+    }));
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider([]),
+      getUnifiedArrivalGuide,
+      getBoardingPosition,
+      getBoardingForChosenGate,
+    };
+    const result = await searchRouteGuide({ ...BASE_INPUT, mode: "easy" }, {
+      routeProvider: buildRouteProvider(true),
+      stationProvider,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(getBoardingPosition).not.toHaveBeenCalled();
+    expect(getBoardingForChosenGate).not.toHaveBeenCalled();
+    expect(result.route.keyInstruction.text).toBe("8号車付近に乗車、道玄坂改札、A1出口へ。");
+    expect(result.route.keyInstruction.text).not.toContain("確認できません");
+  });
+
   test("easy モードで到着駅のarrivalGuideにticket_gate/street_exitステップを含む", async () => {
     const deps: RouteSearchDeps = {
       routeProvider: buildRouteProvider(true),

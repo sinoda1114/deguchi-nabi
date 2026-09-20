@@ -10,6 +10,7 @@ import { capConfidenceForProvenance } from "@/lib/domain/confidence";
 import { searchAndGenerateStructuredContent } from "@/lib/integrations/ai/GeminiClient";
 import type { FacilityPair, FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
 import type { RawFacilityPair, RawFacilityRecommendation, RawNamedFacility } from "@/lib/integrations/ai/single-call-navigator";
+import { reasonCitesGate } from "@/lib/domain/boarding-gate-agreement";
 
 const AI_GENERATED_REASON =
   "AIによる推測情報(検索結果に基づく)。現地未確認のため参考程度に扱ってください。";
@@ -396,7 +397,7 @@ ${platformHint}
     platformId
   );
   const citedGate = gateName.trim();
-  if (!boarding || citedGate.length === 0 || !boarding.reason.includes(citedGate)) {
+  if (!boarding || !reasonCitesGate(boarding.reason, citedGate)) {
     return null;
   }
   return boarding;

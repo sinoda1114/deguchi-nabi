@@ -422,6 +422,24 @@ describe("generateBoardingPositionForChosenGate", () => {
 
     expect(result).toBeNull();
   });
+
+  test("reason が改札の語幹（道玄坂）を含めば採用する", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      carNumber: 8,
+      doorPosition: "前方",
+      reason: "道玄坂方面の階段に近いため",
+      confidence: "medium",
+    });
+
+    const result = await generateBoardingPositionForChosenGate(
+      "key",
+      ride,
+      "道玄坂改札",
+      "st_nishiya::line::東急東横線::渋谷方面"
+    );
+
+    expect(result?.carNumber).toBe(8);
+  });
 });
 
 describe("isPlainArrivalPlatformLabel", () => {

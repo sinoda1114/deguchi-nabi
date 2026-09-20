@@ -804,6 +804,19 @@ function sweepExpiredGuideCacheEntries(now: number): void {
  * TTLはfinal決着後から開始（first決着後だと、finalが動いている途中でTTLが
  * 切れて二重生成が起きる）。
  */
+/**
+ * 既存の共有 run だけを返す。無いときは null（新しい Gemini は起動しない）。
+ * 収録 BothHit が経路ヘッダの .first 号車を拾うために使う。
+ */
+export function peekSharedSingleCallNavigatorRun(
+  cacheKey: string
+): SingleCallNavigatorRun | null {
+  const now = Date.now();
+  const cached = sharedGuideCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.run;
+  return null;
+}
+
 export function getSharedSingleCallNavigatorRun(
   cacheKey: string,
   generator: () => SingleCallNavigatorRun

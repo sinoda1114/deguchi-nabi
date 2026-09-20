@@ -4,17 +4,24 @@ import {
   generateBoardingPositionForChosenGate,
   isPlainArrivalPlatformLabel,
 } from "./ai-generation";
-import type { UniqueChosenGate } from "@/lib/domain/facility-recommendation";
+import {
+  uniqueChosenGateOf,
+  type FacilityRecommendation,
+  type UniqueChosenGate,
+} from "@/lib/domain/facility-recommendation";
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import {
   buildSharedGuideCacheKey,
   generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorRun,
+  peekSharedSingleCallNavigatorRun,
 } from "@/lib/integrations/ai/single-call-navigator";
 import { groundedAiConfidence, resolveFacilityRecommendationConfidence } from "./ai-generation";
 import { resolveArrivalFacility } from "@/lib/services/arrival-facility-resolver";
 import { isScoringBothHit } from "@/lib/eval/both-hit";
+import { boardingAgreesWithChosenGate } from "@/lib/domain/boarding-gate-agreement";
+import { catalogStationNameFrom, lookupCatalogStation } from "@/lib/data/station-facility-catalog";
 import {
   decodeHeartRailsStationId,
   fetchNearestStationsFromHeartRails,
@@ -48,6 +55,41 @@ function boardingGenerationKeys(stationId: string, platformId: string, line: str
   return {
     boardingPlatformId: lineBoardingPlatformId(stationId, line, direction),
     arrivalPlatformNumber: isPlainArrivalPlatformLabel(platformId) ? platformId : null,
+  };
+}
+
+function catalogGateNames(stationName: string, stationId: string): string[] {
+  const row = lookupCatalogStation(catalogStationNameFrom({ stationName, stationId }));
+  if (!row) return [];
+  return row.facilities.filter((f) => f.facilityType === "gate").map((f) => f.name);
+}
+
+async function boardingFromSharedFirst(
+  cacheKey: string,
+  recommendation: FacilityRecommendation,
+  arrivalStationName: string,
+  arrivalStationId: string
+): Promise<UnifiedArrivalGuide["boardingPosition"]> {
+  const chosen = uniqueChosenGateOf(recommendation);
+  if (!chosen) return null;
+  const peeked = peekSharedSingleCallNavigatorRun(cacheKey);
+  if (!peeked) return null;
+  const first = await peeked.first;
+  if (!first?.boarding) return null;
+  if (
+    !boardingAgreesWithChosenGate(
+      first.boarding.reason,
+      chosen.name,
+      catalogGateNames(arrivalStationName, arrivalStationId)
+    )
+  ) {
+    return null;
+  }
+  return {
+    carNumber: first.boarding.carNumber,
+    doorPosition: first.boarding.doorPosition,
+    reason: first.boarding.reason,
+    confidence: groundedAiConfidence(first.boarding.confidenceLevel),
   };
 }
 
@@ -334,8 +376,14 @@ export class AiStationAdapter implements StationProviderPort {
     });
 
     if (isScoringBothHit(resolved.recommendation) && resolved.usedGeminiFinal === false) {
+      const boardingPosition = await boardingFromSharedFirst(
+        cacheKey,
+        resolved.recommendation,
+        stationName,
+        stationId
+      );
       return {
-        boardingPosition: null,
+        boardingPosition,
         facility: resolved.recommendation,
         walkingSteps: [],
         omitIndependentBoarding: true,
