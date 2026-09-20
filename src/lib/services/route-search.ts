@@ -76,7 +76,7 @@ export type RouteSearchResult =
   | { ok: true; route: RouteGuide }
   | { ok: false; reason: string };
 
-function pickFacility(
+export function pickFacility(
   facilities: StationFacility[],
   type: StationFacility["facilityType"]
 ): StationFacility | null {
@@ -89,7 +89,7 @@ function pickFacility(
  * 既存の「最初の1件」選定にフォールバックする(AI生成facility等、
  * 座標が未整備なデータでも従来通り動作させるため)。
  */
-function pickNearestFacility(
+export function pickNearestFacility(
   facilities: StationFacility[],
   type: StationFacility["facilityType"],
   target: Coordinates | null
@@ -125,7 +125,7 @@ function pickNearestFacility(
  * 改札を誤って連結と見なさないよう、推測ではなく明示リンクのみを使う。
  * docs/04_EXIT_SELECTION_DESIGN.md 4章 参照)。
  */
-function pickGateForExit(
+export function pickGateForExit(
   facilities: StationFacility[],
   exit: StationFacility | null
 ): StationFacility | null {
@@ -158,7 +158,7 @@ export interface ExitRecommendation {
  * 格下げする(候補が2つしかない駅で、両方とも駅の反対側に
  * 偏っているケース等)。docs/04_EXIT_SELECTION_DESIGN.md 参照。
  */
-function resolveExitRecommendation(
+export function resolveExitRecommendation(
   facilities: StationFacility[],
   destinationCoordinates: Coordinates | null,
   stationCenter: Coordinates | null

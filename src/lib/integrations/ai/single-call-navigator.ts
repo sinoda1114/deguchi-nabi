@@ -443,7 +443,10 @@ async function toGuide(
     return null;
   }
 
-  const mergedPair = await mergeSeparatedFacilityPair(
+  const legacyComplete = extractFacilityCandidatePairs(raw, searchText).filter(
+    (p) => p.gate && p.exit
+  );
+  const merged = await mergeSeparatedFacilityPair(
     {
       gateCandidates: extractSingleFacilityCandidates(raw.gateCandidates, searchText, "gateName"),
       exitCandidates: extractSingleFacilityCandidates(raw.exitCandidates, searchText, "exitName"),
@@ -457,12 +460,9 @@ async function toGuide(
     }
   );
 
-  const legacyComplete = extractFacilityCandidatePairs(raw, searchText).filter(
-    (p) => p.gate && p.exit
-  );
-  const bothRequired = classifyBothRequiredPair(mergedPair);
+  const bothRequired = classifyBothRequiredPair(merged?.pair ?? null);
   let facility: RawFacilityRecommendation;
-  if (bothRequired && legacyComplete.length <= 1) {
+  if (bothRequired && (merged?.source === "decisive" || legacyComplete.length <= 1)) {
     facility = { state: "confirmed", pair: bothRequired };
   } else if (legacyComplete.length > 0) {
     facility = classifyFacilityRecommendation(legacyComplete);

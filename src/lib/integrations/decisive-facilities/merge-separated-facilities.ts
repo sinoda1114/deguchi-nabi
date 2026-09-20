@@ -1,8 +1,8 @@
 import type { Coordinates } from "@/lib/domain/station";
 import type { FacilityPair } from "@/lib/domain/facility-recommendation";
 import type { RawFacilityPair, RawNamedFacility } from "@/lib/integrations/ai/single-call-navigator";
+import { pickGateForExit, resolveExitRecommendation } from "@/lib/services/route-search";
 import { loadDecisiveFacilities } from "./catalog";
-import { resolveExitAndGateFromFacilities } from "./exit-resolution";
 
 export interface SeparatedFacilityCandidates {
   gateCandidates: RawNamedFacility[];
@@ -17,22 +17,28 @@ export interface DecisiveMergeContext {
   destinationCoordinates: Coordinates | null;
 }
 
-function firstCandidate(candidates: RawNamedFacility[]): RawNamedFacility | null {
-  return candidates.length > 0 ? candidates[0] : null;
+export type MergedFacilitySource = "decisive" | "legacy" | "ai_separated";
+
+export interface MergedFacilityResult {
+  pair: RawFacilityPair;
+  source: MergedFacilitySource;
 }
 
-function facilityFromDecisive(name: string, confidenceLevel: "high" | "medium" | "low"): RawNamedFacility {
+function facilityFromDecisive(
+  name: string,
+  confidenceLevel: "high" | "medium" | "low"
+): RawNamedFacility {
   return { name, confidenceLevel };
 }
 
 /**
- * 改札・出口の生成分離: 決定的データ(OSM/fixture)で出口→改札を先に確定し、
- * 不足分のみ AI 単独候補から補完。legacy の facilityCandidates ペアは最後のフォールバック。
+ * 改札・出口の生成分離: 決定的データ(OSM/fixture)を最優先し、
+ * AI は legacy ペアまたは gate/exit が各1件のときのみマージ（推測ペアリング禁止）。
  */
 export async function mergeSeparatedFacilityPair(
   separated: SeparatedFacilityCandidates,
   context: DecisiveMergeContext
-): Promise<RawFacilityPair | null> {
+): Promise<MergedFacilityResult | null> {
   const stationCenter = context.arrivalStationCoordinates;
   const decisiveFacilities = await loadDecisiveFacilities(
     context.stationId,
@@ -41,28 +47,44 @@ export async function mergeSeparatedFacilityPair(
   );
 
   if (decisiveFacilities.length > 0 && context.destinationCoordinates && stationCenter) {
-    const resolved = resolveExitAndGateFromFacilities(
+    const resolved = resolveExitRecommendation(
       decisiveFacilities,
       context.destinationCoordinates,
       stationCenter
     );
-    if (resolved.tier === "exact" && resolved.exit && resolved.gate) {
-      return {
-        gate: facilityFromDecisive(resolved.gate.name, "high"),
-        exit: facilityFromDecisive(resolved.exit.name, "high"),
-        reason: "決定的データ(fixture/OSM)による出口・改札の分離確定",
-      };
+    if (resolved.tier === "exact" && resolved.exit) {
+      const gate = pickGateForExit(decisiveFacilities, resolved.exit);
+      if (gate) {
+        const confidence: "high" | "medium" =
+          resolved.exit.provenance === "surveyed" ? "high" : "medium";
+        return {
+          source: "decisive",
+          pair: {
+            gate: facilityFromDecisive(gate.name, confidence),
+            exit: facilityFromDecisive(resolved.exit.name, confidence),
+            reason: "決定的データ(fixture/OSM)による出口・改札の分離確定",
+          },
+        };
+      }
     }
   }
 
-  const aiGate = firstCandidate(separated.gateCandidates);
-  const aiExit = firstCandidate(separated.exitCandidates);
-  if (aiGate && aiExit) {
-    return { gate: aiGate, exit: aiExit, reason: "改札・出口の分離抽出(AI)" };
+  const legacyComplete = separated.legacyPairs.filter((p) => p.gate && p.exit);
+  if (legacyComplete.length === 1) {
+    return { source: "legacy", pair: legacyComplete[0] };
   }
 
-  const legacyComplete = separated.legacyPairs.filter((p) => p.gate && p.exit);
-  if (legacyComplete.length === 1) return legacyComplete[0];
+  if (
+    separated.gateCandidates.length === 1 &&
+    separated.exitCandidates.length === 1
+  ) {
+    const aiGate = separated.gateCandidates[0];
+    const aiExit = separated.exitCandidates[0];
+    return {
+      source: "ai_separated",
+      pair: { gate: aiGate, exit: aiExit, reason: "改札・出口の分離抽出(AI・各1件)" },
+    };
+  }
 
   return null;
 }
