@@ -17,11 +17,11 @@ vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
 }));
 
 // JevClientのモック
-const mockEvaluateRetryGate = vi.fn();
+const mockEvaluateFacilityJudgment = vi.fn();
 const mockIsJevAvailable = vi.fn();
 const mockCreateJevConfig = vi.fn();
 vi.mock("@/lib/integrations/ai/JevClient", () => ({
-  evaluateRetryGate: (...args: unknown[]) => mockEvaluateRetryGate(...args),
+  evaluateFacilityJudgment: (...args: unknown[]) => mockEvaluateFacilityJudgment(...args),
   isJevAvailable: () => mockIsJevAvailable(),
   createJevConfig: () => mockCreateJevConfig(),
 }));
@@ -95,7 +95,11 @@ describe("generateSingleCallNavigatorGuide", () => {
     // JEVモックをリセット
     mockIsJevAvailable.mockReturnValue(false);
     mockCreateJevConfig.mockReturnValue(null);
-    mockEvaluateRetryGate.mockResolvedValue({ shouldRetry: false });
+    mockEvaluateFacilityJudgment.mockResolvedValue({
+      adoptCatalog: false,
+      skipGeminiFacility: false,
+      candidateScores: [],
+    });
   });
 
   test("正常な抽出結果からguideを組み立てる(改札・出口は1組のみ→confirmed)", async () => {
@@ -375,8 +379,8 @@ describe("generateSingleCallNavigatorGuide", () => {
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
   });
 
-  describe("JEV統合（Phase 1: retry gate判定）", () => {
-    test("JEV_API_KEYが設定されていない場合、従来のルールベース判定を使用する", async () => {
+  describe("JEV判断パイプライン（BothHitクランプ）", () => {
+    test("JEV_API_KEYが設定されていない場合、unavailableはretryする", async () => {
       mockIsJevAvailable.mockReturnValue(false);
       searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
         mockResult({
@@ -387,18 +391,22 @@ describe("generateSingleCallNavigatorGuide", () => {
       );
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-      
-      // unavailableなのでretryされる（従来挙動）
+
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
-      expect(mockEvaluateRetryGate).not.toHaveBeenCalled();
+      expect(mockEvaluateFacilityJudgment).not.toHaveBeenCalled();
       expect(result).not.toBeNull();
       expect(result?.facility.state).toBe("unavailable");
     });
 
-    test("JEV_API_KEYが設定されている場合、JEVによる判定を使用する", async () => {
+    test("unavailableはJEVが十分と言ってもretryする（Option A不採用）", async () => {
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
-      mockEvaluateRetryGate.mockResolvedValue({ shouldRetry: false, reason: "JEV判定でretry不要" });
+      mockEvaluateFacilityJudgment.mockResolvedValue({
+        adoptCatalog: false,
+        skipGeminiFacility: false,
+        candidateScores: [],
+        reason: "JEV判定でretry不要",
+      });
 
       searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
         mockResult({
@@ -409,19 +417,21 @@ describe("generateSingleCallNavigatorGuide", () => {
       );
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-      
-      // JEVがshouldRetry=falseを返したのでretryされない
-      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
-      expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(1);
+
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
       expect(result).not.toBeNull();
       expect(result?.facility.state).toBe("unavailable");
     });
 
-    test("JEVがshouldRetry=trueを返した場合、retryを実行する。経路一致なら2回目を採用", async () => {
+    test("1回目がBothHitでなければretryし、経路一致なら2回目の改札・出口を採用する", async () => {
       const CONSISTENT_RAW = { ...VALID_RAW, lines: ["相鉄本線"] };
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
-      mockEvaluateRetryGate.mockResolvedValueOnce({ shouldRetry: true, reason: "JEV判定でretry必要" });
+      mockEvaluateFacilityJudgment.mockResolvedValue({
+        adoptCatalog: false,
+        skipGeminiFacility: false,
+        candidateScores: [],
+      });
 
       searchAndGenerateStructuredContentWithSearchText
         .mockResolvedValueOnce(
@@ -434,17 +444,15 @@ describe("generateSingleCallNavigatorGuide", () => {
         .mockResolvedValueOnce(mockResult(CONSISTENT_RAW));
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-      
-      // 1回目でJEVがretryと判定、2回目で成功
+
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
-      expect(mockEvaluateRetryGate).toHaveBeenCalledTimes(1); // 2回目はconfirmedなので呼ばれない
       expect(result?.facility.state).toBe("confirmed");
     });
 
-    test("JEV判定がエラーの場合、ルールベース判定へフォールバックする。経路一致なので2回目も採用", async () => {
+    test("JEV判定がエラーでもBothHitでなければretryし、名前は捏造しない", async () => {
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
-      mockEvaluateRetryGate.mockRejectedValue(new Error("JEV API error"));
+      mockEvaluateFacilityJudgment.mockRejectedValue(new Error("JEV API error"));
 
       searchAndGenerateStructuredContentWithSearchText
         .mockResolvedValueOnce(
@@ -463,13 +471,35 @@ describe("generateSingleCallNavigatorGuide", () => {
         );
 
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-      
-      // JEVエラー時はルールベースへフォールバック、unavailableなのでretryされる
-      // 両方unavailableなので1回目を維持
+
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
-      expect(mockEvaluateRetryGate).toHaveBeenCalled();
+      expect(mockEvaluateFacilityJudgment).toHaveBeenCalled();
       expect(result).not.toBeNull();
       expect(result?.facility.state).toBe("unavailable");
+    });
+
+    test("改札だけのconfirmedは部分表示するがretryする", async () => {
+      mockIsJevAvailable.mockReturnValue(false);
+      searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+        mockResult(
+          {
+            lines: ["相鉄本線"],
+            transferCount: 0,
+            estimatedMinutes: 13,
+            facilityCandidates: [{ gateName: "1階改札（みなみ西口（相鉄口）側）" }],
+          },
+          "降りる改札は1階改札（みなみ西口（相鉄口）側）です。"
+        )
+      );
+
+      const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
+
+      expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+      expect(result?.facility.state).toBe("confirmed");
+      if (result?.facility.state === "confirmed") {
+        expect(result.facility.pair.gate?.name).toBe("1階改札（みなみ西口（相鉄口）側）");
+        expect(result.facility.pair.exit).toBeNull();
+      }
     });
   });
 });
@@ -736,5 +766,28 @@ describe("selectFinalGuide", () => {
     const result = await selectFinalGuide(first, second);
     
     expect(result?.facility.state).toBe("confirmed");
+  });
+
+  test("経路一致なら、改札だけのconfirmedよりBothHitのalternativesを採用する", async () => {
+    const first: SingleCallNavigatorGuide = {
+      lines: ["東急東横線"],
+      transferCount: 0,
+      estimatedMinutes: 35,
+      arrivalPlatformNumber: "3",
+      boarding: null,
+      facility: {
+        state: "confirmed",
+        pair: {
+          gate: { name: "ハチ公改札", confidenceLevel: "high" },
+          exit: null,
+          reason: null,
+        },
+      },
+    };
+    const second = createGuide(["東急東横線"], 0, "3", "alternatives");
+    const result = await selectFinalGuide(first, second);
+
+    expect(result?.facility.state).toBe("alternatives");
+    expect(result?.lines).toEqual(["東急東横線"]);
   });
 });

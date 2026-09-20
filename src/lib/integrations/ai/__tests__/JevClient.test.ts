@@ -2,13 +2,10 @@ import { describe, expect, test, afterEach, vi, beforeEach } from "vitest";
 import {
   isJevAvailable,
   createJevConfig,
-  evaluateRetryGate,
   evaluateRouteConsistency,
-  evaluateFacilityCompleteness,
-  selectBestFacilityPair,
+  evaluateFacilityJudgment,
 } from "../JevClient";
-import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
-import type { RawNamedFacility, SingleCallNavigatorGuide } from "../single-call-navigator";
+import type { SingleCallNavigatorGuide } from "../single-call-navigator";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 
 vi.mock("@typesafe-ai/sdk", () => ({
@@ -63,168 +60,6 @@ describe("JevClient", () => {
       delete process.env.JEV_API_KEY;
       const config = createJevConfig();
       expect(config).toBeNull();
-    });
-  });
-
-  describe("evaluateRetryGate", () => {
-    test("unavailable状態でJEVが高確信度でリトライ必要と判定", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          needsRetry: {
-            type: "noul",
-            noul: 0.85,
-          },
-        },
-      });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "unavailable",
-        reason: "改札・出口の情報が確認できませんでした",
-      };
-
-      const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(true);
-      expect(result.reason).toContain("JEV判定");
-      expect(result.reason).toContain("0.85");
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
-    });
-
-    test("unavailable状態でもJEVが情報十分と判定すればリトライ不要", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          needsRetry: {
-            type: "noul",
-            noul: 0.2,
-          },
-        },
-      });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "unavailable",
-        reason: "改札・出口の情報が確認できませんでした",
-      };
-
-      const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(false);
-      expect(result.reason).toContain("JEV判定");
-      expect(result.reason).toContain("0.80");
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
-    });
-
-    test("confirmed状態の場合、JEVはリトライ不要と判定", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          needsRetry: {
-            type: "noul",
-            noul: 0.1,
-          },
-        },
-      });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "confirmed",
-        pair: {
-          gate: { name: "道玄坂改札", confidenceLevel: "medium" },
-          exit: { name: "A1出口", confidenceLevel: "medium" },
-          reason: null,
-        },
-      };
-
-      const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(false);
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
-    });
-
-    test("alternatives状態の場合、JEVはリトライ不要と判定", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          needsRetry: {
-            type: "noul",
-            noul: 0.15,
-          },
-        },
-      });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "alternatives",
-        pairs: [
-          {
-            gate: { name: "1階改札", confidenceLevel: "medium" },
-            exit: { name: "みなみ西口", confidenceLevel: "medium" },
-            reason: null,
-          },
-          {
-            gate: { name: "1階改札", confidenceLevel: "medium" },
-            exit: { name: "5番街出口", confidenceLevel: "medium" },
-            reason: null,
-          },
-        ],
-      };
-
-      const result = await evaluateRetryGate(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(false);
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
-    });
-
-    test("タイムアウト時は例外を再スロー（呼び出し側でルールベース判定へフォールバック）", async () => {
-      const abortError = new Error("AbortError");
-      abortError.name = "AbortError";
-
-      const mockSystemOne = vi.fn().mockRejectedValue(abortError);
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "unavailable",
-        reason: "改札・出口の情報が確認できませんでした",
-      };
-
-      await expect(evaluateRetryGate(facility, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow("AbortError");
-    });
-
-    test("API呼び出しエラー時は例外を再スロー（呼び出し側でルールベース判定へフォールバック）", async () => {
-      const mockSystemOne = vi.fn().mockRejectedValue(new Error("Network error"));
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "unavailable",
-        reason: "改札・出口の情報が確認できませんでした",
-      };
-
-      await expect(evaluateRetryGate(facility, { apiKey: "test_key" })).rejects.toThrow("Network error");
     });
   });
 
@@ -333,7 +168,9 @@ describe("JevClient", () => {
       const a = createGuide(["東急東横線"], 0, "3");
       const b = createGuide(["東急東横線"], 0, "3番線");
 
-      await expect(evaluateRouteConsistency(a, b, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow("AbortError");
+      await expect(evaluateRouteConsistency(a, b, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow(
+        "AbortError"
+      );
     });
 
     test("API呼び出しエラー時は例外を再スロー（呼び出し側でルールベース判定へフォールバック）", async () => {
@@ -352,14 +189,14 @@ describe("JevClient", () => {
     });
   });
 
-  describe("evaluateFacilityCompleteness (Phase 2-C)", () => {
-    test("改札のみ（exitなし）の場合、JEVがretry推奨", async () => {
+  describe("evaluateFacilityJudgment", () => {
+    test("1回のsystemOneでcatalog採用と候補スコアを返す", async () => {
       const mockSystemOne = vi.fn().mockResolvedValue({
         answers: {
-          isCompleteBothNeeded: {
-            type: "noul",
-            noul: 0.2,
-          },
+          adoptCatalog: { type: "noul", noul: 0.9 },
+          skipGeminiFacility: { type: "noul", noul: 0.8 },
+          preferCandidate0: { type: "noul", noul: 0.2 },
+          preferCandidate1: { type: "noul", noul: 0.7 },
         },
       });
 
@@ -369,168 +206,30 @@ describe("JevClient", () => {
         } as unknown as TypeSafeClient;
       } as unknown as typeof TypeSafeClient);
 
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "confirmed",
-        pair: {
-          gate: { name: "道玄坂改札", confidenceLevel: "medium" },
-          exit: null,
-          reason: null,
+      const result = await evaluateFacilityJudgment(
+        {
+          destinationHint: "ウエチャベ",
+          arrivalStationName: "渋谷駅",
+          searchText: "道玄坂改札 A1出口",
+          catalogPair: { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" } },
+          geminiPairs: [
+            { gate: { name: "ハチ公改札" }, exit: { name: "ハチ公口" }, reason: null },
+            { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null },
+          ],
+          osmExitNames: [],
         },
-      };
+        { apiKey: "test_key" }
+      );
 
-      const result = await evaluateFacilityCompleteness(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(true);
-      expect(result.isComplete).toBe(false);
-      expect(result.missingFields).toContain("exit");
-      expect(result.reason).toContain("不完全");
       expect(mockSystemOne).toHaveBeenCalledTimes(1);
+      expect(result.adoptCatalog).toBe(true);
+      expect(result.skipGeminiFacility).toBe(true);
+      expect(result.candidateScores).toEqual([0.2, 0.7]);
     });
 
-    test("出口のみ（gateなし）の場合、JEVがretry推奨", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          isCompleteBothNeeded: {
-            type: "noul",
-            noul: 0.3,
-          },
-        },
-      });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "confirmed",
-        pair: {
-          gate: null,
-          exit: { name: "A1出口", confidenceLevel: "medium" },
-          reason: null,
-        },
-      };
-
-      const result = await evaluateFacilityCompleteness(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(true);
-      expect(result.isComplete).toBe(false);
-      expect(result.missingFields).toContain("gate");
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
-    });
-
-    test("両方揃っている場合、ルールベースで完全判定（JEV呼び出しなし）", async () => {
-      const mockSystemOne = vi.fn();
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "confirmed",
-        pair: {
-          gate: { name: "道玄坂改札", confidenceLevel: "medium" },
-          exit: { name: "A1出口", confidenceLevel: "medium" },
-          reason: null,
-        },
-      };
-
-      const result = await evaluateFacilityCompleteness(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(false);
-      expect(result.isComplete).toBe(true);
-      expect(result.missingFields).toEqual([]);
-      expect(result.reason).toContain("confirmed状態（gate・exit両方あり）");
-      expect(mockSystemOne).not.toHaveBeenCalled();
-    });
-
-    test("unavailable状態の場合、Phase 1に委ねる（例外をスロー）", async () => {
-      const mockSystemOne = vi.fn();
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "unavailable",
-        reason: "改札・出口の情報が確認できませんでした",
-      };
-
-      await expect(evaluateFacilityCompleteness(facility, { apiKey: "test_key" })).rejects.toThrow("Phase 2-C: unavailable state should be handled by Phase 1");
-      expect(mockSystemOne).not.toHaveBeenCalled();
-    });
-
-    test("alternatives状態の場合、ルールベースで十分判定（JEV呼び出しなし）", async () => {
-      const mockSystemOne = vi.fn();
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "alternatives",
-        pairs: [
-          {
-            gate: { name: "1階改札", confidenceLevel: "medium" },
-            exit: { name: "みなみ西口", confidenceLevel: "medium" },
-            reason: null,
-          },
-          {
-            gate: { name: "1階改札", confidenceLevel: "medium" },
-            exit: { name: "5番街出口", confidenceLevel: "medium" },
-            reason: null,
-          },
-        ],
-      };
-
-      const result = await evaluateFacilityCompleteness(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(false);
-      expect(result.isComplete).toBe(true);
-      expect(result.missingFields).toEqual([]);
-      expect(result.reason).toContain("alternatives状態");
-      expect(mockSystemOne).not.toHaveBeenCalled();
-    });
-
-    test("小規模駅で片方だけで十分な場合、JEVがretry不要と判定", async () => {
-      const mockSystemOne = vi.fn().mockResolvedValue({
-        answers: {
-          isCompleteBothNeeded: {
-            type: "noul",
-            noul: 0.8,
-          },
-        },
-      });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "confirmed",
-        pair: {
-          gate: { name: "改札", confidenceLevel: "medium" },
-          exit: null,
-          reason: null,
-        },
-      };
-
-      const result = await evaluateFacilityCompleteness(facility, { apiKey: "test_key" });
-      expect(result.shouldRetry).toBe(false);
-      expect(result.isComplete).toBe(true);
-      expect(result.reason).toContain("十分な情報");
-      expect(mockSystemOne).toHaveBeenCalledTimes(1);
-    });
-
-    test("タイムアウト時は例外を再スロー（Phase 1へフォールバック）", async () => {
+    test("タイムアウト時は例外を再スロー（パイプラインがfail-openする）", async () => {
       const abortError = new Error("AbortError");
       abortError.name = "AbortError";
-
       const mockSystemOne = vi.fn().mockRejectedValue(abortError);
 
       vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
@@ -539,195 +238,19 @@ describe("JevClient", () => {
         } as unknown as TypeSafeClient;
       } as unknown as typeof TypeSafeClient);
 
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "confirmed",
-        pair: {
-          gate: { name: "道玄坂改札", confidenceLevel: "medium" },
-          exit: null,
-          reason: null,
-        },
-      };
-
-      await expect(evaluateFacilityCompleteness(facility, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow("AbortError");
-    });
-
-    test("API呼び出しエラー時は例外を再スロー（Phase 1へフォールバック）", async () => {
-      const mockSystemOne = vi.fn().mockRejectedValue(new Error("Network error"));
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const facility: FacilityRecommendation<RawNamedFacility> = {
-        state: "confirmed",
-        pair: {
-          gate: { name: "道玄坂改札", confidenceLevel: "medium" },
-          exit: null,
-          reason: null,
-        },
-      };
-
-      await expect(evaluateFacilityCompleteness(facility, { apiKey: "test_key" })).rejects.toThrow("Network error");
-    });
-  });
-
-  describe("selectBestFacilityPair (Phase 2-B)", () => {
-    test("複数候補から最適な1つを選択（候補1を選択）", async () => {
-      // 候補1のスコアが高い（0.9）、候補2のスコアが低い（0.3）
-      const mockSystemOne = vi.fn()
-        .mockResolvedValueOnce({
-          answers: {
-            isBestCandidate: {
-              type: "noul",
-              noul: 0.9,
-            },
+      await expect(
+        evaluateFacilityJudgment(
+          {
+            destinationHint: "ウエチャベ",
+            arrivalStationName: "渋谷駅",
+            searchText: "",
+            catalogPair: null,
+            geminiPairs: [{ gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null }],
+            osmExitNames: [],
           },
-        })
-        .mockResolvedValueOnce({
-          answers: {
-            isBestCandidate: {
-              type: "noul",
-              noul: 0.3,
-            },
-          },
-        });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const pairs = [
-        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: "目的地に最も近い" },
-        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: null },
-      ];
-
-      const context = {
-        destinationHint: "ウエチャベ",
-        arrivalStationName: "渋谷駅",
-        searchText: "A1出口が目的地に最も近いです。",
-      };
-
-      const result = await selectBestFacilityPair(pairs, context, { apiKey: "test_key" });
-      expect(result.selectedIndex).toBe(0);
-      expect(result.reason).toContain("候補1を選択");
-      expect(mockSystemOne).toHaveBeenCalledTimes(2);
-    });
-
-    test("複数候補から最適な1つを選択（候補2を選択）", async () => {
-      // 候補1のスコアが低い（0.2）、候補2のスコアが高い（0.85）
-      const mockSystemOne = vi.fn()
-        .mockResolvedValueOnce({
-          answers: {
-            isBestCandidate: {
-              type: "noul",
-              noul: 0.2,
-            },
-          },
-        })
-        .mockResolvedValueOnce({
-          answers: {
-            isBestCandidate: {
-              type: "noul",
-              noul: 0.85,
-            },
-          },
-        });
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const pairs = [
-        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null },
-        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: "エレベーターあり" },
-      ];
-
-      const context = {
-        destinationHint: "ウエチャベ",
-        arrivalStationName: "渋谷駅",
-        searchText: "A2出口にはエレベーターがあり、目的地へのアクセスが便利です。",
-      };
-
-      const result = await selectBestFacilityPair(pairs, context, { apiKey: "test_key" });
-      expect(result.selectedIndex).toBe(1);
-      expect(result.reason).toContain("候補2を選択");
-      expect(mockSystemOne).toHaveBeenCalledTimes(2);
-    });
-
-    test("候補が1つ以下の場合は例外をスロー", async () => {
-      const mockSystemOne = vi.fn();
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const pairs = [{ gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null }];
-
-      const context = {
-        destinationHint: "ウエチャベ",
-        arrivalStationName: "渋谷駅",
-        searchText: "",
-      };
-
-      await expect(selectBestFacilityPair(pairs, context, { apiKey: "test_key" })).rejects.toThrow("at least 2 pairs");
-      expect(mockSystemOne).not.toHaveBeenCalled();
-    });
-
-    test("タイムアウト時は例外を再スロー（alternatives維持）", async () => {
-      const abortError = new Error("AbortError");
-      abortError.name = "AbortError";
-
-      const mockSystemOne = vi.fn().mockRejectedValue(abortError);
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const pairs = [
-        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null },
-        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: null },
-      ];
-
-      const context = {
-        destinationHint: "ウエチャベ",
-        arrivalStationName: "渋谷駅",
-        searchText: "",
-      };
-
-      await expect(selectBestFacilityPair(pairs, context, { apiKey: "test_key", timeoutMs: 100 })).rejects.toThrow("AbortError");
-    });
-
-    test("API呼び出しエラー時は例外を再スロー（alternatives維持）", async () => {
-      const mockSystemOne = vi.fn().mockRejectedValue(new Error("Network error"));
-
-      vi.mocked(TypeSafeClient).mockImplementation(function (this: unknown) {
-        return {
-          systemOne: mockSystemOne,
-        } as unknown as TypeSafeClient;
-      } as unknown as typeof TypeSafeClient);
-
-      const pairs = [
-        { gate: { name: "道玄坂改札" }, exit: { name: "A1出口" }, reason: null },
-        { gate: { name: "道玄坂改札" }, exit: { name: "A2出口" }, reason: null },
-      ];
-
-      const context = {
-        destinationHint: "ウエチャベ",
-        arrivalStationName: "渋谷駅",
-        searchText: "",
-      };
-
-      await expect(selectBestFacilityPair(pairs, context, { apiKey: "test_key" })).rejects.toThrow("Network error");
+          { apiKey: "test_key", timeoutMs: 100 }
+        )
+      ).rejects.toThrow("AbortError");
     });
   });
 });
