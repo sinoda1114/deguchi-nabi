@@ -893,4 +893,30 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
 
     expect(result).toBeNull();
   });
+
+  test("渋谷+目的地座標が収録の BothHit なら Gemini .final を待たない", async () => {
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
+    expect(result?.facility.state).toBe("confirmed");
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+      expect(result.facility.pair.exit?.name).toBe("A1出口");
+    }
+    expect(result?.boardingPosition).toBeNull();
+    expect(result?.walkingSteps).toEqual([]);
+  });
 });

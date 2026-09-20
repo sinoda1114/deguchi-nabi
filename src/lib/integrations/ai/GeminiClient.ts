@@ -131,7 +131,8 @@ export async function searchAndGenerateStructuredContentWithSearchText<T>(
   searchPrompt: string,
   extractionInstruction: string,
   responseSchema: object,
-  model: string
+  model: string,
+  searchTimeoutMs: number = SEARCH_REQUEST_TIMEOUT_MS
 ): Promise<{ data: T; searchText: string } | null> {
   const searchCandidate = await callGemini(
     apiKey,
@@ -140,7 +141,7 @@ export async function searchAndGenerateStructuredContentWithSearchText<T>(
       contents: [{ parts: [{ text: searchPrompt }] }],
       tools: [{ google_search: {} }],
     },
-    SEARCH_REQUEST_TIMEOUT_MS
+    searchTimeoutMs
   );
 
   const searchText = searchCandidate?.content?.parts?.[0]?.text;

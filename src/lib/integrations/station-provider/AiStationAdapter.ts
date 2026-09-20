@@ -8,6 +8,8 @@ import {
   getSharedSingleCallNavigatorRun,
 } from "@/lib/integrations/ai/single-call-navigator";
 import { groundedAiConfidence, resolveFacilityRecommendationConfidence } from "./ai-generation";
+import { resolveArrivalFacility } from "@/lib/services/arrival-facility-resolver";
+import { isScoringBothHit } from "@/lib/eval/both-hit";
 import {
   decodeHeartRailsStationId,
   fetchNearestStationsFromHeartRails,
@@ -272,21 +274,43 @@ export class AiStationAdapter implements StationProviderPort {
       destinationHint,
       destinationPlaceCoordinates
     );
-    // 二段階生成: final（再試行・整合性チェック後）を使用して改札・出口の品質を維持
-    // AiRouteAdapterは同じrunのfirstを待つため、Gemini呼び出しは1回のまま（完了≈72秒または105秒）
-    const guide = await getSharedSingleCallNavigatorRun(cacheKey, () =>
-      generateSingleCallNavigatorRun(
-        this.geminiApiKey,
-        originStationForGuide,
-        destinationStationForGuide,
-        destinationHint,
-        destinationPlaceCoordinates
-      )
-    ).final;
-    if (!guide) return null;
+    const startSharedRun = () =>
+      getSharedSingleCallNavigatorRun(cacheKey, () =>
+        generateSingleCallNavigatorRun(
+          this.geminiApiKey,
+          originStationForGuide,
+          destinationStationForGuide,
+          destinationHint,
+          destinationPlaceCoordinates
+        )
+      );
+
+    const resolved = await resolveArrivalFacility({
+      stationId,
+      stationName,
+      stationCoordinates,
+      destinationHint,
+      destinationCoordinates: destinationPlaceCoordinates,
+      geminiApiKey: this.geminiApiKey,
+      lastResortFacility: async () => {
+        const guide = await startSharedRun().final;
+        return guide ? resolveFacilityRecommendationConfidence(guide.facility) : null;
+      },
+    });
+
+    if (isScoringBothHit(resolved.recommendation) && resolved.usedGeminiFinal === false) {
+      return {
+        boardingPosition: null,
+        facility: resolved.recommendation,
+        walkingSteps: [],
+      };
+    }
+
+    const guide = await startSharedRun().final;
+    if (!guide && resolved.recommendation.state === "unavailable") return null;
 
     return {
-      boardingPosition: guide.boarding
+      boardingPosition: guide?.boarding
         ? {
             carNumber: guide.boarding.carNumber,
             doorPosition: guide.boarding.doorPosition,
@@ -294,9 +318,11 @@ export class AiStationAdapter implements StationProviderPort {
             confidence: groundedAiConfidence(guide.boarding.confidenceLevel),
           }
         : null,
-      facility: resolveFacilityRecommendationConfidence(guide.facility),
-      // 出口から目的地までの徒歩ナラティブ(左折・右折等)は生成しない
-      // (2026-07-21ユーザー判断、single-call-navigator.tsのJSDoc参照)。
+      facility: isScoringBothHit(resolved.recommendation)
+        ? resolved.recommendation
+        : guide
+          ? resolveFacilityRecommendationConfidence(guide.facility)
+          : resolved.recommendation,
       walkingSteps: [],
     };
   }
