@@ -1,0 +1,118 @@
+import type { StationFacility } from "@/lib/domain/station";
+import { lowConfidence } from "@/lib/domain/confidence";
+
+/**
+ * 渋谷駅の決定的改札・出口データ（docs/04_EXIT_SELECTION_DESIGN.md Phase 1/1.5 回帰用）。
+ * 座標は公式構内図・OpenStreetMap を参照した概算。fixture は Preview 計測
+ * （西谷→渋谷・道玄坂方面）の BothHit 向上を目的とした Phase 1 最小収録。
+ */
+const STATION_ID = "decisive_shibuya";
+
+const surveyed = lowConfidence("fixture: 公式構内図・駅案内に基づく収録データ");
+
+export const SHIBUYA_DECISIVE_FACILITIES: StationFacility[] = [
+  {
+    facilityId: "dec_shibuya_hikarie_gate",
+    stationId: STATION_ID,
+    facilityType: "gate",
+    name: "ヒカリエ改札",
+    level: "B5",
+    accessible: true,
+    coordinates: { lat: 35.65925, lng: 139.70335 },
+    connectedGateId: null,
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+  {
+    facilityId: "dec_shibuya_hikarie_exit",
+    stationId: STATION_ID,
+    facilityType: "exit",
+    name: "B5出口",
+    level: "地上",
+    accessible: true,
+    coordinates: { lat: 35.65935, lng: 139.70355 },
+    connectedGateId: "dec_shibuya_hikarie_gate",
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+  {
+    facilityId: "dec_shibuya_miyamasuzaka_gate",
+    stationId: STATION_ID,
+    facilityType: "gate",
+    name: "宮益坂改札",
+    level: "地上",
+    accessible: false,
+    coordinates: { lat: 35.65985, lng: 139.70195 },
+    connectedGateId: null,
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+  {
+    facilityId: "dec_shibuya_miyamasuzaka_exit",
+    stationId: STATION_ID,
+    facilityType: "exit",
+    name: "宮益坂口",
+    level: "地上",
+    accessible: false,
+    coordinates: { lat: 35.66005, lng: 139.70215 },
+    connectedGateId: "dec_shibuya_miyamasuzaka_gate",
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+  {
+    facilityId: "dec_shibuya_sakuragaoka_gate",
+    stationId: STATION_ID,
+    facilityType: "gate",
+    name: "桜丘改札",
+    level: "地上",
+    accessible: true,
+    coordinates: { lat: 35.65655, lng: 139.69885 },
+    connectedGateId: null,
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+  {
+    facilityId: "dec_shibuya_sakuragaoka_exit",
+    stationId: STATION_ID,
+    facilityType: "exit",
+    name: "桜丘口",
+    level: "地上",
+    accessible: true,
+    coordinates: { lat: 35.65635, lng: 139.69865 },
+    connectedGateId: "dec_shibuya_sakuragaoka_gate",
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+  {
+    facilityId: "dec_shibuya_nishi_gate",
+    stationId: STATION_ID,
+    facilityType: "gate",
+    name: "西改札",
+    level: "地上",
+    accessible: true,
+    coordinates: { lat: 35.65805, lng: 139.69915 },
+    connectedGateId: null,
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+  {
+    facilityId: "dec_shibuya_nishi_exit",
+    stationId: STATION_ID,
+    facilityType: "exit",
+    name: "西口",
+    level: "地上",
+    accessible: true,
+    coordinates: { lat: 35.65795, lng: 139.69895 },
+    connectedGateId: "dec_shibuya_nishi_gate",
+    confidence: surveyed,
+    verifiedAt: null,
+    provenance: "surveyed",
+  },
+];

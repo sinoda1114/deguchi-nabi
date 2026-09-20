@@ -6,6 +6,10 @@ import {
   classifyFacilityRecommendation,
   isVerbatimInSearchText,
 } from "@/lib/domain/facility-recommendation";
+import {
+  classifyBothRequiredPair,
+  mergeSeparatedFacilityPair,
+} from "@/lib/integrations/decisive-facilities";
 import { searchAndGenerateStructuredContentWithSearchText } from "@/lib/integrations/ai/GeminiClient";
 import {
   isJevAvailable,
@@ -99,6 +103,13 @@ interface RawFacilityCandidate {
   reason?: unknown;
 }
 
+interface RawSingleFacilityCandidate {
+  gateName?: unknown;
+  exitName?: unknown;
+  confidence?: unknown;
+  reason?: unknown;
+}
+
 interface RawExtraction {
   lines?: unknown;
   transferCount?: unknown;
@@ -109,6 +120,8 @@ interface RawExtraction {
   boardingReason?: unknown;
   boardingConfidence?: unknown;
   facilityCandidates?: unknown;
+  gateCandidates?: unknown;
+  exitCandidates?: unknown;
 }
 
 const FACILITY_CANDIDATE_SCHEMA = {
@@ -126,6 +139,32 @@ const FACILITY_CANDIDATE_SCHEMA = {
     reason: { type: "string", description: "この組を選んだ理由(任意、1行程度)" },
   },
   required: ["confidence"],
+};
+
+const GATE_CANDIDATE_SCHEMA = {
+  type: "object",
+  properties: {
+    gateName: {
+      type: "string",
+      description: "改札名。本文に断定的に明記されている場合のみ含める(逐語で)。",
+    },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    reason: { type: "string", description: "この改札を選んだ理由(任意)" },
+  },
+  required: ["gateName", "confidence"],
+};
+
+const EXIT_CANDIDATE_SCHEMA = {
+  type: "object",
+  properties: {
+    exitName: {
+      type: "string",
+      description: "出口名。本文に断定的に明記されている場合のみ含める(逐語で)。",
+    },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    reason: { type: "string", description: "この出口を選んだ理由(任意)" },
+  },
+  required: ["exitName", "confidence"],
 };
 
 const EXTRACTION_SCHEMA = {
@@ -153,7 +192,17 @@ const EXTRACTION_SCHEMA = {
       type: "array",
       items: FACILITY_CANDIDATE_SCHEMA,
       description:
-        "改札・出口の組。断定できるなら要素1件、2〜3択に絞れるなら複数要素、絞り込めなければ空配列。",
+        "（後方互換）改札・出口の組。新規では gateCandidates / exitCandidates を優先。",
+    },
+    gateCandidates: {
+      type: "array",
+      items: GATE_CANDIDATE_SCHEMA,
+      description: "改札のみの候補（出口とは別配列で抽出）。",
+    },
+    exitCandidates: {
+      type: "array",
+      items: EXIT_CANDIDATE_SCHEMA,
+      description: "出口のみの候補（改札とは別配列で抽出）。",
     },
   },
   required: ["lines", "transferCount", "estimatedMinutes"],
@@ -164,7 +213,9 @@ const EXTRACTION_INSTRUCTION = `以下の文章から、経路案内情報をJSO
 - transferCount・estimatedMinutes: 整数で抽出してください。
 - arrivalPlatformNumber: 到着番線が文中で確認できる場合のみ含めてください(不明なら省略)。
 - boardingCarNumber/boardingDoorPosition/boardingReason/boardingConfidence: 号車位置が断定されている場合のみ含めてください。文中で「未確認」「降車後は案内表示に従ってください」のように断定を避けている場合は、これらのフィールドを一切含めないでください。
-- facilityCandidates: 改札・出口の組を配列で抽出してください。単一の組に断定できる場合は要素1件、2〜3択に絞り込める場合は複数要素を列挙してください(例:「AまたはB」という記述は2要素)。gateName/exitNameは本文中に逐語で明記されている名称のみを使ってください(言い換え・要約・正規化はしないでください)。1つの要素のgateNameとexitNameは、本文中で同じ選択肢として一緒に説明されている組み合わせのみにしてください(別々の文脈で言及された改札名と出口名を推測で組み合わせないでください)。改札・出口のどちらも本文中で確認できない組は含めないでください。断定・候補のいずれも無い場合はこの配列を空にしてください。reasonにはその組を選んだ理由が本文にあれば1行程度で含めてください。
+- gateCandidates: 改札名のみを配列で抽出してください（出口名は含めない）。本文に逐語で明記されている改札のみ。最大3件。
+- exitCandidates: 出口名のみを配列で抽出してください（改札名は含めない）。本文に逐語で明記されている出口のみ。最大3件。
+- facilityCandidates: 後方互換用。gateCandidates/exitCandidates で足りる場合は空配列でよい。使う場合は改札・出口が同一文脈でセットになった組のみ。
 本文に明記されていない情報を創作しないでください。confidenceは本文中の確信度の記述を参考に自己申告してください(不明な場合はlowとしてください)。`;
 
 function locationHint(station: Station): string {
@@ -326,6 +377,23 @@ function extractFacilityCandidatePairs(raw: RawExtraction, searchText: string): 
   return pairs;
 }
 
+function extractSingleFacilityCandidates(
+  rawList: unknown,
+  searchText: string,
+  field: "gateName" | "exitName"
+): RawNamedFacility[] {
+  if (!Array.isArray(rawList)) return [];
+  const result: RawNamedFacility[] = [];
+  for (const item of rawList.slice(0, MAX_FACILITY_CANDIDATES_RAW)) {
+    if (typeof item !== "object" || item === null) continue;
+    const candidate = item as RawSingleFacilityCandidate;
+    const name = field === "gateName" ? candidate.gateName : candidate.exitName;
+    const facility = extractNamedFacility(name, candidate.confidence, searchText);
+    if (facility) result.push(facility);
+  }
+  return result;
+}
+
 function isValidGuide(value: unknown): value is SingleCallNavigatorGuide {
   return (
     typeof value === "object" &&
@@ -341,6 +409,9 @@ async function toGuide(
   context: {
     destinationHint: string | null;
     arrivalStationName: string;
+    arrivalStationId: string;
+    arrivalStationCoordinates: Coordinates | null;
+    destinationCoordinates: Coordinates | null;
   }
 ): Promise<SingleCallNavigatorGuide | null> {
   if (!Array.isArray(raw.lines) || raw.lines.length === 0) return null;
@@ -372,7 +443,47 @@ async function toGuide(
     return null;
   }
 
-  let facility = classifyFacilityRecommendation(extractFacilityCandidatePairs(raw, searchText));
+  const mergedPair = await mergeSeparatedFacilityPair(
+    {
+      gateCandidates: extractSingleFacilityCandidates(raw.gateCandidates, searchText, "gateName"),
+      exitCandidates: extractSingleFacilityCandidates(raw.exitCandidates, searchText, "exitName"),
+      legacyPairs: extractFacilityCandidatePairs(raw, searchText),
+    },
+    {
+      stationId: context.arrivalStationId,
+      arrivalStationName: context.arrivalStationName,
+      arrivalStationCoordinates: context.arrivalStationCoordinates,
+      destinationCoordinates: context.destinationCoordinates,
+    }
+  );
+
+  const legacyComplete = extractFacilityCandidatePairs(raw, searchText).filter(
+    (p) => p.gate && p.exit
+  );
+  const bothRequired = classifyBothRequiredPair(mergedPair);
+  let facility: RawFacilityRecommendation;
+  if (bothRequired && legacyComplete.length <= 1) {
+    facility = { state: "confirmed", pair: bothRequired };
+  } else if (legacyComplete.length > 0) {
+    facility = classifyFacilityRecommendation(legacyComplete);
+  } else {
+    facility = { state: "unavailable", reason: "改札と出口の両方が確認できませんでした" };
+  }
+
+  // gate+exit 必須: 片方のみの confirmed/alternatives は unavailable 扱い（方角のみは不合格）
+  if (facility.state === "confirmed" && (!facility.pair.gate || !facility.pair.exit)) {
+    facility = { state: "unavailable", reason: "改札と出口の両方が確認できませんでした" };
+  }
+  if (facility.state === "alternatives") {
+    const completePairs = facility.pairs.filter((p) => p.gate && p.exit);
+    if (completePairs.length === 1) {
+      facility = { state: "confirmed", pair: completePairs[0] };
+    } else if (completePairs.length > 1) {
+      facility = { state: "alternatives", pairs: completePairs };
+    } else {
+      facility = { state: "unavailable", reason: "改札と出口の両方が確認できませんでした" };
+    }
+  }
 
   // Phase 2-B: Candidate Selection（alternatives → confirmed への昇格）
   if (facility.state === "alternatives" && isJevAvailable()) {
@@ -442,6 +553,12 @@ async function attemptGenerateSingleCallNavigatorGuide(
   return await toGuide(result.data, result.searchText, {
     destinationHint,
     arrivalStationName: destinationStation.stationName,
+    arrivalStationId: destinationStation.stationId,
+    arrivalStationCoordinates:
+      destinationStation.latitude !== 0 || destinationStation.longitude !== 0
+        ? { lat: destinationStation.latitude, lng: destinationStation.longitude }
+        : null,
+    destinationCoordinates: destinationPlaceCoordinates,
   });
 }
 
@@ -498,8 +615,13 @@ async function isFacilityUnavailable(guide: SingleCallNavigatorGuide): Promise<b
     }
   }
   
-  // 最終フォールバック: 従来の件数ベース判定
-  return guide.facility.state === "unavailable";
+  // 最終フォールバック: unavailable または gate/exit の片方欠落
+  if (guide.facility.state === "unavailable") return true;
+  if (guide.facility.state === "confirmed") {
+    const { gate, exit } = guide.facility.pair;
+    return gate === null || exit === null;
+  }
+  return false;
 }
 
 /**

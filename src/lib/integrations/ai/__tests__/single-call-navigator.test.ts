@@ -231,14 +231,7 @@ describe("generateSingleCallNavigatorGuide", () => {
     );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(result?.facility).toEqual({
-      state: "confirmed",
-      pair: {
-        gate: { name: "1階改札（みなみ西口（相鉄口）側）", confidenceLevel: "low" },
-        exit: null,
-        reason: null,
-      },
-    });
+    expect(result?.facility.state).toBe("unavailable");
   });
 
   test("facilityCandidates自体が不正な型(配列でない)の場合はunavailableとして扱う", async () => {
@@ -279,11 +272,7 @@ describe("generateSingleCallNavigatorGuide", () => {
     );
 
     const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
-    expect(result?.facility.state).toBe("confirmed");
-    if (result?.facility.state === "confirmed") {
-      expect(result.facility.pair.gate).toBeNull();
-      expect(result.facility.pair.exit?.name).toBe("A1出口");
-    }
+    expect(result?.facility.state).toBe("unavailable");
   });
 
   test("号車が実在する編成両数の上限(16)を超える場合は採用しない(/ai-review指摘)", async () => {
