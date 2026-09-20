@@ -99,10 +99,9 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
   // fix/unified-guide-boarding-and-operator-disambiguation)。統合生成
   // (facilitiesPromise内)がgateを基準に決めた乗車位置をbuildTrainSegments
   // へ渡すことで、両者が無関係な改札を基準にした号車を独立に返してしまう
-  // 不整合を防ぐ(西谷駅→横浜駅の実機検証で確認済みの不具合)。通常ケース
-  // (統合生成成功時)ではbuildTrainSegments自体は追加のAI呼び出しをしない
-  // ため、直列化による体感速度への影響は小さい(route-search.ts
-  // searchRouteGuideの並列/直列分岐、maxDurationのコメントも参照)。
+  // 不整合を防ぐ(西谷駅→横浜駅の実機検証で確認済みの不具合)。
+  // Gemini .final の号車がある政策(unified)では追加の号車 AI は走らない。
+  // 収録 BothHit(forGate)は改札条件付き号車 Gemini を trains 側で1回足す。
   const facilitiesPromise = buildTransferAndExitSegments(candidate, searchInput, {
     stationProvider,
   });

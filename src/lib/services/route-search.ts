@@ -728,13 +728,10 @@ export async function searchRouteGuide(
   // へ渡す(2026-07-20 fix/unified-guide-boarding-and-operator-
   // disambiguation)。統合生成がgateを基準に既に決めた乗車位置がある場合、
   // buildTrainSegments側の独立した乗車位置生成(AI呼び出し)は行わずそのまま
-  // 採用するため、直列にしても追加のAI呼び出しは発生しない(西谷駅→横浜駅の
-  // ケースで、統合生成が選んだ改札とは無関係な号車を独立生成が返してしまう
-  // 不整合を防ぐための変更。実機検証で確認済み)。通常ケース(統合生成成功)
-  // では経路生成(最大70秒)+統合生成(最大70秒)の直列で合算最大140秒に収まる。
-  // 統合生成を試みたが出口を確認できなかった場合のみ、buildTrainSegmentsが
-  // 独立した乗車位置生成を追加で呼び最大210秒かかりうる(/ai-review指摘、
-  // High: maxDurationは対策としてこの想定を含めて延長する)。
+  // 採用する(西谷駅→横浜駅の不整合防止。実機検証済み)。unified 政策では
+  // 追加の号車 AI は走らない。収録 BothHit(forGate)は改札条件付き号車 Gemini
+  // を trains 側で1回足す(検索+抽出。maxDuration 290 の見積もりに含む)。
+  // 出口未確認で independent に落ちた場合も号車 AI が1回走る。
   let facilitiesOutcome: FacilitiesSearchResult;
   let trainSegments: RouteSegment[];
   if (input.mode === "accessible") {

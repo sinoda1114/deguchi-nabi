@@ -379,6 +379,8 @@ describe("generateBoardingPositionForChosenGate", () => {
     expect(searchPrompt).toContain("道玄坂改札");
     expect(searchPrompt).toContain("以外の改札を基準にしない");
     expect(searchPrompt).toContain("目的地施設名や出口名は創作・選定しない");
+    expect(searchPrompt).toContain("一般的な改札寄りの号車で埋めない");
+    expect(searchPrompt).not.toContain("最も一般的な情報のみ");
     expect(searchPrompt).not.toContain("ウエチャベ");
     expect(searchPrompt).not.toContain("道玄坂2-9-2");
   });
@@ -401,6 +403,24 @@ describe("generateBoardingPositionForChosenGate", () => {
     expect(result?.carNumber).toBe(8);
     expect(result?.doorPosition).toBe("前方");
     expect(result?.targetFacilityId).toBeNull();
+  });
+
+  test("reason に指定改札名が無い応答は null（一般的な号車で埋めない）", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      carNumber: 3,
+      doorPosition: "中央",
+      reason: "階段に近いため",
+      confidence: "medium",
+    });
+
+    const result = await generateBoardingPositionForChosenGate(
+      "key",
+      ride,
+      "道玄坂改札",
+      "st_nishiya::line::東急東横線::渋谷方面"
+    );
+
+    expect(result).toBeNull();
   });
 });
 

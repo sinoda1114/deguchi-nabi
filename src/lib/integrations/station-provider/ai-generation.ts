@@ -377,12 +377,11 @@ export async function generateBoardingPositionForChosenGate(
   const platformHint = platformHintText(arrivalPlatformNumber);
 
   const searchPrompt = `${ride.fromStationName}から${ride.direction}へ向かう${ride.line}について、到着駅（${ride.arrivalStationName}）の「${gateName}」に近い到着ホーム上の停止位置(号車・ドア位置)を検索して教えてください。
-指定した改札（${gateName}）以外の改札を基準にしないでください。指定改札に近い停止位置が確認できない場合は無理に回答しないでください。
+指定した改札（${gateName}）以外の改札を基準にしないでください。指定改札に近い停止位置が確認できない場合は無理に回答しないでください。一般的な改札寄りの号車で埋めないでください。
 目的地施設名や出口名は創作・選定しないでください。
 ${platformHint}
 到着ホーム上の階段・エスカレーターと、列車の進行方向・編成両数を明示的に照合して号車を決定してください。
-到着番線や編成によって結果が変わる場合は、その条件(例:◯番線着の場合は◯号車)を含めて教えてください。
-確信が持てない場合は無理に回答せず、確認できた範囲の最も一般的な情報のみ教えてください。`;
+到着番線や編成によって結果が変わる場合は、その条件(例:◯番線着の場合は◯号車)を含めて教えてください。`;
 
   const extractionInstruction = `以下の文章から、乗車位置情報(号車・ドア位置・理由)をJSON形式で抽出してください。
 理由(reason)には、指定改札（${gateName}）に近い根拠と、到着番線や編成によって結果が変わる場合の条件を含めてください。
@@ -390,7 +389,17 @@ ${platformHint}
 ただしreasonは150字程度までの簡潔な文章にまとめてください。
 あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
 
-  return generateBoardingFromPrompts(apiKey, searchPrompt, extractionInstruction, platformId);
+  const boarding = await generateBoardingFromPrompts(
+    apiKey,
+    searchPrompt,
+    extractionInstruction,
+    platformId
+  );
+  const citedGate = gateName.trim();
+  if (!boarding || citedGate.length === 0 || !boarding.reason.includes(citedGate)) {
+    return null;
+  }
+  return boarding;
 }
 
 function toBoardingPosition(
