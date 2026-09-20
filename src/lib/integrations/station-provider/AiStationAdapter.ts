@@ -44,6 +44,13 @@ function lineBoardingPlatformId(stationId: string, line: string, direction: stri
   return `${stationId}::line::${line}::${direction}`;
 }
 
+function boardingGenerationKeys(stationId: string, platformId: string, line: string, direction: string) {
+  return {
+    boardingPlatformId: lineBoardingPlatformId(stationId, line, direction),
+    arrivalPlatformNumber: isPlainArrivalPlatformLabel(platformId) ? platformId : null,
+  };
+}
+
 /**
  * 全駅の改札・出口・号車情報をGeminiで生成する(confidence: low〜medium)アダプター。
  *
@@ -197,12 +204,15 @@ export class AiStationAdapter implements StationProviderPort {
     line: string,
     direction: string
   ): Promise<BoardingPosition | null> {
-    const boardingPlatformId = lineBoardingPlatformId(stationId, line, direction);
-
     // 到着番線が判明していればAI下書き生成へ引き渡す。generateRailRoute
     // (ai-route-generation.ts)が検索で確認できた到着番線ラベルをplatformId経由で
     // 引き継ぐ。取れない場合はnullのまま(無理に埋めない原則を維持)。
-    const arrivalPlatformNumber = isPlainArrivalPlatformLabel(platformId) ? platformId : null;
+    const { boardingPlatformId, arrivalPlatformNumber } = boardingGenerationKeys(
+      stationId,
+      platformId,
+      line,
+      direction
+    );
 
     return generateBoardingPosition(
       this.geminiApiKey,
@@ -218,15 +228,17 @@ export class AiStationAdapter implements StationProviderPort {
     ride: ArrivalRide,
     gate: UniqueChosenGate
   ): Promise<BoardingPosition | null> {
-    const boardingPlatformId = lineBoardingPlatformId(ride.fromStationId, ride.line, ride.direction);
-    const arrivalPlatformNumber = isPlainArrivalPlatformLabel(ride.platformId)
-      ? ride.platformId
-      : null;
+    const { boardingPlatformId, arrivalPlatformNumber } = boardingGenerationKeys(
+      ride.fromStationId,
+      ride.platformId,
+      ride.line,
+      ride.direction
+    );
 
     return generateBoardingPositionForChosenGate(
       this.geminiApiKey,
       ride,
-      gate,
+      gate.name,
       boardingPlatformId,
       arrivalPlatformNumber
     );

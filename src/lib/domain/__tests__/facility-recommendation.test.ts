@@ -140,7 +140,7 @@ describe("facilityCandidatesOf", () => {
 describe("uniqueChosenGateOf", () => {
   test("confirmed で改札が1つならその名前を返す", () => {
     const rec = classifyFacilityRecommendation([pair("道玄坂改札", "A1出口")]);
-    expect(uniqueChosenGateOf(rec)).toEqual({ name: "道玄坂改札" });
+    expect(uniqueChosenGateOf(rec)?.name).toBe("道玄坂改札");
   });
 
   test("alternatives で改札名が2つなら null（単一号車を複数改札に接続しない）", () => {
@@ -156,7 +156,7 @@ describe("uniqueChosenGateOf", () => {
       pair("道玄坂改札", "A1出口"),
       pair("道玄坂改札", "A2出口"),
     ]);
-    expect(uniqueChosenGateOf(rec)).toEqual({ name: "道玄坂改札" });
+    expect(uniqueChosenGateOf(rec)?.name).toBe("道玄坂改札");
   });
 
   test("unavailable は null", () => {

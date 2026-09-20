@@ -9,17 +9,24 @@ import type {
   RouteSegment,
   UnifiedArrivalGuide,
 } from "@/lib/domain/route";
-import type { BoardingPosition, Coordinates, Station, StationFacility } from "@/lib/domain/station";
-import type { Confidence } from "@/lib/domain/confidence";
+import type { Coordinates, StationFacility } from "@/lib/domain/station";
 import { unavailableConfidence } from "@/lib/domain/confidence";
-import type { FacilityRecommendation, UniqueChosenGate } from "@/lib/domain/facility-recommendation";
-import { facilityCandidatesOf, uniqueChosenGateOf } from "@/lib/domain/facility-recommendation";
+import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
+import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
 import type {
   RailRouteCandidate,
-  RailSegmentCandidate,
   RouteProviderPort,
 } from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
+import {
+  arrivalCarPolicyFrom,
+  resolveArrivalSegmentBoarding,
+  type ArrivalCarPolicy,
+  type UnifiedBoardingPosition,
+} from "./arrival-car-policy";
+
+export type { ArrivalCarPolicy, UnifiedBoardingPosition } from "./arrival-car-policy";
+export { arrivalCarPolicyFrom } from "./arrival-car-policy";
 import { haversineMeters } from "@/lib/geo/haversine";
 import { combinedFacilityConfidence, worstConfidenceLevel } from "./confidence-engine";
 import { buildArrivalGuide } from "./arrival-guide";
@@ -184,35 +191,15 @@ export async function resolveRouteCandidate(
   };
 }
 
-export interface UnifiedBoardingPosition {
-  carNumber: number;
-  doorPosition: string;
-  reason: string;
-  confidence: Confidence;
-}
-
 /**
  * 選択された経路候補の各鉄道区間について、号車・ドア位置を含む
- * train セグメントを組み立てる(searchRouteGuide の train ループをそのまま抽出)。
- *
- * unifiedBoardingPositionは、到着駅直前の区間(toStationIdがchosen.
- * arrivalStationIdと一致する区間)について、統合生成(buildTransferAndExit
- * Segments)がgateを基準に既に決定した乗車位置(2026-07-20追加)。これが
- * 渡された場合、その区間では独立した乗車位置生成(getBoardingPosition)を
- * 呼ばずそのまま採用する。統合生成とは無関係な改札を基準にした号車を
- * 独自に返してしまう不整合(西谷駅→横浜駅の実機検証で確認済み。統合生成が
- * 選んだ改札とは別の改札に近い号車を誤って回答していた)を構造的に防ぐ。
- *
- * omitIndependentBoarding が true の到着区間は無条件 getBoardingPosition を
- * 呼ばない。改札が1択なら chosenArrivalGate 経由で getBoardingForChosenGate
- * を呼ぶ（カタログ BothHit でも乗車位置を埋める。改札・出口名は創作しない）。
+ * train セグメントを組み立てる。到着区間の号車は ArrivalCarPolicy が決める
+ * （unified / forGate / independent / none。直積は表現しない）。
  */
 export async function buildTrainSegments(
   chosen: RailRouteCandidate,
   deps: Pick<RouteSearchDeps, "stationProvider">,
-  unifiedBoardingPosition: UnifiedBoardingPosition | null = null,
-  omitIndependentBoarding: boolean = false,
-  chosenArrivalGate: UniqueChosenGate | null = null
+  arrivalCarPolicy: ArrivalCarPolicy = { type: "independent" }
 ): Promise<RouteSegment[]> {
   const segments: RouteSegment[] = [];
 
@@ -224,26 +211,23 @@ export async function buildTrainSegments(
     ]);
     const platform = platforms.find((p) => p.platformId === rail.platformId);
     const isArrivalSegment = rail.toStationId === chosen.arrivalStationId;
-    const unifiedForSegment = isArrivalSegment ? unifiedBoardingPosition : null;
-    const boarding =
-      unifiedForSegment ??
-      (isArrivalSegment && omitIndependentBoarding
-        ? await boardingForChosenArrivalGate(
-            deps.stationProvider,
-            fromStation,
-            toStation,
-            rail,
-            chosenArrivalGate
+    const boarding = isArrivalSegment
+      ? await resolveArrivalSegmentBoarding(
+          arrivalCarPolicy,
+          deps.stationProvider,
+          fromStation,
+          toStation,
+          rail
+        )
+      : fromStation
+        ? await deps.stationProvider.getBoardingPosition(
+            rail.fromStationId,
+            fromStation.stationName,
+            rail.platformId,
+            rail.line,
+            rail.direction
           )
-        : fromStation
-          ? await deps.stationProvider.getBoardingPosition(
-              rail.fromStationId,
-              fromStation.stationName,
-              rail.platformId,
-              rail.line,
-              rail.direction
-            )
-          : null);
+        : null;
 
     segments.push({
       type: "train",
@@ -274,32 +258,13 @@ export async function buildTrainSegments(
   return segments;
 }
 
-/**
- * カタログ BothHit 等で無条件号車を止めたあと、選んだ改札向け号車だけを取る。
- * 改札が1択でない、または getBoardingForChosenGate が無いときは null
- * （無条件 getBoardingPosition へ落ちない）。
- */
-async function boardingForChosenArrivalGate(
-  stationProvider: StationProviderPort,
-  fromStation: Station | null,
-  toStation: Station | null,
-  rail: RailSegmentCandidate,
-  chosenArrivalGate: UniqueChosenGate | null
-): Promise<BoardingPosition | null> {
-  if (!fromStation || !chosenArrivalGate || !stationProvider.getBoardingForChosenGate) {
-    return null;
-  }
-  return stationProvider.getBoardingForChosenGate(
-    {
-      fromStationId: rail.fromStationId,
-      fromStationName: fromStation.stationName,
-      arrivalStationName: toStation?.stationName ?? rail.toStationId,
-      platformId: rail.platformId,
-      line: rail.line,
-      direction: rail.direction,
-    },
-    chosenArrivalGate
-  );
+export function buildTrainSegmentsFromFacilities(
+  chosen: RailRouteCandidate,
+  deps: Pick<RouteSearchDeps, "stationProvider">,
+  facilities: FacilitiesSearchResult
+): Promise<RouteSegment[]> {
+  if (!facilities.ok) return Promise.resolve([]);
+  return buildTrainSegments(chosen, deps, arrivalCarPolicyFrom(facilities.result));
 }
 
 export interface FacilitiesBuildSuccess {
@@ -349,11 +314,6 @@ export interface FacilitiesBuildSuccess {
    * buildTrainSegments は到着区間の独立 getBoardingPosition を走らせない。
    */
   omitIndependentBoarding: boolean;
-  /**
-   * omitIndependentBoarding かつ改札が1択のとき、到着区間の改札条件付き号車用。
-   * 無条件 getBoardingPosition には使わない。
-   */
-  chosenArrivalGate: UniqueChosenGate | null;
 }
 
 /**
@@ -658,9 +618,6 @@ export async function buildTransferAndExitSegments(
     // 不要に握りつぶさない/ai-review指摘、Codex参照)。
     unifiedBoardingPosition: unified && gateFacilities.length === 1 ? unified.boardingPosition : null,
     omitIndependentBoarding: Boolean(unified?.omitIndependentBoarding),
-    chosenArrivalGate: Boolean(unified?.omitIndependentBoarding)
-      ? uniqueChosenGateOf(facilityRecommendation)
-      : null,
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
@@ -787,15 +744,11 @@ export async function searchRouteGuide(
     ]);
   } else {
     facilitiesOutcome = await buildTransferAndExitSegments(candidateResult, input, deps);
-    trainSegments = facilitiesOutcome.ok
-      ? await buildTrainSegments(
-          candidateResult.chosen,
-          deps,
-          facilitiesOutcome.result.unifiedBoardingPosition,
-          facilitiesOutcome.result.omitIndependentBoarding,
-          facilitiesOutcome.result.chosenArrivalGate
-        )
-      : [];
+    trainSegments = await buildTrainSegmentsFromFacilities(
+      candidateResult.chosen,
+      deps,
+      facilitiesOutcome
+    );
   }
   if (!facilitiesOutcome.ok) {
     return facilitiesOutcome;

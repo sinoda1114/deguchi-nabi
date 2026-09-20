@@ -310,6 +310,29 @@ export function isPlainArrivalPlatformLabel(platformId: string): boolean {
  * 検索グラウンディングが働かなかった場合や、応答が不正な場合はnullを返す
  * (根拠のない推測で埋めないため)。
  */
+function platformHintText(arrivalPlatformNumber: string | null): string {
+  return arrivalPlatformNumber
+    ? `到着番線は${arrivalPlatformNumber}番線と判明しています。この番線での状況を優先して回答してください。`
+    : "";
+}
+
+async function generateBoardingFromPrompts(
+  apiKey: string,
+  searchPrompt: string,
+  extractionInstruction: string,
+  platformId: string
+): Promise<BoardingPosition | null> {
+  const result = await searchAndGenerateStructuredContent<GeneratedBoardingPosition>(
+    apiKey,
+    searchPrompt,
+    extractionInstruction,
+    BOARDING_SCHEMA,
+    "gemini-3.8-flash"
+  );
+  if (!isValidBoardingPosition(result)) return null;
+  return toBoardingPosition(result, platformId);
+}
+
 export async function generateBoardingPosition(
   apiKey: string,
   stationName: string,
@@ -318,9 +341,7 @@ export async function generateBoardingPosition(
   platformId: string,
   arrivalPlatformNumber: string | null = null
 ): Promise<BoardingPosition | null> {
-  const platformHint = arrivalPlatformNumber
-    ? `到着番線は${arrivalPlatformNumber}番線と判明しています。この番線での状況を優先して回答してください。`
-    : "";
+  const platformHint = platformHintText(arrivalPlatformNumber);
 
   const searchPrompt = `${stationName}から${direction}へ向かう${line}について、到着ホーム上の階段・エスカレーター・改札に近い停止位置(号車・ドア位置)を検索して教えてください。
 ${platformHint}
@@ -333,17 +354,7 @@ ${platformHint}
 ただしreasonは150字程度までの簡潔な文章にまとめてください。
 あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
 
-  const result = await searchAndGenerateStructuredContent<GeneratedBoardingPosition>(
-    apiKey,
-    searchPrompt,
-    extractionInstruction,
-    BOARDING_SCHEMA,
-    "gemini-3.8-flash"
-  );
-
-  if (!isValidBoardingPosition(result)) return null;
-
-  return toBoardingPosition(result, platformId);
+  return generateBoardingFromPrompts(apiKey, searchPrompt, extractionInstruction, platformId);
 }
 
 /**
@@ -359,16 +370,14 @@ export async function generateBoardingPositionForChosenGate(
     line: string;
     direction: string;
   },
-  gate: { name: string },
+  gateName: string,
   platformId: string,
   arrivalPlatformNumber: string | null = null
 ): Promise<BoardingPosition | null> {
-  const platformHint = arrivalPlatformNumber
-    ? `到着番線は${arrivalPlatformNumber}番線と判明しています。この番線での状況を優先して回答してください。`
-    : "";
+  const platformHint = platformHintText(arrivalPlatformNumber);
 
-  const searchPrompt = `${ride.fromStationName}から${ride.direction}へ向かう${ride.line}について、到着駅（${ride.arrivalStationName}）の「${gate.name}」に近い到着ホーム上の停止位置(号車・ドア位置)を検索して教えてください。
-指定した改札（${gate.name}）以外の改札を基準にしないでください。指定改札に近い停止位置が確認できない場合は無理に回答しないでください。
+  const searchPrompt = `${ride.fromStationName}から${ride.direction}へ向かう${ride.line}について、到着駅（${ride.arrivalStationName}）の「${gateName}」に近い到着ホーム上の停止位置(号車・ドア位置)を検索して教えてください。
+指定した改札（${gateName}）以外の改札を基準にしないでください。指定改札に近い停止位置が確認できない場合は無理に回答しないでください。
 目的地施設名や出口名は創作・選定しないでください。
 ${platformHint}
 到着ホーム上の階段・エスカレーターと、列車の進行方向・編成両数を明示的に照合して号車を決定してください。
@@ -376,22 +385,12 @@ ${platformHint}
 確信が持てない場合は無理に回答せず、確認できた範囲の最も一般的な情報のみ教えてください。`;
 
   const extractionInstruction = `以下の文章から、乗車位置情報(号車・ドア位置・理由)をJSON形式で抽出してください。
-理由(reason)には、指定改札（${gate.name}）に近い根拠と、到着番線や編成によって結果が変わる場合の条件を含めてください。
+理由(reason)には、指定改札（${gateName}）に近い根拠と、到着番線や編成によって結果が変わる場合の条件を含めてください。
 指定改札以外の改札名を基準にした回答は抽出せず、号車が確認できないものとして扱ってください。
 ただしreasonは150字程度までの簡潔な文章にまとめてください。
 あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
 
-  const result = await searchAndGenerateStructuredContent<GeneratedBoardingPosition>(
-    apiKey,
-    searchPrompt,
-    extractionInstruction,
-    BOARDING_SCHEMA,
-    "gemini-3.8-flash"
-  );
-
-  if (!isValidBoardingPosition(result)) return null;
-
-  return toBoardingPosition(result, platformId);
+  return generateBoardingFromPrompts(apiKey, searchPrompt, extractionInstruction, platformId);
 }
 
 function toBoardingPosition(

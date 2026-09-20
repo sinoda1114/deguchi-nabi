@@ -112,11 +112,14 @@ function dedupeByName<F extends { name: string }>(facilities: F[]): F[] {
   return result;
 }
 
+const uniqueChosenGateBrand = Symbol("UniqueChosenGate");
+
 /**
  * 改札が名前重複排除後ちょうど1つに定まったときだけ存在する。
- * uniqueChosenGateOf 以外から作ってはいけない（任意文字列の注入口にしない）。
+ * uniqueChosenGateOf 以外からは作れない。
  */
 export type UniqueChosenGate = {
+  readonly [uniqueChosenGateBrand]: true;
   readonly name: string;
 };
 
@@ -130,7 +133,7 @@ export function uniqueChosenGateOf(
 ): UniqueChosenGate | null {
   const gates = facilityCandidatesOf(recommendation, (pair) => pair.gate);
   if (gates.length !== 1) return null;
-  return { name: gates[0].name };
+  return { [uniqueChosenGateBrand]: true, name: gates[0].name };
 }
 
 /**

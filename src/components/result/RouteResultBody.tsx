@@ -5,6 +5,7 @@ import { resolveOriginDestination } from "@/lib/services/route-search-orchestrat
 import {
   resolveRouteCandidate,
   buildTrainSegments,
+  buildTrainSegmentsFromFacilities,
   buildTransferAndExitSegments,
   approximateWalkingDistanceMeters,
   estimateWalkingMinutes,
@@ -109,13 +110,7 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
     mode === "accessible"
       ? buildTrainSegments(candidate.chosen, { stationProvider })
       : facilitiesPromise.then((outcome) =>
-          buildTrainSegments(
-            candidate.chosen,
-            { stationProvider },
-            outcome.ok ? outcome.result.unifiedBoardingPosition : null,
-            outcome.ok ? outcome.result.omitIndependentBoarding : false,
-            outcome.ok ? outcome.result.chosenArrivalGate : null
-          )
+          buildTrainSegmentsFromFacilities(candidate.chosen, { stationProvider }, outcome)
         );
 
   // accessible(バリアフリー)モードは、エレベーター情報を確認できない経路を

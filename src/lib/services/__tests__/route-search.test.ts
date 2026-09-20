@@ -12,6 +12,8 @@ import {
   NO_DEPARTURE_TIME_DISCLAIMER,
 } from "@/lib/services/route-search";
 import type { RouteSearchDeps, UnifiedBoardingPosition } from "@/lib/services/route-search";
+import { arrivalCarPolicyFrom } from "@/lib/services/arrival-car-policy";
+import { classifyFacilityRecommendation, uniqueChosenGateOf } from "@/lib/domain/facility-recommendation";
 import type { RouteProviderPort } from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import type {
@@ -267,7 +269,7 @@ describe("searchRouteGuide", () => {
         line: "テスト線",
         direction: "到着駅方面",
       }),
-      { name: "道玄坂改札" }
+      expect.objectContaining({ name: "道玄坂改札" })
     );
     expect(result.route.keyInstruction.text).toBe("8号車付近に乗車、道玄坂改札、A1出口へ。");
     expect(result.route.keyInstruction.text).not.toContain("確認できません");
@@ -654,7 +656,10 @@ describe("buildTrainSegments", () => {
       reason: "1階改札への階段に近いため",
       confidence: highConfidence,
     };
-    const segments = await buildTrainSegments(candidate.chosen, deps, unifiedBoardingPosition);
+    const segments = await buildTrainSegments(candidate.chosen, deps, {
+      type: "unified",
+      position: unifiedBoardingPosition,
+    });
 
     expect(getBoardingPositionSpy).not.toHaveBeenCalled();
     expect(segments[0].boardingPosition).toEqual({
@@ -676,7 +681,7 @@ describe("buildTrainSegments", () => {
     expect(candidate.ok).toBe(true);
     if (!candidate.ok) return;
 
-    await buildTrainSegments(candidate.chosen, deps, null);
+    await buildTrainSegments(candidate.chosen, deps, { type: "independent" });
 
     expect(getBoardingPositionSpy).toHaveBeenCalledTimes(1);
   });
@@ -692,7 +697,7 @@ describe("buildTrainSegments", () => {
     expect(candidate.ok).toBe(true);
     if (!candidate.ok) return;
 
-    const segments = await buildTrainSegments(candidate.chosen, deps, null, true);
+    const segments = await buildTrainSegments(candidate.chosen, deps, { type: "none" });
     expect(getBoardingPositionSpy).not.toHaveBeenCalled();
     expect(segments[0].boardingPosition).toBeNull();
   });
@@ -720,13 +725,18 @@ describe("buildTrainSegments", () => {
     expect(candidate.ok).toBe(true);
     if (!candidate.ok) return;
 
-    const segments = await buildTrainSegments(
-      candidate.chosen,
-      deps,
-      null,
-      true,
-      { name: "道玄坂改札" }
-    );
+    const gateRec = classifyFacilityRecommendation([
+      {
+        gate: { name: "道玄坂改札", confidence: highConfidence },
+        exit: { name: "A1出口", confidence: highConfidence },
+        reason: null,
+      },
+    ]);
+    const gate = uniqueChosenGateOf(gateRec);
+    expect(gate).not.toBeNull();
+    if (!gate) return;
+
+    const segments = await buildTrainSegments(candidate.chosen, deps, { type: "forGate", gate });
     expect(getBoardingPositionSpy).not.toHaveBeenCalled();
     expect(getBoardingForChosenGate).toHaveBeenCalledTimes(1);
     expect(getBoardingForChosenGate).toHaveBeenCalledWith(
@@ -735,7 +745,7 @@ describe("buildTrainSegments", () => {
         line: "テスト線",
         direction: "到着駅方面",
       }),
-      { name: "道玄坂改札" }
+      gate
     );
     expect(segments[0].boardingPosition).toEqual({
       carNumber: 8,
@@ -767,7 +777,7 @@ describe("buildTrainSegments", () => {
     expect(candidate.ok).toBe(true);
     if (!candidate.ok) return;
 
-    const segments = await buildTrainSegments(candidate.chosen, deps, null, true, null);
+    const segments = await buildTrainSegments(candidate.chosen, deps, { type: "none" });
     expect(getBoardingPositionSpy).not.toHaveBeenCalled();
     expect(getBoardingForChosenGate).not.toHaveBeenCalled();
     expect(segments[0].boardingPosition).toBeNull();
@@ -953,7 +963,7 @@ describe("buildTransferAndExitSegments", () => {
     expect(outcome.result.arrivalGuide.steps.some((s) => s.title === "見出し")).toBe(true);
   });
 
-  test("omitIndependentBoarding の統合生成は chosenArrivalGate に単一改札名を載せる", async () => {
+  test("omitIndependentBoarding の統合生成は arrivalCarPolicyFrom が forGate になる", async () => {
     const getUnifiedArrivalGuide = vi.fn(async () => ({
       boardingPosition: null,
       facility: {
@@ -980,7 +990,11 @@ describe("buildTransferAndExitSegments", () => {
     if (!outcome.ok) return;
     expect(outcome.result.omitIndependentBoarding).toBe(true);
     expect(outcome.result.unifiedBoardingPosition).toBeNull();
-    expect(outcome.result.chosenArrivalGate).toEqual({ name: "道玄坂改札" });
+    const policy = arrivalCarPolicyFrom(outcome.result);
+    expect(policy.type).toBe("forGate");
+    if (policy.type === "forGate") {
+      expect(policy.gate.name).toBe("道玄坂改札");
+    }
     if (outcome.result.facilityRecommendation.state === "confirmed") {
       expect(outcome.result.facilityRecommendation.pair.gate?.name).toBe("道玄坂改札");
       expect(outcome.result.facilityRecommendation.pair.exit?.name).toBe("A1出口");

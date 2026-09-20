@@ -367,7 +367,7 @@ describe("generateBoardingPositionForChosenGate", () => {
     await generateBoardingPositionForChosenGate(
       "key",
       ride,
-      { name: "道玄坂改札" },
+      "道玄坂改札",
       "st_nishiya::line::東急東横線::渋谷方面"
     );
 
@@ -394,7 +394,7 @@ describe("generateBoardingPositionForChosenGate", () => {
     const result = await generateBoardingPositionForChosenGate(
       "key",
       ride,
-      { name: "道玄坂改札" },
+      "道玄坂改札",
       "st_nishiya::line::東急東横線::渋谷方面"
     );
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { classifyFacilityRecommendation, uniqueChosenGateOf } from "@/lib/domain/facility-recommendation";
 
 /**
  * KvCacheStore(@/lib/store/kv-cache-store の getKvCacheStore)のインメモリ・
@@ -933,6 +934,17 @@ describe("AiStationAdapter.getBoardingForChosenGate", () => {
   test("指定改札向け生成器へ ride と改札名を渡し、無条件 generateBoardingPosition は呼ばない", async () => {
     generateBoardingPositionForChosenGate.mockResolvedValue(AI_POSITION);
     const adapter = new AiStationAdapter("test-key");
+    const gate = uniqueChosenGateOf(
+      classifyFacilityRecommendation([
+        {
+          gate: { name: "道玄坂改札", confidence: AI_POSITION.confidence },
+          exit: { name: "A1出口", confidence: AI_POSITION.confidence },
+          reason: null,
+        },
+      ])
+    );
+    expect(gate).not.toBeNull();
+    if (!gate) return;
     const result = await adapter.getBoardingForChosenGate(
       {
         fromStationId: "st_nishiya",
@@ -942,7 +954,7 @@ describe("AiStationAdapter.getBoardingForChosenGate", () => {
         line: "東急東横線",
         direction: "渋谷方面",
       },
-      { name: "道玄坂改札" }
+      gate
     );
 
     expect(result?.carNumber).toBe(4);
@@ -957,7 +969,7 @@ describe("AiStationAdapter.getBoardingForChosenGate", () => {
         line: "東急東横線",
         direction: "渋谷方面",
       },
-      { name: "道玄坂改札" },
+      "道玄坂改札",
       "st_nishiya::line::東急東横線::渋谷方面",
       "3"
     );
