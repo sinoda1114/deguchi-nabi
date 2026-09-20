@@ -261,7 +261,14 @@ describe("searchRouteGuide", () => {
 
     expect(getBoardingPosition).not.toHaveBeenCalled();
     expect(getBoardingForChosenGate).toHaveBeenCalledTimes(1);
-    expect(getBoardingForChosenGate.mock.calls[0]?.[1]).toEqual({ name: "道玄坂改札" });
+    expect(getBoardingForChosenGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromStationId: "origin",
+        line: "テスト線",
+        direction: "到着駅方面",
+      }),
+      { name: "道玄坂改札" }
+    );
     expect(result.route.keyInstruction.text).toBe("8号車付近に乗車、道玄坂改札、A1出口へ。");
     expect(result.route.keyInstruction.text).not.toContain("確認できません");
     expect(getUnifiedArrivalGuide).toHaveBeenCalled();
@@ -722,7 +729,14 @@ describe("buildTrainSegments", () => {
     );
     expect(getBoardingPositionSpy).not.toHaveBeenCalled();
     expect(getBoardingForChosenGate).toHaveBeenCalledTimes(1);
-    expect(getBoardingForChosenGate.mock.calls[0][1]).toEqual({ name: "道玄坂改札" });
+    expect(getBoardingForChosenGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromStationId: "origin",
+        line: "テスト線",
+        direction: "到着駅方面",
+      }),
+      { name: "道玄坂改札" }
+    );
     expect(segments[0].boardingPosition).toEqual({
       carNumber: 8,
       doorPosition: "前方",
