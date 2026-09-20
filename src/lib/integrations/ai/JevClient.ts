@@ -188,22 +188,23 @@ export async function evaluateFacilityJudgment(
         geminiPairCount: input.geminiPairs.length,
       };
 
-      const questions: Record<string, ReturnType<typeof noul>> = {
-        adoptCatalog: noul(
+      const questions: Record<string, ReturnType<typeof noul>> = {};
+      if (catalogBoth) {
+        questions.adoptCatalog = noul(
           "収録カタログの改札・出口が両方あり、Gemini候補より採用すべきですか。カタログが欠けるか信用できないならfalse。地名の創作はしない。",
           {
             true: "カタログ組を採用する",
             false: "カタログ組を採用しない",
           }
-        ),
-        skipGeminiFacility: noul(
+        );
+        questions.skipGeminiFacility = noul(
           "カタログで改札と出口が両方揃っているなら、Geminiによる改札・出口生成をスキップしてよいですか。片方だけ・カタログ無しならfalse。長文案内の生成可否はここでは見ない。",
           {
             true: "Geminiの改札・出口生成をスキップしてよい",
             false: "Geminiの改札・出口生成を使う",
           }
-        ),
-      };
+        );
+      }
 
       for (let i = 0; i < input.geminiPairs.length; i++) {
         const pair = input.geminiPairs[i];
@@ -218,6 +219,12 @@ export async function evaluateFacilityJudgment(
             false: "他の候補の方が良い",
           }
         );
+      }
+
+      if (Object.keys(questions).length === 0) {
+        return {
+          answers: {} as Record<string, unknown>,
+        };
       }
 
       return await client.systemOne(

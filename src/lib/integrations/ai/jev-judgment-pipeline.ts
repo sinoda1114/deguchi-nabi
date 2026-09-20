@@ -56,6 +56,10 @@ function finish<F extends { name: string }>(
   };
 }
 
+function pairHasBoth<F extends { name: string }>(pair: FacilityPair<F>): boolean {
+  return pair.gate !== null && pair.exit !== null;
+}
+
 function pickGeminiRecommendation<F extends { name: string }>(
   pairs: FacilityPair<F>[],
   candidateScores: number[] | undefined
@@ -67,7 +71,21 @@ function pickGeminiRecommendation<F extends { name: string }>(
   if (!candidateScores || candidateScores.length !== classified.pairs.length) {
     return classified;
   }
-  const selectedIndex = candidateScores.indexOf(Math.max(...candidateScores));
+  if (candidateScores.every((score) => score <= 0)) {
+    return classified;
+  }
+
+  const bothHitIndices = classified.pairs
+    .map((pair, index) => (pairHasBoth(pair) ? index : -1))
+    .filter((index) => index >= 0);
+  const rankable = bothHitIndices.length > 0 ? bothHitIndices : classified.pairs.map((_, index) => index);
+
+  let selectedIndex = rankable[0];
+  for (const index of rankable) {
+    if (candidateScores[index] > candidateScores[selectedIndex]) {
+      selectedIndex = index;
+    }
+  }
   const selected = classified.pairs[selectedIndex];
   if (!selected) {
     return classified;
@@ -90,8 +108,10 @@ export async function runFacilityJudgmentPipeline<F extends { name: string }>(
   config: JevClientConfig | null
 ): Promise<JudgmentOutcome<F>> {
   const catalogPair = catalogHasBoth(snapshot.catalogPair) ? snapshot.catalogPair : null;
+  const needsJevRank = snapshot.geminiPairs.length >= 2;
+  const needsJevCatalog = catalogPair !== null;
 
-  if (config === null) {
+  if (config === null || (!needsJevRank && !needsJevCatalog)) {
     if (catalogPair) {
       return adoptCatalog(catalogPair);
     }

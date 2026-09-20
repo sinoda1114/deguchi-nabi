@@ -147,6 +147,49 @@ describe("runFacilityJudgmentPipeline", () => {
     }
   });
 
+  test("JEVが改札だけの組を好んでも、同じ抽出にBothHitがあればそちらを採用する", async () => {
+    mockEvaluateFacilityJudgment.mockResolvedValue({
+      adoptCatalog: false,
+      skipGeminiFacility: false,
+      candidateScores: [0.99, 0.1],
+      reason: "prefer gate-only",
+    });
+
+    const result = await runFacilityJudgmentPipeline(
+      snapshot({
+        geminiPairs: [pair("ハチ公改札", null), pair("道玄坂改札", "A1出口")],
+      }),
+      JEV_CONFIG
+    );
+
+    expect(result.bothHit).toBe(true);
+    expect(result.shouldRetry).toBe(false);
+    expect(result.recommendation).toEqual({
+      state: "confirmed",
+      pair: pair("道玄坂改札", "A1出口"),
+    });
+  });
+
+  test("JEVスコアが全て0ならalternativesのままfail-openする", async () => {
+    mockEvaluateFacilityJudgment.mockResolvedValue({
+      adoptCatalog: false,
+      skipGeminiFacility: false,
+      candidateScores: [0, 0],
+      reason: "empty scores",
+    });
+
+    const result = await runFacilityJudgmentPipeline(
+      snapshot({
+        geminiPairs: [pair("道玄坂改札", "A1出口"), pair("ハチ公改札", "ハチ公口")],
+      }),
+      JEV_CONFIG
+    );
+
+    expect(result.recommendation.state).toBe("alternatives");
+    expect(result.bothHit).toBe(true);
+    expect(result.shouldRetry).toBe(false);
+  });
+
   test("Geminiの複数候補からJEVスコア最大を1組に絞る", async () => {
     mockEvaluateFacilityJudgment.mockResolvedValue({
       adoptCatalog: false,

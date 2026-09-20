@@ -449,7 +449,7 @@ describe("generateSingleCallNavigatorGuide", () => {
       expect(result?.facility.state).toBe("confirmed");
     });
 
-    test("JEV判定がエラーでもBothHitでなければretryし、名前は捏造しない", async () => {
+    test("施設が空ならJEVを呼ばずretryし、名前は捏造しない", async () => {
       mockIsJevAvailable.mockReturnValue(true);
       mockCreateJevConfig.mockReturnValue({ apiKey: "test_key" });
       mockEvaluateFacilityJudgment.mockRejectedValue(new Error("JEV API error"));
@@ -473,7 +473,7 @@ describe("generateSingleCallNavigatorGuide", () => {
       const result = await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
 
       expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
-      expect(mockEvaluateFacilityJudgment).toHaveBeenCalled();
+      expect(mockEvaluateFacilityJudgment).not.toHaveBeenCalled();
       expect(result).not.toBeNull();
       expect(result?.facility.state).toBe("unavailable");
     });
