@@ -205,7 +205,8 @@ export interface UnifiedBoardingPosition {
 export async function buildTrainSegments(
   chosen: RailRouteCandidate,
   deps: Pick<RouteSearchDeps, "stationProvider">,
-  unifiedBoardingPosition: UnifiedBoardingPosition | null = null
+  unifiedBoardingPosition: UnifiedBoardingPosition | null = null,
+  omitIndependentBoarding: boolean = false
 ): Promise<RouteSegment[]> {
   const segments: RouteSegment[] = [];
 
@@ -220,15 +221,17 @@ export async function buildTrainSegments(
     const unifiedForSegment = isArrivalSegment ? unifiedBoardingPosition : null;
     const boarding =
       unifiedForSegment ??
-      (fromStation
-        ? await deps.stationProvider.getBoardingPosition(
-            rail.fromStationId,
-            fromStation.stationName,
-            rail.platformId,
-            rail.line,
-            rail.direction
-          )
-        : null);
+      (isArrivalSegment && omitIndependentBoarding
+        ? null
+        : fromStation
+          ? await deps.stationProvider.getBoardingPosition(
+              rail.fromStationId,
+              fromStation.stationName,
+              rail.platformId,
+              rail.line,
+              rail.direction
+            )
+          : null);
 
     segments.push({
       type: "train",
@@ -301,6 +304,11 @@ export interface FacilitiesBuildSuccess {
    * 呼ばず、この値をそのまま採用する(gateと矛盾しない号車にするため)。
    */
   unifiedBoardingPosition: UnifiedBoardingPosition | null;
+  /**
+   * 収録カタログ等で改札・出口だけ確定し号車は同一セッションに無いとき true。
+   * buildTrainSegments は到着区間の独立 getBoardingPosition を走らせない。
+   */
+  omitIndependentBoarding: boolean;
 }
 
 /**
@@ -604,6 +612,7 @@ export async function buildTransferAndExitSegments(
     // 複数(state="alternatives")でも改札自体は実質1択のケースでは、号車を
     // 不要に握りつぶさない/ai-review指摘、Codex参照)。
     unifiedBoardingPosition: unified && gateFacilities.length === 1 ? unified.boardingPosition : null,
+    omitIndependentBoarding: Boolean(unified?.omitIndependentBoarding),
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
@@ -734,7 +743,8 @@ export async function searchRouteGuide(
       ? await buildTrainSegments(
           candidateResult.chosen,
           deps,
-          facilitiesOutcome.result.unifiedBoardingPosition
+          facilitiesOutcome.result.unifiedBoardingPosition,
+          facilitiesOutcome.result.omitIndependentBoarding
         )
       : [];
   }

@@ -21,6 +21,8 @@ const NAME_SCHEMA = {
 export interface SplitFacilityNames {
   gate: NamedFacility | null;
   exit: NamedFacility | null;
+  /** 接続名が交差検証できたときだけ true。独立に取れた2名を組にしない。 */
+  paired: boolean;
 }
 
 function toNamed(name: unknown, confidence: unknown, searchText: string): NamedFacility | null {
@@ -97,8 +99,8 @@ export async function generateGateOnly(input: {
 }
 
 /**
- * 改札検索と出口検索を並列実行し、両方取れたときだけ組にする。
- * 片方だけなら caller が approximate 表示に使う(合格には数えない)。
+ * 改札検索と出口検索を並列実行する。
+ * BothHit にしてよいのは接続名が交差検証できたときだけ。
  */
 export async function generateSplitFacilityPair(input: {
   apiKey: string;
@@ -112,15 +114,38 @@ export async function generateSplitFacilityPair(input: {
   ]);
 
   const exit = exitResult.exit;
-  let gate = gateResult.gate;
+  const gate = gateResult.gate;
+  const namesMatch = (a: string | null | undefined, b: string | null | undefined) =>
+    Boolean(a && b && a === b);
 
-  if (exit && exitResult.pairedGateName && !gate) {
-    gate = {
-      name: exitResult.pairedGateName,
-      confidence: exit.confidence,
-      provenance: "ai_inferred",
+  if (exit && gate && namesMatch(exitResult.pairedGateName, gate.name)) {
+    return { gate, exit, paired: true };
+  }
+  if (exit && gate && namesMatch(gateResult.pairedExitName, exit.name)) {
+    return { gate, exit, paired: true };
+  }
+  if (exit && !gate && exitResult.pairedGateName) {
+    return {
+      gate: {
+        name: exitResult.pairedGateName,
+        confidence: exit.confidence,
+        provenance: "ai_inferred",
+      },
+      exit,
+      paired: true,
+    };
+  }
+  if (gate && !exit && gateResult.pairedExitName) {
+    return {
+      gate,
+      exit: {
+        name: gateResult.pairedExitName,
+        confidence: gate.confidence,
+        provenance: "ai_inferred",
+      },
+      paired: true,
     };
   }
 
-  return { gate, exit };
+  return { gate, exit, paired: false };
 }

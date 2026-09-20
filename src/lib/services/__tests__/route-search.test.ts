@@ -625,6 +625,22 @@ describe("buildTrainSegments", () => {
 
     expect(getBoardingPositionSpy).toHaveBeenCalledTimes(1);
   });
+
+  test("omitIndependentBoarding のとき到着区間は getBoardingPosition を呼ばない(収録改札と無関係な号車を生成しない)", async () => {
+    const getBoardingPositionSpy = vi.fn(async () => null);
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider(FACILITIES_WITH_ELEVATOR),
+      getBoardingPosition: getBoardingPositionSpy,
+    };
+    const deps: RouteSearchDeps = { routeProvider: buildRouteProvider(true), stationProvider };
+    const candidate = await resolveRouteCandidate({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const segments = await buildTrainSegments(candidate.chosen, deps, null, true);
+    expect(getBoardingPositionSpy).not.toHaveBeenCalled();
+    expect(segments[0].boardingPosition).toBeNull();
+  });
 });
 
 describe("buildTransferAndExitSegments", () => {

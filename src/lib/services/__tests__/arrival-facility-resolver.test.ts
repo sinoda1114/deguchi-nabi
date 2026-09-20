@@ -15,7 +15,7 @@ vi.mock("@/lib/integrations/osm/osm-subway-entrances", async () => {
 });
 
 vi.mock("@/lib/integrations/ai/split-facility-generation", () => ({
-  generateSplitFacilityPair: vi.fn(async () => ({ gate: null, exit: null })),
+  generateSplitFacilityPair: vi.fn(async () => ({ gate: null, exit: null, paired: false })),
 }));
 
 import { generateSplitFacilityPair } from "@/lib/integrations/ai/split-facility-generation";
@@ -23,7 +23,7 @@ import { fetchOsmSubwayEntrances } from "@/lib/integrations/osm/osm-subway-entra
 
 describe("resolveArrivalFacility", () => {
   beforeEach(() => {
-    vi.mocked(generateSplitFacilityPair).mockResolvedValue({ gate: null, exit: null });
+    vi.mocked(generateSplitFacilityPair).mockResolvedValue({ gate: null, exit: null, paired: false });
     vi.mocked(fetchOsmSubwayEntrances).mockResolvedValue([]);
   });
 
@@ -69,5 +69,25 @@ describe("resolveArrivalFacility", () => {
     expect(generateSplitFacilityPair).not.toHaveBeenCalled();
     expect(isScoringBothHit(result.recommendation)).toBe(true);
     expect(result.usedGeminiFinal).toBe(true);
+  });
+
+  test("渋谷でも目的地座標が無いときは収録を使わず last resort のみ", async () => {
+    const lastResort = vi.fn(async () => ({
+      state: "unavailable" as const,
+      reason: "gemini",
+    }));
+    const result = await resolveArrivalFacility({
+      stationId: "hr_渋谷_139.7016_35.6580",
+      stationName: "渋谷駅",
+      stationCoordinates: { lat: 35.65861, lng: 139.70111 },
+      destinationHint: null,
+      destinationCoordinates: null,
+      geminiApiKey: "test-key",
+      lastResortFacility: lastResort,
+    });
+    expect(lastResort).toHaveBeenCalledOnce();
+    expect(generateSplitFacilityPair).not.toHaveBeenCalled();
+    expect(result.usedGeminiFinal).toBe(true);
+    expect(isScoringBothHit(result.recommendation)).toBe(false);
   });
 });

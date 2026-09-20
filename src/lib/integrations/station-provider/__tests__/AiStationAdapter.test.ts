@@ -917,6 +917,7 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
       expect(result.facility.pair.exit?.name).toBe("A1出口");
     }
     expect(result?.boardingPosition).toBeNull();
+    expect(result?.omitIndependentBoarding).toBe(true);
     expect(result?.walkingSteps).toEqual([]);
   });
 });

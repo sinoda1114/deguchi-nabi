@@ -49,6 +49,7 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
     hasAlternativesGuidance: false,
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
+    omitIndependentBoarding: false,
     arrivalGuide: {
       steps: [],
       destinationDirection: null,

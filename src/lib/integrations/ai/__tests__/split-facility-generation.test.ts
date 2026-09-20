@@ -27,6 +27,7 @@ describe("generateSplitFacilityPair", () => {
     });
     expect(pair.exit?.name).toBe("A1出口");
     expect(pair.gate?.name).toBe("道玄坂改札");
+    expect(pair.paired).toBe(true);
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
   });
 
@@ -43,5 +44,27 @@ describe("generateSplitFacilityPair", () => {
     });
     expect(pair.exit).toBeNull();
     expect(pair.gate).toBeNull();
+    expect(pair.paired).toBe(false);
+  });
+
+  test("接続名が食い違う改札と出口は paired=false のまま組にしない", async () => {
+    vi.mocked(searchAndGenerateStructuredContentWithSearchText)
+      .mockResolvedValueOnce({
+        data: { name: "A1出口", pairedName: "道玄坂改札", confidence: "medium" },
+        searchText: "A1出口 道玄坂改札",
+      })
+      .mockResolvedValueOnce({
+        data: { name: "ヒカリエ改札", pairedName: "B5出口", confidence: "medium" },
+        searchText: "ヒカリエ改札 B5出口",
+      });
+    const pair = await generateSplitFacilityPair({
+      apiKey: "k",
+      stationName: "渋谷駅",
+      stationCoordinates: null,
+      destinationHint: "ウエチャベ",
+    });
+    expect(pair.paired).toBe(false);
+    expect(pair.exit?.name).toBe("A1出口");
+    expect(pair.gate?.name).toBe("ヒカリエ改札");
   });
 });

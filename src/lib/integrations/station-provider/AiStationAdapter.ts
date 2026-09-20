@@ -303,6 +303,7 @@ export class AiStationAdapter implements StationProviderPort {
         boardingPosition: null,
         facility: resolved.recommendation,
         walkingSteps: [],
+        omitIndependentBoarding: true,
       };
     }
 
