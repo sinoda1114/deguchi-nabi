@@ -16,11 +16,12 @@ import {
   generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorRun,
   peekSharedSingleCallNavigatorRun,
+  type SingleCallNavigatorGuide,
 } from "@/lib/integrations/ai/single-call-navigator";
 import { groundedAiConfidence, resolveFacilityRecommendationConfidence } from "./ai-generation";
 import { resolveArrivalFacility } from "@/lib/services/arrival-facility-resolver";
 import { isScoringBothHit } from "@/lib/eval/both-hit";
-import { boardingAgreesWithChosenGate } from "@/lib/domain/boarding-gate-agreement";
+import { sharedBoardingFitsChosenGate } from "@/lib/domain/boarding-gate-agreement";
 import { catalogStationNameFrom, lookupCatalogStation } from "@/lib/data/station-facility-catalog";
 import {
   decodeHeartRailsStationId,
@@ -64,6 +65,19 @@ function catalogGateNames(stationName: string, stationId: string): string[] {
   return row.facilities.filter((f) => f.facilityType === "gate").map((f) => f.name);
 }
 
+function firstFacilityGateName(facility: SingleCallNavigatorGuide["facility"]): string | null {
+  if (facility.state === "confirmed") return facility.pair.gate?.name ?? null;
+  if (facility.state === "alternatives") {
+    const names = [
+      ...new Set(
+        facility.pairs.map((pair) => pair.gate?.name).filter((name): name is string => Boolean(name))
+      ),
+    ];
+    return names.length === 1 ? names[0] : null;
+  }
+  return null;
+}
+
 async function boardingFromSharedFirst(
   cacheKey: string,
   recommendation: FacilityRecommendation,
@@ -77,11 +91,12 @@ async function boardingFromSharedFirst(
   const first = await peeked.first;
   if (!first?.boarding) return null;
   if (
-    !boardingAgreesWithChosenGate(
-      first.boarding.reason,
-      chosen.name,
-      catalogGateNames(arrivalStationName, arrivalStationId)
-    )
+    !sharedBoardingFitsChosenGate({
+      reason: first.boarding.reason,
+      chosenGateName: chosen.name,
+      siblingGateNames: catalogGateNames(arrivalStationName, arrivalStationId),
+      firstFacilityGateName: firstFacilityGateName(first.facility),
+    })
   ) {
     return null;
   }

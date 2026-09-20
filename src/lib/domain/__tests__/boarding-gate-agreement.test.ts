@@ -3,6 +3,7 @@ import {
   boardingAgreesWithChosenGate,
   gateNameStem,
   reasonCitesGate,
+  sharedBoardingFitsChosenGate,
 } from "@/lib/domain/boarding-gate-agreement";
 
 const SIBLINGS = ["道玄坂改札", "ハチ公改札", "ヒカリエ改札", "宮益坂改札"];
@@ -43,5 +44,29 @@ describe("boardingAgreesWithChosenGate", () => {
     expect(
       boardingAgreesWithChosenGate("ハチ公改札の階段に近いため", "道玄坂改札", SIBLINGS)
     ).toBe(false);
+  });
+});
+
+describe("sharedBoardingFitsChosenGate", () => {
+  test(".first が別改札を断定し reason が選んだ改札を指さないなら捨てる", () => {
+    expect(
+      sharedBoardingFitsChosenGate({
+        reason: "階段に近いため",
+        chosenGateName: "道玄坂改札",
+        siblingGateNames: SIBLINGS,
+        firstFacilityGateName: "ハチ公改札",
+      })
+    ).toBe(false);
+  });
+
+  test(".first 施設が無い一般理由は採用する", () => {
+    expect(
+      sharedBoardingFitsChosenGate({
+        reason: "階段に近いため",
+        chosenGateName: "道玄坂改札",
+        siblingGateNames: SIBLINGS,
+        firstFacilityGateName: null,
+      })
+    ).toBe(true);
   });
 });
