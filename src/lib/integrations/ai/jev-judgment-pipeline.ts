@@ -28,12 +28,13 @@ export interface JudgmentOutcome<F extends { name: string } = RawNamedFacility> 
 }
 
 /**
- * main には収録カタログが無い。#135 相当のソースが載ったらここを差し替える。
+ * main には収録カタログが無い。#135 相当のソースが載ったら Map に足す。
  * 空は fail-open（地名を捏造しない）。
  */
+const optionalCatalogPairs = new Map<string, FacilityPair<RawNamedFacility>>();
+
 export function loadOptionalCatalogPair(stationName: string): FacilityPair<RawNamedFacility> | null {
-  void stationName;
-  return null;
+  return optionalCatalogPairs.get(stationName) ?? null;
 }
 
 function catalogHasBoth<F extends { name: string }>(

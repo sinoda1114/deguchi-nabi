@@ -59,18 +59,38 @@ function noulScore(answer: unknown): number {
   return 0;
 }
 
+async function withJevTimeout<T>(
+  timeoutMs: number,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      raceTimeoutId = setTimeout(() => {
+        const error = new Error("JEV API call timed out");
+        error.name = "JevTimeoutError";
+        reject(error);
+      }, timeoutMs);
+    });
+    return await Promise.race([run(controller.signal), timeoutPromise]);
+  } finally {
+    clearTimeout(abortTimeoutId);
+    if (raceTimeoutId !== null) {
+      clearTimeout(raceTimeoutId);
+    }
+  }
+}
+
 export async function evaluateRouteConsistency(
   a: SingleCallNavigatorGuide,
   b: SingleCallNavigatorGuide,
   config: JevClientConfig
 ): Promise<JevRouteConsistencyDecision> {
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const controller = new AbortController();
-  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
-
   try {
-    const apiCallPromise = (async () => {
+    const result = await withJevTimeout(timeoutMs, async (signal) => {
       const client = new TypeSafeClient({
         apiKey: config.apiKey,
         timeout: timeoutMs,
@@ -101,19 +121,9 @@ export async function evaluateRouteConsistency(
             ),
           },
         },
-        { signal: controller.signal }
+        { signal }
       );
-    })();
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      raceTimeoutId = setTimeout(() => {
-        const error = new Error("JEV API call timed out");
-        error.name = "JevTimeoutError";
-        reject(error);
-      }, timeoutMs);
     });
-
-    const result = await Promise.race([apiCallPromise, timeoutPromise]);
 
     const sameRouteNoul = noulScore(result.answers.sameRoute);
     const isConsistent = sameRouteNoul > 0.5;
@@ -131,11 +141,6 @@ export async function evaluateRouteConsistency(
       `[JevClient] Route consistency evaluation failed (${errorName}): ${errorMsg}, falling back to rule-based`
     );
     throw error;
-  } finally {
-    clearTimeout(abortTimeoutId);
-    if (raceTimeoutId !== null) {
-      clearTimeout(raceTimeoutId);
-    }
   }
 }
 
@@ -161,12 +166,8 @@ export async function evaluateFacilityJudgment(
   config: JevClientConfig
 ): Promise<JevFacilityJudgmentDecision> {
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const controller = new AbortController();
-  const abortTimeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  let raceTimeoutId: ReturnType<typeof setTimeout> | null = null;
-
   try {
-    const apiCallPromise = (async () => {
+    const result = await withJevTimeout(timeoutMs, async (signal) => {
       const client = new TypeSafeClient({
         apiKey: config.apiKey,
         timeout: timeoutMs,
@@ -224,19 +225,10 @@ export async function evaluateFacilityJudgment(
           state,
           questions,
         },
-        { signal: controller.signal }
+        { signal }
       );
-    })();
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      raceTimeoutId = setTimeout(() => {
-        const error = new Error("JEV API call timed out");
-        error.name = "JevTimeoutError";
-        reject(error);
-      }, timeoutMs);
     });
 
-    const result = await Promise.race([apiCallPromise, timeoutPromise]);
     const answers = result.answers as Record<string, unknown>;
     const adoptCatalog = noulScore(answers.adoptCatalog) > 0.5;
     const skipGeminiFacility = noulScore(answers.skipGeminiFacility) > 0.5;
@@ -253,10 +245,5 @@ export async function evaluateFacilityJudgment(
     const errorMsg = safeErrorMessage(error);
     console.warn(`[JevClient] Facility judgment failed (${errorName}): ${errorMsg}, falling back`);
     throw error;
-  } finally {
-    clearTimeout(abortTimeoutId);
-    if (raceTimeoutId !== null) {
-      clearTimeout(raceTimeoutId);
-    }
   }
 }
