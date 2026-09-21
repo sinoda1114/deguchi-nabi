@@ -41,6 +41,12 @@ function findHomeStationButton(container: HTMLDivElement, station: Station): HTM
   return button as HTMLButtonElement;
 }
 
+function typeInto(input: HTMLInputElement, text: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  setter.call(input, text);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("OriginField 実効ホーム駅ボタン(サーバー側 resolveOriginDestination の解釈との整合性回帰確認)", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -106,5 +112,80 @@ describe("OriginField 実効ホーム駅ボタン(サーバー側 resolveOriginD
     });
 
     expect(onChange).toHaveBeenCalledWith({ type: "home_station", label: "西谷駅" });
+  });
+});
+
+describe("OriginField 駅候補選択は座標を OriginChoice に載せる", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  test("検索候補の駅をクリックすると stationId に加えて latitude/longitude を渡す", async () => {
+    const onChange = vi.fn();
+    const nagoya: Station = {
+      stationId: "st_nagoya",
+      stationName: "名古屋駅",
+      operator: "東海旅客鉄道",
+      lines: ["東海道新幹線"],
+      prefecture: "愛知県",
+      latitude: 35.170915,
+      longitude: 136.881537,
+    };
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ stations: [nagoya] }),
+      } as Response)
+    ) as unknown as typeof fetch;
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <OriginField
+          user={USER}
+          homeStation={STATION}
+          value={null}
+          onChange={onChange}
+          localDefaultStation={null}
+          onSetLocalDefaultStation={vi.fn()}
+        />
+      );
+    });
+
+    const originInput = container.querySelector(
+      'input[aria-label="出発駅を検索"]'
+    ) as HTMLInputElement;
+    act(() => {
+      typeInto(originInput, "名古屋");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const nagoyaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === nagoya.stationName
+    );
+    expect(nagoyaButton).toBeDefined();
+    act(() => {
+      nagoyaButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith({
+      type: "station",
+      stationId: nagoya.stationId,
+      label: nagoya.stationName,
+      latitude: nagoya.latitude,
+      longitude: nagoya.longitude,
+    });
   });
 });
