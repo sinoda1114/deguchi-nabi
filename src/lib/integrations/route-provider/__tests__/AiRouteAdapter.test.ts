@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Station } from "@/lib/domain/station";
 import type { SingleCallNavigatorGuide } from "@/lib/integrations/ai/single-call-navigator";
+import { UECHABE_DOGENZAKA } from "@/lib/eval/exit-quality-gate";
 
 const generateSingleCallNavigatorGuide = vi.fn();
 const generateSingleCallNavigatorRun = vi.fn();
@@ -175,5 +176,50 @@ describe("AiRouteAdapter.findRailRoutes", () => {
     );
 
     expect(result[0].segments[0].platformId).toBe("3");
+  });
+
+  test("渋谷+ウエチャベ座標でも共有 run は座標を渡すだけ(改札解決は navigator 内)", async () => {
+    const shibuya: Station = {
+      stationId: "hr_shibuya",
+      stationName: "渋谷駅",
+      operator: "東急電鉄",
+      lines: ["東急東横線"],
+      prefecture: "東京都",
+      latitude: 35.65861,
+      longitude: 139.70111,
+    };
+    const nishiya: Station = {
+      stationId: "st_nishiya",
+      stationName: "西谷駅",
+      operator: "相模鉄道",
+      lines: ["相鉄本線"],
+      prefecture: "神奈川県",
+      latitude: 35.4696,
+      longitude: 139.5679,
+    };
+    const stationProvider = fakeStationProvider({
+      [nishiya.stationId]: nishiya,
+      [shibuya.stationId]: shibuya,
+    });
+    const adapter = new AiRouteAdapter("test-key", stationProvider);
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve(GENERATED_GUIDE),
+      final: Promise.resolve(GENERATED_GUIDE),
+    });
+
+    await adapter.findRailRoutes(
+      nishiya.stationId,
+      shibuya.stationId,
+      UECHABE_DOGENZAKA.label,
+      UECHABE_DOGENZAKA.coordinates
+    );
+
+    expect(generateSingleCallNavigatorRun).toHaveBeenCalledWith(
+      "test-key",
+      nishiya,
+      shibuya,
+      UECHABE_DOGENZAKA.label,
+      UECHABE_DOGENZAKA.coordinates
+    );
   });
 });

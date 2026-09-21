@@ -1,4 +1,5 @@
 import type { Confidence, Provenance } from "./confidence";
+import type { Coordinates } from "./station";
 
 /**
  * 改札・出口を「確証なしなら丸ごと非表示」の全か無かゲートで扱うのをやめ、
@@ -21,6 +22,11 @@ export interface NamedFacility {
    * (AI生成)由来のfacilityは常に"ai_inferred"を明示的に持つ。
    */
   provenance?: Provenance;
+  /**
+   * 改札・出口の地図座標。収録・OSM・設備一覧が持っているときだけ入る。
+   * AI 名だけの案内は座標を持たない。徒歩分数の起点に使う。
+   */
+  coordinates?: Coordinates | null;
 }
 
 /**
@@ -110,6 +116,30 @@ function dedupeByName<F extends { name: string }>(facilities: F[]): F[] {
     result.push(facility);
   }
   return result;
+}
+
+const uniqueChosenGateBrand = Symbol("UniqueChosenGate");
+
+/**
+ * 改札が名前重複排除後ちょうど1つに定まったときだけ存在する。
+ * uniqueChosenGateOf 以外からは作れない。
+ */
+export type UniqueChosenGate = {
+  readonly [uniqueChosenGateBrand]: true;
+  readonly name: string;
+};
+
+/**
+ * recommendation の gate 候補が1件ならその名前を返す。
+ * 0件・2件以上（改札が複数の alternatives）は null。
+ * 出口だけ複数で改札名が1つのときは成功する。
+ */
+export function uniqueChosenGateOf(
+  recommendation: FacilityRecommendation
+): UniqueChosenGate | null {
+  const gates = facilityCandidatesOf(recommendation, (pair) => pair.gate);
+  if (gates.length !== 1) return null;
+  return { [uniqueChosenGateBrand]: true, name: gates[0].name };
 }
 
 /**

@@ -10,6 +10,7 @@ import { capConfidenceForProvenance } from "@/lib/domain/confidence";
 import { searchAndGenerateStructuredContent } from "@/lib/integrations/ai/GeminiClient";
 import type { FacilityPair, FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
 import type { RawFacilityPair, RawFacilityRecommendation, RawNamedFacility } from "@/lib/integrations/ai/single-call-navigator";
+import { reasonCitesGate } from "@/lib/domain/boarding-gate-agreement";
 
 const AI_GENERATED_REASON =
   "AIによる推測情報(検索結果に基づく)。現地未確認のため参考程度に扱ってください。";
@@ -310,6 +311,33 @@ export function isPlainArrivalPlatformLabel(platformId: string): boolean {
  * 検索グラウンディングが働かなかった場合や、応答が不正な場合はnullを返す
  * (根拠のない推測で埋めないため)。
  */
+function platformHintText(arrivalPlatformNumber: string | null): string {
+  return arrivalPlatformNumber
+    ? `到着番線は${arrivalPlatformNumber}番線と判明しています。この番線での状況を優先して回答してください。`
+    : "";
+}
+
+export const FOR_GATE_SEARCH_TIMEOUT_MS = 55_000;
+
+async function generateBoardingFromPrompts(
+  apiKey: string,
+  searchPrompt: string,
+  extractionInstruction: string,
+  platformId: string,
+  searchTimeoutMs?: number
+): Promise<BoardingPosition | null> {
+  const result = await searchAndGenerateStructuredContent<GeneratedBoardingPosition>(
+    apiKey,
+    searchPrompt,
+    extractionInstruction,
+    BOARDING_SCHEMA,
+    "gemini-3.8-flash",
+    searchTimeoutMs
+  );
+  if (!isValidBoardingPosition(result)) return null;
+  return toBoardingPosition(result, platformId);
+}
+
 export async function generateBoardingPosition(
   apiKey: string,
   stationName: string,
@@ -318,9 +346,7 @@ export async function generateBoardingPosition(
   platformId: string,
   arrivalPlatformNumber: string | null = null
 ): Promise<BoardingPosition | null> {
-  const platformHint = arrivalPlatformNumber
-    ? `到着番線は${arrivalPlatformNumber}番線と判明しています。この番線での状況を優先して回答してください。`
-    : "";
+  const platformHint = platformHintText(arrivalPlatformNumber);
 
   const searchPrompt = `${stationName}から${direction}へ向かう${line}について、到着ホーム上の階段・エスカレーター・改札に近い停止位置(号車・ドア位置)を検索して教えてください。
 ${platformHint}
@@ -333,16 +359,64 @@ ${platformHint}
 ただしreasonは150字程度までの簡潔な文章にまとめてください。
 あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
 
-  const result = await searchAndGenerateStructuredContent<GeneratedBoardingPosition>(
+  return generateBoardingFromPrompts(apiKey, searchPrompt, extractionInstruction, platformId);
+}
+
+/**
+ * 指定改札に近い停車位置だけを検索する。改札・出口スロットは返さない。
+ * 目的地施設名は受け取らない（改札の再選定を禁止する）。
+ * 確認できなければ null（創作で埋めない）。
+ */
+export async function generateBoardingPositionForChosenGate(
+  apiKey: string,
+  ride: {
+    fromStationName: string;
+    arrivalStationName: string;
+    line: string;
+    direction: string;
+  },
+  gateName: string,
+  platformId: string,
+  arrivalPlatformNumber: string | null = null
+): Promise<BoardingPosition | null> {
+  const platformHint = platformHintText(arrivalPlatformNumber);
+
+  const searchPrompt = `${ride.fromStationName}から${ride.direction}へ向かう${ride.line}について、到着駅（${ride.arrivalStationName}）の「${gateName}」に近い到着ホーム上の停止位置(号車・ドア位置)を検索して教えてください。
+指定した改札（${gateName}）以外の改札を基準にしないでください。指定改札に近い停止位置が確認できない場合は無理に回答しないでください。一般的な改札寄りの号車で埋めないでください。
+目的地施設名や出口名は創作・選定しないでください。
+${platformHint}
+到着ホーム上の階段・エスカレーターと、列車の進行方向・編成両数を明示的に照合して号車を決定してください。
+到着番線や編成によって結果が変わる場合は、その条件(例:◯番線着の場合は◯号車)を含めて教えてください。`;
+
+  const extractionInstruction = `以下の文章から、乗車位置情報(号車・ドア位置・理由)をJSON形式で抽出してください。
+理由(reason)には、指定改札（${gateName}）に近い根拠と、到着番線や編成によって結果が変わる場合の条件を含めてください。
+指定改札以外の改札名を基準にした回答は抽出せず、号車が確認できないものとして扱ってください。
+ただしreasonは150字程度までの簡潔な文章にまとめてください。
+あなた自身がその情報にどれだけ自信があるかをhigh/medium/lowで自己申告してください。`;
+
+  const boarding = await generateBoardingFromPrompts(
     apiKey,
     searchPrompt,
     extractionInstruction,
-    BOARDING_SCHEMA,
-    "gemini-3.8-flash"
+    platformId,
+    FOR_GATE_SEARCH_TIMEOUT_MS
   );
+  const citedGate = gateName.trim();
+  if (!boarding || !reasonCitesGate(boarding.reason, citedGate)) {
+    console.info("[exit-quality]", {
+      event: "for_gate_discard",
+      gate: citedGate,
+      hadBoarding: Boolean(boarding),
+    });
+    return null;
+  }
+  return boarding;
+}
 
-  if (!isValidBoardingPosition(result)) return null;
-
+function toBoardingPosition(
+  result: GeneratedBoardingPosition,
+  platformId: string
+): BoardingPosition {
   return {
     boardingPositionId: randomUUID(),
     platformId,

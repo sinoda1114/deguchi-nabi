@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  FOR_GATE_SEARCH_TIMEOUT_MS,
   generateBoardingPosition,
+  generateBoardingPositionForChosenGate,
   generateStationFacilities,
   isPlainArrivalPlatformLabel,
 } from "../ai-generation";
@@ -340,6 +342,105 @@ describe("generateBoardingPosition", () => {
       "pf_shibuya_jr_yamanote"
     );
     expect(result).toBeNull();
+  });
+});
+
+describe("generateBoardingPositionForChosenGate", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const ride = {
+    fromStationName: "西谷駅",
+    arrivalStationName: "渋谷駅",
+    line: "東急東横線",
+    direction: "渋谷方面",
+  };
+
+  test("検索プロンプトに指定改札名を含め、他改札を基準にしない・出口名を創作しないと指示する", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      carNumber: 8,
+      doorPosition: "前方",
+      reason: "道玄坂改札に近いため",
+      confidence: "medium",
+    });
+
+    await generateBoardingPositionForChosenGate(
+      "key",
+      ride,
+      "道玄坂改札",
+      "st_nishiya::line::東急東横線::渋谷方面"
+    );
+
+    const searchPrompt = searchAndGenerateStructuredContent.mock.calls[0][1] as string;
+    expect(searchPrompt).toContain("西谷駅");
+    expect(searchPrompt).toContain("東急東横線");
+    expect(searchPrompt).toContain("渋谷方面");
+    expect(searchPrompt).toContain("渋谷駅");
+    expect(searchPrompt).toContain("道玄坂改札");
+    expect(searchPrompt).toContain("以外の改札を基準にしない");
+    expect(searchPrompt).toContain("目的地施設名や出口名は創作・選定しない");
+    expect(searchPrompt).toContain("一般的な改札寄りの号車で埋めない");
+    expect(searchPrompt).not.toContain("最も一般的な情報のみ");
+    expect(searchPrompt).not.toContain("ウエチャベ");
+    expect(searchAndGenerateStructuredContent.mock.calls[0][5]).toBe(FOR_GATE_SEARCH_TIMEOUT_MS);
+    expect(searchPrompt).not.toContain("道玄坂2-9-2");
+  });
+
+  test("号車・ドアを返す（改札・出口スロットは持たない）", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      carNumber: 8,
+      doorPosition: "前方",
+      reason: "道玄坂改札に近いため",
+      confidence: "medium",
+    });
+
+    const result = await generateBoardingPositionForChosenGate(
+      "key",
+      ride,
+      "道玄坂改札",
+      "st_nishiya::line::東急東横線::渋谷方面"
+    );
+
+    expect(result?.carNumber).toBe(8);
+    expect(result?.doorPosition).toBe("前方");
+    expect(result?.targetFacilityId).toBeNull();
+  });
+
+  test("reason に指定改札名が無い応答は null（一般的な号車で埋めない）", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      carNumber: 3,
+      doorPosition: "中央",
+      reason: "階段に近いため",
+      confidence: "medium",
+    });
+
+    const result = await generateBoardingPositionForChosenGate(
+      "key",
+      ride,
+      "道玄坂改札",
+      "st_nishiya::line::東急東横線::渋谷方面"
+    );
+
+    expect(result).toBeNull();
+  });
+
+  test("reason が改札の語幹（道玄坂）を含めば採用する", async () => {
+    searchAndGenerateStructuredContent.mockResolvedValue({
+      carNumber: 8,
+      doorPosition: "前方",
+      reason: "道玄坂方面の階段に近いため",
+      confidence: "medium",
+    });
+
+    const result = await generateBoardingPositionForChosenGate(
+      "key",
+      ride,
+      "道玄坂改札",
+      "st_nishiya::line::東急東横線::渋谷方面"
+    );
+
+    expect(result?.carNumber).toBe(8);
   });
 });
 

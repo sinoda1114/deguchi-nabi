@@ -10,7 +10,6 @@ import type {
   UnifiedArrivalGuide,
 } from "@/lib/domain/route";
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
-import type { Confidence } from "@/lib/domain/confidence";
 import { unavailableConfidence } from "@/lib/domain/confidence";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
 import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
@@ -19,24 +18,26 @@ import type {
   RouteProviderPort,
 } from "@/lib/integrations/route-provider/RouteProviderPort";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
-import { haversineMeters } from "@/lib/geo/haversine";
-import { bearingDegrees, bearingDifferenceDegrees, compassLabel } from "@/lib/geo/bearing";
+import {
+  arrivalCarPolicyFrom,
+  resolveArrivalSegmentBoarding,
+  type ArrivalCarPolicy,
+  type UnifiedBoardingPosition,
+} from "./arrival-car-policy";
 import { combinedFacilityConfidence, worstConfidenceLevel } from "./confidence-engine";
 import { buildArrivalGuide } from "./arrival-guide";
+import { approximateWalkingDistanceMeters } from "./walking-estimate";
+import {
+  pickFacility,
+  pickGateForExit,
+  resolveExitRecommendation,
+  type ExitRecommendation,
+} from "./facility-coordinate-selection";
+
+export type { ArrivalCarPolicy, UnifiedBoardingPosition } from "./arrival-car-policy";
+export { arrivalCarPolicyFrom } from "./arrival-car-policy";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
-/**
- * 「最寄り候補」と「目的地の方角」の方位差がこの値を超える場合、候補集合が
- * 不完全(閉世界仮定の誤り)である可能性が高いとみなし、出口を名指しせず
- * 方角のみの案内に格下げする。90度(四半円)= 駅の反対側寄りと判断する目安。
- * docs/04_EXIT_SELECTION_DESIGN.md 参照。
- */
-const EXIT_BEARING_MISMATCH_THRESHOLD_DEGREES = 90;
-/**
- * 目的地がこの距離未満(メートル)で駅に近い場合、方角判定をスキップする。
- * 方位角は2点がごく近いと微小な座標誤差で大きく変動し数学的に不安定なため。
- */
-const MIN_BEARING_CHECK_DISTANCE_METERS = 50;
 /**
  * 経路候補の所要時間の差がこの分数以下なら「同程度」とみなし、所要時間では
  * 決着させず徒歩距離(近似)による比較に委ねる。乗換検索の所要時間見積もりの
@@ -76,162 +77,10 @@ export type RouteSearchResult =
   | { ok: true; route: RouteGuide }
   | { ok: false; reason: string };
 
-function pickFacility(
-  facilities: StationFacility[],
-  type: StationFacility["facilityType"]
-): StationFacility | null {
-  return facilities.find((f) => f.facilityType === type) ?? null;
-}
-
-/**
- * 目的地座標に最も近い facility を選ぶ。座標が無い(destinationCoordinates が
- * null)、または該当種別のどの facility も coordinates を持たない場合は、
- * 既存の「最初の1件」選定にフォールバックする(AI生成facility等、
- * 座標が未整備なデータでも従来通り動作させるため)。
- */
-function pickNearestFacility(
-  facilities: StationFacility[],
-  type: StationFacility["facilityType"],
-  target: Coordinates | null
-): StationFacility | null {
-  const candidates = facilities.filter((f) => f.facilityType === type);
-  if (candidates.length === 0) return null;
-  if (!target) return candidates[0];
-
-  const withCoordinates = candidates.filter((f) => f.coordinates !== null);
-  if (withCoordinates.length === 0) return candidates[0];
-
-  return withCoordinates.reduce((nearest, current) => {
-    const nearestDistance = haversineMeters(
-      target.lat,
-      target.lng,
-      nearest.coordinates!.lat,
-      nearest.coordinates!.lng
-    );
-    const currentDistance = haversineMeters(
-      target.lat,
-      target.lng,
-      current.coordinates!.lat,
-      current.coordinates!.lng
-    );
-    return currentDistance < nearestDistance ? current : nearest;
-  });
-}
-
-/**
- * 選定済みの出口(exit)から、その connectedGateId が指す改札を逆引きする。
- * リンクが無い、または対応する改札が見つからない場合は、駅の改札一覧の
- * 最初の1件にフォールバックする(座標が近くても実際には連絡していない
- * 改札を誤って連結と見なさないよう、推測ではなく明示リンクのみを使う。
- * docs/04_EXIT_SELECTION_DESIGN.md 4章 参照)。
- */
-function pickGateForExit(
-  facilities: StationFacility[],
-  exit: StationFacility | null
-): StationFacility | null {
-  if (exit?.connectedGateId) {
-    // facilityType !== "gate" のデータへ誤ってリンクされていた場合、
-    // それを改札として案内してしまわないよう型も確認する。
-    const linkedGate = facilities.find(
-      (f) => f.facilityId === exit.connectedGateId && f.facilityType === "gate"
-    );
-    if (linkedGate) return linkedGate;
-  }
-  return pickFacility(facilities, "gate");
-}
-
-export type ExitRecommendationTier = "exact" | "approximate" | "unavailable";
-
-export interface ExitRecommendation {
-  tier: ExitRecommendationTier;
-  exit: StationFacility | null;
-  /** tier が approximate の場合のみ、目的地の方角(8方位ラベル)。 */
-  destinationDirectionLabel: string | null;
-}
-
-/**
- * 目的地座標・駅中心座標から出口の推薦確度を判定する。
- *
- * 候補出口が座標を持っていても、そのうちの「最寄り」が目的地の方角と
- * 大きくずれている場合、候補集合そのものが不完全(閉世界仮定の誤り)である
- * 可能性が高い。この場合は具体的な出口を名指しせず、方角のみの案内に
- * 格下げする(候補が2つしかない駅で、両方とも駅の反対側に
- * 偏っているケース等)。docs/04_EXIT_SELECTION_DESIGN.md 参照。
- */
-function resolveExitRecommendation(
-  facilities: StationFacility[],
-  destinationCoordinates: Coordinates | null,
-  stationCenter: Coordinates | null
-): ExitRecommendation {
-  const candidates = facilities.filter((f) => f.facilityType === "exit");
-  if (candidates.length === 0) {
-    return { tier: "unavailable", exit: null, destinationDirectionLabel: null };
-  }
-
-  // 目的地が駅そのもの(destinationCoordinatesが無い)場合は方角の概念が
-  // 不要なため、従来通りの選定(座標があれば最近傍、無ければ先頭一致)を行う。
-  if (!destinationCoordinates) {
-    return {
-      tier: "exact",
-      exit: pickNearestFacility(facilities, "exit", null),
-      destinationDirectionLabel: null,
-    };
-  }
-
-  // 目的地座標はあるが駅中心座標が不明で方角を判定できない場合、先頭一致で
-  // 断定すると閉世界仮定の誤りを再導入してしまう(取得失敗時ほど確信度を
-  // 下げるべきという原則に反する)ため、出口を名指しせず確認不能として扱う。
-  if (!stationCenter) {
-    return { tier: "unavailable", exit: null, destinationDirectionLabel: null };
-  }
-
-  const distanceToDestinationMeters = haversineMeters(
-    stationCenter.lat,
-    stationCenter.lng,
-    destinationCoordinates.lat,
-    destinationCoordinates.lng
-  );
-  // 目的地が駅からごく近い場合、方角は数学的に不安定(微小な座標誤差で
-  // 大きく変動する)ため方角チェックをスキップし、座標ベースの通常の
-  // 最近傍選定に委ねる。
-  if (distanceToDestinationMeters < MIN_BEARING_CHECK_DISTANCE_METERS) {
-    return {
-      tier: "exact",
-      exit: pickNearestFacility(facilities, "exit", destinationCoordinates),
-      destinationDirectionLabel: null,
-    };
-  }
-
-  const targetBearing = bearingDegrees(
-    stationCenter.lat,
-    stationCenter.lng,
-    destinationCoordinates.lat,
-    destinationCoordinates.lng
-  );
-  const destinationDirectionLabel = compassLabel(targetBearing);
-
-  const withCoordinates = candidates.filter((f) => f.coordinates !== null);
-  if (withCoordinates.length === 0) {
-    // 座標を持つ候補が一つも無い(AI生成facility等)場合、先頭一致で
-    // 断定すると方角を無視した誤案内になりうるため、方角のみに格下げする。
-    return { tier: "approximate", exit: null, destinationDirectionLabel };
-  }
-
-  const nearest = pickNearestFacility(facilities, "exit", destinationCoordinates)!;
-  const nearestBearing = bearingDegrees(
-    stationCenter.lat,
-    stationCenter.lng,
-    nearest.coordinates!.lat,
-    nearest.coordinates!.lng
-  );
-  const bearingDiff = bearingDifferenceDegrees(targetBearing, nearestBearing);
-
-  if (bearingDiff > EXIT_BEARING_MISMATCH_THRESHOLD_DEGREES) {
-    return { tier: "approximate", exit: null, destinationDirectionLabel };
-  }
-
-  return { tier: "exact", exit: nearest, destinationDirectionLabel: null };
-}
+export type {
+  ExitRecommendation,
+  ExitRecommendationTier,
+} from "./facility-coordinate-selection";
 
 /**
  * 経路候補の選定結果。ストリーミング表示では、これが確定した時点で
@@ -342,29 +191,15 @@ export async function resolveRouteCandidate(
   };
 }
 
-export interface UnifiedBoardingPosition {
-  carNumber: number;
-  doorPosition: string;
-  reason: string;
-  confidence: Confidence;
-}
-
 /**
  * 選択された経路候補の各鉄道区間について、号車・ドア位置を含む
- * train セグメントを組み立てる(searchRouteGuide の train ループをそのまま抽出)。
- *
- * unifiedBoardingPositionは、到着駅直前の区間(toStationIdがchosen.
- * arrivalStationIdと一致する区間)について、統合生成(buildTransferAndExit
- * Segments)がgateを基準に既に決定した乗車位置(2026-07-20追加)。これが
- * 渡された場合、その区間では独立した乗車位置生成(getBoardingPosition)を
- * 呼ばずそのまま採用する。統合生成とは無関係な改札を基準にした号車を
- * 独自に返してしまう不整合(西谷駅→横浜駅の実機検証で確認済み。統合生成が
- * 選んだ改札とは別の改札に近い号車を誤って回答していた)を構造的に防ぐ。
+ * train セグメントを組み立てる。到着区間の号車は ArrivalCarPolicy が決める
+ * （unified / forGate / independent / none。直積は表現しない）。
  */
 export async function buildTrainSegments(
   chosen: RailRouteCandidate,
   deps: Pick<RouteSearchDeps, "stationProvider">,
-  unifiedBoardingPosition: UnifiedBoardingPosition | null = null
+  arrivalCarPolicy: ArrivalCarPolicy = { type: "independent" }
 ): Promise<RouteSegment[]> {
   const segments: RouteSegment[] = [];
 
@@ -376,10 +211,15 @@ export async function buildTrainSegments(
     ]);
     const platform = platforms.find((p) => p.platformId === rail.platformId);
     const isArrivalSegment = rail.toStationId === chosen.arrivalStationId;
-    const unifiedForSegment = isArrivalSegment ? unifiedBoardingPosition : null;
-    const boarding =
-      unifiedForSegment ??
-      (fromStation
+    const boarding = isArrivalSegment
+      ? await resolveArrivalSegmentBoarding(
+          arrivalCarPolicy,
+          deps.stationProvider,
+          fromStation,
+          toStation,
+          rail
+        )
+      : fromStation
         ? await deps.stationProvider.getBoardingPosition(
             rail.fromStationId,
             fromStation.stationName,
@@ -387,7 +227,7 @@ export async function buildTrainSegments(
             rail.line,
             rail.direction
           )
-        : null);
+        : null;
 
     segments.push({
       type: "train",
@@ -416,6 +256,15 @@ export async function buildTrainSegments(
   }
 
   return segments;
+}
+
+export function buildTrainSegmentsFromFacilities(
+  chosen: RailRouteCandidate,
+  deps: Pick<RouteSearchDeps, "stationProvider">,
+  facilities: FacilitiesSearchResult
+): Promise<RouteSegment[]> {
+  if (!facilities.ok) return Promise.resolve([]);
+  return buildTrainSegments(chosen, deps, arrivalCarPolicyFrom(facilities.result));
 }
 
 export interface FacilitiesBuildSuccess {
@@ -460,6 +309,11 @@ export interface FacilitiesBuildSuccess {
    * 呼ばず、この値をそのまま採用する(gateと矛盾しない号車にするため)。
    */
   unifiedBoardingPosition: UnifiedBoardingPosition | null;
+  /**
+   * 収録カタログ等で改札・出口だけ確定し号車は同一セッションに無いとき true。
+   * buildTrainSegments は到着区間の独立 getBoardingPosition を走らせない。
+   */
+  omitIndependentBoarding: boolean;
 }
 
 /**
@@ -617,9 +471,19 @@ export async function buildTransferAndExitSegments(
           state: "confirmed",
           pair: {
             gate: gate
-              ? { name: gate.name, confidence: gate.confidence, provenance: gate.provenance }
+              ? {
+                  name: gate.name,
+                  confidence: gate.confidence,
+                  provenance: gate.provenance,
+                  coordinates: gate.coordinates,
+                }
               : null,
-            exit: { name: exit.name, confidence: exit.confidence, provenance: exit.provenance },
+            exit: {
+              name: exit.name,
+              confidence: exit.confidence,
+              provenance: exit.provenance,
+              coordinates: exit.coordinates,
+            },
             reason: null,
           },
         }
@@ -763,6 +627,7 @@ export async function buildTransferAndExitSegments(
     // 複数(state="alternatives")でも改札自体は実質1択のケースでは、号車を
     // 不要に握りつぶさない/ai-review指摘、Codex参照)。
     unifiedBoardingPosition: unified && gateFacilities.length === 1 ? unified.boardingPosition : null,
+    omitIndependentBoarding: Boolean(unified?.omitIndependentBoarding),
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
@@ -873,13 +738,10 @@ export async function searchRouteGuide(
   // へ渡す(2026-07-20 fix/unified-guide-boarding-and-operator-
   // disambiguation)。統合生成がgateを基準に既に決めた乗車位置がある場合、
   // buildTrainSegments側の独立した乗車位置生成(AI呼び出し)は行わずそのまま
-  // 採用するため、直列にしても追加のAI呼び出しは発生しない(西谷駅→横浜駅の
-  // ケースで、統合生成が選んだ改札とは無関係な号車を独立生成が返してしまう
-  // 不整合を防ぐための変更。実機検証で確認済み)。通常ケース(統合生成成功)
-  // では経路生成(最大70秒)+統合生成(最大70秒)の直列で合算最大140秒に収まる。
-  // 統合生成を試みたが出口を確認できなかった場合のみ、buildTrainSegmentsが
-  // 独立した乗車位置生成を追加で呼び最大210秒かかりうる(/ai-review指摘、
-  // High: maxDurationは対策としてこの想定を含めて延長する)。
+  // 採用する(西谷駅→横浜駅の不整合防止。実機検証済み)。unified 政策では
+  // 追加の号車 AI は走らない。収録 BothHit(forGate)は改札条件付き号車 Gemini
+  // を trains 側で1回足す(検索+抽出。maxDuration 290 の見積もりに含む)。
+  // 出口未確認で independent に落ちた場合も号車 AI が1回走る。
   let facilitiesOutcome: FacilitiesSearchResult;
   let trainSegments: RouteSegment[];
   if (input.mode === "accessible") {
@@ -889,13 +751,11 @@ export async function searchRouteGuide(
     ]);
   } else {
     facilitiesOutcome = await buildTransferAndExitSegments(candidateResult, input, deps);
-    trainSegments = facilitiesOutcome.ok
-      ? await buildTrainSegments(
-          candidateResult.chosen,
-          deps,
-          facilitiesOutcome.result.unifiedBoardingPosition
-        )
-      : [];
+    trainSegments = await buildTrainSegmentsFromFacilities(
+      candidateResult.chosen,
+      deps,
+      facilitiesOutcome
+    );
   }
   if (!facilitiesOutcome.ok) {
     return facilitiesOutcome;
@@ -947,44 +807,6 @@ export async function searchRouteGuide(
       expiresAt: new Date(now.getTime() + ONE_HOUR_MS).toISOString(),
     },
   };
-}
-
-/**
- * 到着駅座標と目的地座標からの直線距離(近似値)。実際の徒歩経路(道なり)より
- * 短く見積もられうるため、あくまで候補間の比較用の近似値として扱う
- * (過信させないよう、呼び出し側でも変数名・コメントで明示すること)。
- * どちらかの座標が無い場合は比較不能としてnullを返す
- * (目的地がstation由来でdestinationCoordinatesが無い場合等の既存パターンに倣う)。
- */
-export function approximateWalkingDistanceMeters(
-  arrivalStationCoordinates: Coordinates | null | undefined,
-  destinationCoordinates: Coordinates | null
-): number | null {
-  if (!arrivalStationCoordinates || !destinationCoordinates) return null;
-  return haversineMeters(
-    arrivalStationCoordinates.lat,
-    arrivalStationCoordinates.lng,
-    destinationCoordinates.lat,
-    destinationCoordinates.lng
-  );
-}
-
-/**
- * 徒歩分速(メートル/分)。「不動産の表示に関する公正競争規約」が定める
- * 徒歩所要時間の算出基準(道路距離80mを1分)を踏襲する。直線距離(近似値)を
- * この速度で割って概算するため、実際の徒歩時間より短く出うる(道なり経路を
- * 考慮しないため)。合計時間はあくまで目安として扱うこと。
- */
-const WALKING_METERS_PER_MINUTE = 80;
-
-/**
- * 直線距離(近似値)から徒歩分数を概算する。距離がnull、または0以下の
- * 場合はnullを返す(距離不明を「0分」と誤って断定しないため)。端数は
- * 切り上げる(実際より短く見積もって「目安のはずが着かない」を避けるため)。
- */
-export function estimateWalkingMinutes(distanceMeters: number | null): number | null {
-  if (distanceMeters === null || distanceMeters <= 0) return null;
-  return Math.ceil(distanceMeters / WALKING_METERS_PER_MINUTE);
 }
 
 type RouteCandidateLike = {

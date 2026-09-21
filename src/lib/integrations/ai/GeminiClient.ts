@@ -40,7 +40,10 @@ async function callGemini(
       signal: AbortSignal.timeout(timeoutMs),
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.info("[gemini]", { event: "gemini_http_null", status: res.status });
+      return null;
+    }
 
     const data = (await res.json()) as GeminiResponse;
     return data.candidates?.[0] ?? null;
@@ -98,7 +101,8 @@ export async function searchAndGenerateStructuredContent<T>(
   searchPrompt: string,
   extractionInstruction: string,
   responseSchema: object,
-  model: string
+  model: string,
+  searchTimeoutMs: number = SEARCH_REQUEST_TIMEOUT_MS
 ): Promise<T | null> {
   const searchCandidate = await callGemini(
     apiKey,
@@ -107,12 +111,18 @@ export async function searchAndGenerateStructuredContent<T>(
       contents: [{ parts: [{ text: searchPrompt }] }],
       tools: [{ google_search: {} }],
     },
-    SEARCH_REQUEST_TIMEOUT_MS
+    searchTimeoutMs
   );
 
   const searchText = searchCandidate?.content?.parts?.[0]?.text;
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
-  if (!searchText || !searchExecuted) return null;
+  if (!searchText || !searchExecuted) {
+    console.info("[gemini]", {
+      event: "gemini_search_null",
+      reason: !searchText ? "empty_text" : "no_grounding",
+    });
+    return null;
+  }
 
   return extractStructuredContent<T>(apiKey, model, extractionInstruction, searchText, responseSchema);
 }
@@ -131,7 +141,8 @@ export async function searchAndGenerateStructuredContentWithSearchText<T>(
   searchPrompt: string,
   extractionInstruction: string,
   responseSchema: object,
-  model: string
+  model: string,
+  searchTimeoutMs: number = SEARCH_REQUEST_TIMEOUT_MS
 ): Promise<{ data: T; searchText: string } | null> {
   const searchCandidate = await callGemini(
     apiKey,
@@ -140,12 +151,18 @@ export async function searchAndGenerateStructuredContentWithSearchText<T>(
       contents: [{ parts: [{ text: searchPrompt }] }],
       tools: [{ google_search: {} }],
     },
-    SEARCH_REQUEST_TIMEOUT_MS
+    searchTimeoutMs
   );
 
   const searchText = searchCandidate?.content?.parts?.[0]?.text;
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
-  if (!searchText || !searchExecuted) return null;
+  if (!searchText || !searchExecuted) {
+    console.info("[gemini]", {
+      event: "gemini_search_null",
+      reason: !searchText ? "empty_text" : "no_grounding",
+    });
+    return null;
+  }
 
   const data = await extractStructuredContent<T>(
     apiKey,
@@ -154,7 +171,10 @@ export async function searchAndGenerateStructuredContentWithSearchText<T>(
     searchText,
     responseSchema
   );
-  if (data === null) return null;
+  if (data === null) {
+    console.info("[gemini]", { event: "gemini_extract_null" });
+    return null;
+  }
 
   return { data, searchText };
 }

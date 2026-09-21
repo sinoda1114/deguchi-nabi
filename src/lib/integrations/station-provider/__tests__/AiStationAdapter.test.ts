@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { classifyFacilityRecommendation, uniqueChosenGateOf } from "@/lib/domain/facility-recommendation";
 
 /**
  * KvCacheStore(@/lib/store/kv-cache-store の getKvCacheStore)のインメモリ・
@@ -29,6 +30,7 @@ vi.mock("@/lib/store/kv-cache-store", () => ({
 }));
 
 const generateBoardingPosition = vi.fn();
+const generateBoardingPositionForChosenGate = vi.fn();
 const generateStationFacilities = vi.fn(async (..._args: unknown[]) => [] as unknown[]);
 vi.mock("../ai-generation", async () => {
   // isPlainArrivalPlatformLabel は実実装をそのまま使う(AiStationAdapter側の
@@ -38,6 +40,8 @@ vi.mock("../ai-generation", async () => {
   return {
     ...actual,
     generateBoardingPosition: (...args: unknown[]) => generateBoardingPosition(...args),
+    generateBoardingPositionForChosenGate: (...args: unknown[]) =>
+      generateBoardingPositionForChosenGate(...args),
     generateStationFacilities: (...args: unknown[]) => generateStationFacilities(...args),
   };
 });
@@ -49,11 +53,14 @@ vi.mock("../arrival-guide-ai-generation", () => ({
 
 const generateSingleCallNavigatorGuide = vi.fn();
 const generateSingleCallNavigatorRun = vi.fn();
+const peekSharedSingleCallNavigatorRun = vi.fn();
 vi.mock("@/lib/integrations/ai/single-call-navigator", () => ({
   generateSingleCallNavigatorGuide: (...args: unknown[]) =>
     generateSingleCallNavigatorGuide(...args),
   generateSingleCallNavigatorRun: (...args: unknown[]) =>
     generateSingleCallNavigatorRun(...args),
+  peekSharedSingleCallNavigatorRun: (...args: unknown[]) =>
+    peekSharedSingleCallNavigatorRun(...args),
   buildSharedGuideCacheKey: (a: string, b: string, c: string | null) => `${a}::${b}::${c ?? ""}`,
   // テストではキャッシュ挙動自体を検証しないため、generatorを素通しするだけの
   // 単純な実装に差し替える(モジュール単位のキャッシュがテスト間で汚染しないようにする)。
@@ -603,6 +610,8 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
   beforeEach(() => {
     generateSingleCallNavigatorGuide.mockReset();
     generateSingleCallNavigatorRun.mockReset();
+    peekSharedSingleCallNavigatorRun.mockReset();
+    peekSharedSingleCallNavigatorRun.mockReturnValue(null);
     decodeHeartRailsStationId.mockReset();
     decodeHeartRailsStationId.mockReturnValue(null);
     fetchNearestStationsFromHeartRails.mockReset();
@@ -892,5 +901,244 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     );
 
     expect(result).toBeNull();
+  });
+
+  test("渋谷+目的地座標が収録の BothHit なら Gemini .final を待たない", async () => {
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
+    expect(result?.facility.state).toBe("confirmed");
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+      expect(result.facility.pair.exit?.name).toBe("A1出口");
+    }
+    expect(result?.boardingPosition).toBeNull();
+    expect(result?.omitIndependentBoarding).toBe(true);
+    expect(result?.walkingSteps).toEqual([]);
+  });
+
+  test("収録 BothHit でも経路ヘッダの共有 .first 号車があれば採用し .final は起動しない", async () => {
+    peekSharedSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        lines: ["東急東横線"],
+        transferCount: 0,
+        estimatedMinutes: 20,
+        arrivalPlatformNumber: "3",
+        boarding: {
+          carNumber: 8,
+          doorPosition: "前方",
+          reason: "道玄坂方面の階段に近いため",
+          confidenceLevel: "medium",
+        },
+        facility: { state: "unavailable", reason: "test" },
+      }),
+      final: Promise.resolve(null),
+    });
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
+    expect(result?.boardingPosition?.carNumber).toBe(8);
+    expect(result?.boardingPosition?.doorPosition).toBe("前方");
+    expect(result?.omitIndependentBoarding).toBe(true);
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+      expect(result.facility.pair.exit?.name).toBe("A1出口");
+    }
+  });
+
+  test("共有 .first 施設が無く一般理由なら号車は捨てる（逆算再試行を収録改札に載せない）", async () => {
+    peekSharedSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        lines: ["東急東横線"],
+        transferCount: 0,
+        estimatedMinutes: 20,
+        arrivalPlatformNumber: null,
+        boarding: {
+          carNumber: 2,
+          doorPosition: "後方",
+          reason: "階段に近いため",
+          confidenceLevel: "medium",
+        },
+        facility: { state: "unavailable", reason: "test" },
+      }),
+      final: Promise.resolve(null),
+    });
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(result?.boardingPosition).toBeNull();
+    expect(result?.omitIndependentBoarding).toBe(true);
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+    }
+  });
+
+  test("共有 .first が別改札を断定し reason が一般的なら号車は捨てる", async () => {
+    peekSharedSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        lines: ["東急東横線"],
+        transferCount: 0,
+        estimatedMinutes: 20,
+        arrivalPlatformNumber: null,
+        boarding: {
+          carNumber: 2,
+          doorPosition: "後方",
+          reason: "階段に近いため",
+          confidenceLevel: "medium",
+        },
+        facility: {
+          state: "confirmed",
+          pair: {
+            gate: { name: "ハチ公改札", confidenceLevel: "medium" },
+            exit: { name: "ハチ公口", confidenceLevel: "medium" },
+            reason: null,
+          },
+        },
+      }),
+      final: Promise.resolve(null),
+    });
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
+    expect(result?.boardingPosition).toBeNull();
+    expect(result?.omitIndependentBoarding).toBe(true);
+  });
+
+  test("共有 .first 号車が他改札だけを理由にしているときは捨てる", async () => {
+    peekSharedSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        lines: ["東急東横線"],
+        transferCount: 0,
+        estimatedMinutes: 20,
+        arrivalPlatformNumber: null,
+        boarding: {
+          carNumber: 2,
+          doorPosition: "後方",
+          reason: "ハチ公改札の階段に近いため",
+          confidenceLevel: "medium",
+        },
+        facility: { state: "unavailable", reason: "test" },
+      }),
+      final: Promise.resolve(null),
+    });
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
+    expect(result?.boardingPosition).toBeNull();
+    expect(result?.omitIndependentBoarding).toBe(true);
+  });
+});
+
+describe("AiStationAdapter.getBoardingForChosenGate", () => {
+  beforeEach(() => {
+    generateBoardingPositionForChosenGate.mockReset();
+  });
+
+  test("指定改札向け生成器へ ride と改札名を渡し、無条件 generateBoardingPosition は呼ばない", async () => {
+    generateBoardingPositionForChosenGate.mockResolvedValue(AI_POSITION);
+    const adapter = new AiStationAdapter("test-key");
+    const gate = uniqueChosenGateOf(
+      classifyFacilityRecommendation([
+        {
+          gate: { name: "道玄坂改札", confidence: AI_POSITION.confidence },
+          exit: { name: "A1出口", confidence: AI_POSITION.confidence },
+          reason: null,
+        },
+      ])
+    );
+    expect(gate).not.toBeNull();
+    if (!gate) return;
+    const result = await adapter.getBoardingForChosenGate(
+      {
+        fromStationId: "st_nishiya",
+        fromStationName: "西谷駅",
+        arrivalStationName: "渋谷駅",
+        platformId: "3",
+        line: "東急東横線",
+        direction: "渋谷方面",
+      },
+      gate
+    );
+
+    expect(result?.carNumber).toBe(4);
+    expect(generateBoardingPosition).not.toHaveBeenCalled();
+    expect(generateBoardingPositionForChosenGate).toHaveBeenCalledWith(
+      "test-key",
+      {
+        fromStationId: "st_nishiya",
+        fromStationName: "西谷駅",
+        arrivalStationName: "渋谷駅",
+        platformId: "3",
+        line: "東急東横線",
+        direction: "渋谷方面",
+      },
+      "道玄坂改札",
+      "st_nishiya::line::東急東横線::渋谷方面",
+      "3"
+    );
   });
 });

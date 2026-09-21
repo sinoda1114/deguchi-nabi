@@ -1,13 +1,28 @@
-import type { StationProviderPort } from "./StationProviderPort";
-import { generateBoardingPosition, isPlainArrivalPlatformLabel } from "./ai-generation";
+import type { ArrivalRide, StationProviderPort } from "./StationProviderPort";
+import {
+  generateBoardingPosition,
+  generateBoardingPositionForChosenGate,
+  isPlainArrivalPlatformLabel,
+} from "./ai-generation";
+import {
+  uniqueChosenGateOf,
+  type FacilityRecommendation,
+  type UniqueChosenGate,
+} from "@/lib/domain/facility-recommendation";
 import { generateStationFacilitiesDispatch } from "./facilities-generation";
 import { generateArrivalNarrativeSteps } from "./arrival-guide-ai-generation";
 import {
   buildSharedGuideCacheKey,
   generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorRun,
+  peekSharedSingleCallNavigatorRun,
+  type SingleCallNavigatorGuide,
 } from "@/lib/integrations/ai/single-call-navigator";
 import { groundedAiConfidence, resolveFacilityRecommendationConfidence } from "./ai-generation";
+import { resolveArrivalFacility } from "@/lib/services/arrival-facility-resolver";
+import { isScoringBothHit } from "@/lib/eval/both-hit";
+import { sharedBoardingFitsChosenGate } from "@/lib/domain/boarding-gate-agreement";
+import { catalogStationNameFrom, lookupCatalogStation } from "@/lib/data/station-facility-catalog";
 import {
   decodeHeartRailsStationId,
   fetchNearestStationsFromHeartRails,
@@ -35,6 +50,74 @@ const MAX_SEARCH_RESULTS = 20;
  */
 function lineBoardingPlatformId(stationId: string, line: string, direction: string): string {
   return `${stationId}::line::${line}::${direction}`;
+}
+
+function boardingGenerationKeys(stationId: string, platformId: string, line: string, direction: string) {
+  return {
+    boardingPlatformId: lineBoardingPlatformId(stationId, line, direction),
+    arrivalPlatformNumber: isPlainArrivalPlatformLabel(platformId) ? platformId : null,
+  };
+}
+
+function catalogGateNames(stationName: string, stationId: string): string[] {
+  const row = lookupCatalogStation(catalogStationNameFrom({ stationName, stationId }));
+  if (!row) return [];
+  return row.facilities.filter((f) => f.facilityType === "gate").map((f) => f.name);
+}
+
+function firstFacilityGateName(facility: SingleCallNavigatorGuide["facility"]): string | null {
+  if (facility.state === "confirmed") return facility.pair.gate?.name ?? null;
+  if (facility.state === "alternatives") {
+    const names = [
+      ...new Set(
+        facility.pairs.map((pair) => pair.gate?.name).filter((name): name is string => Boolean(name))
+      ),
+    ];
+    return names.length === 1 ? names[0] : null;
+  }
+  return null;
+}
+
+async function boardingFromSharedFirst(
+  cacheKey: string,
+  recommendation: FacilityRecommendation,
+  arrivalStationName: string,
+  arrivalStationId: string
+): Promise<UnifiedArrivalGuide["boardingPosition"]> {
+  const chosen = uniqueChosenGateOf(recommendation);
+  if (!chosen) return null;
+  const peeked = peekSharedSingleCallNavigatorRun(cacheKey);
+  if (!peeked) {
+    console.info("[exit-quality]", { event: "peek_miss", gate: chosen.name });
+    return null;
+  }
+  const first = await peeked.first;
+  if (!first?.boarding) {
+    console.info("[exit-quality]", { event: "peek_empty_boarding", gate: chosen.name });
+    return null;
+  }
+  if (
+    !sharedBoardingFitsChosenGate({
+      reason: first.boarding.reason,
+      chosenGateName: chosen.name,
+      siblingGateNames: catalogGateNames(arrivalStationName, arrivalStationId),
+      firstFacilityGateName: firstFacilityGateName(first.facility),
+    })
+  ) {
+    console.info("[exit-quality]", {
+      event: "peek_reject",
+      gate: chosen.name,
+      firstFacilityGate: firstFacilityGateName(first.facility),
+    });
+    return null;
+  }
+  console.info("[exit-quality]", { event: "peek_hit", gate: chosen.name });
+  return {
+    carNumber: first.boarding.carNumber,
+    doorPosition: first.boarding.doorPosition,
+    reason: first.boarding.reason,
+    confidence: groundedAiConfidence(first.boarding.confidenceLevel),
+  };
 }
 
 /**
@@ -190,18 +273,42 @@ export class AiStationAdapter implements StationProviderPort {
     line: string,
     direction: string
   ): Promise<BoardingPosition | null> {
-    const boardingPlatformId = lineBoardingPlatformId(stationId, line, direction);
-
     // 到着番線が判明していればAI下書き生成へ引き渡す。generateRailRoute
     // (ai-route-generation.ts)が検索で確認できた到着番線ラベルをplatformId経由で
     // 引き継ぐ。取れない場合はnullのまま(無理に埋めない原則を維持)。
-    const arrivalPlatformNumber = isPlainArrivalPlatformLabel(platformId) ? platformId : null;
+    const { boardingPlatformId, arrivalPlatformNumber } = boardingGenerationKeys(
+      stationId,
+      platformId,
+      line,
+      direction
+    );
 
     return generateBoardingPosition(
       this.geminiApiKey,
       stationName,
       line,
       direction,
+      boardingPlatformId,
+      arrivalPlatformNumber
+    );
+  }
+
+  async getBoardingForChosenGate(
+    ride: ArrivalRide,
+    gate: UniqueChosenGate
+  ): Promise<BoardingPosition | null> {
+    const { boardingPlatformId, arrivalPlatformNumber } = boardingGenerationKeys(
+      ride.fromStationId,
+      ride.platformId,
+      ride.line,
+      ride.direction
+    );
+
+    console.info("[exit-quality]", { event: "for_gate_gemini", gate: gate.name });
+    return generateBoardingPositionForChosenGate(
+      this.geminiApiKey,
+      ride,
+      gate.name,
       boardingPlatformId,
       arrivalPlatformNumber
     );
@@ -272,21 +379,50 @@ export class AiStationAdapter implements StationProviderPort {
       destinationHint,
       destinationPlaceCoordinates
     );
-    // 二段階生成: final（再試行・整合性チェック後）を使用して改札・出口の品質を維持
-    // AiRouteAdapterは同じrunのfirstを待つため、Gemini呼び出しは1回のまま（完了≈72秒または105秒）
-    const guide = await getSharedSingleCallNavigatorRun(cacheKey, () =>
-      generateSingleCallNavigatorRun(
-        this.geminiApiKey,
-        originStationForGuide,
-        destinationStationForGuide,
-        destinationHint,
-        destinationPlaceCoordinates
-      )
-    ).final;
-    if (!guide) return null;
+    const startSharedRun = () =>
+      getSharedSingleCallNavigatorRun(cacheKey, () =>
+        generateSingleCallNavigatorRun(
+          this.geminiApiKey,
+          originStationForGuide,
+          destinationStationForGuide,
+          destinationHint,
+          destinationPlaceCoordinates
+        )
+      );
+
+    const resolved = await resolveArrivalFacility({
+      stationId,
+      stationName,
+      stationCoordinates,
+      destinationHint,
+      destinationCoordinates: destinationPlaceCoordinates,
+      geminiApiKey: this.geminiApiKey,
+      lastResortFacility: async () => {
+        const guide = await startSharedRun().final;
+        return guide ? resolveFacilityRecommendationConfidence(guide.facility) : null;
+      },
+    });
+
+    if (isScoringBothHit(resolved.recommendation) && resolved.usedGeminiFinal === false) {
+      const boardingPosition = await boardingFromSharedFirst(
+        cacheKey,
+        resolved.recommendation,
+        stationName,
+        stationId
+      );
+      return {
+        boardingPosition,
+        facility: resolved.recommendation,
+        walkingSteps: [],
+        omitIndependentBoarding: true,
+      };
+    }
+
+    const guide = await startSharedRun().final;
+    if (!guide && resolved.recommendation.state === "unavailable") return null;
 
     return {
-      boardingPosition: guide.boarding
+      boardingPosition: guide?.boarding
         ? {
             carNumber: guide.boarding.carNumber,
             doorPosition: guide.boarding.doorPosition,
@@ -294,9 +430,11 @@ export class AiStationAdapter implements StationProviderPort {
             confidence: groundedAiConfidence(guide.boarding.confidenceLevel),
           }
         : null,
-      facility: resolveFacilityRecommendationConfidence(guide.facility),
-      // 出口から目的地までの徒歩ナラティブ(左折・右折等)は生成しない
-      // (2026-07-21ユーザー判断、single-call-navigator.tsのJSDoc参照)。
+      facility: isScoringBothHit(resolved.recommendation)
+        ? resolved.recommendation
+        : guide
+          ? resolveFacilityRecommendationConfidence(guide.facility)
+          : resolved.recommendation,
       walkingSteps: [],
     };
   }

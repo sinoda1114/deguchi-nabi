@@ -49,7 +49,8 @@ export class AiRouteAdapter implements RouteProviderPort {
       destinationPlaceCoordinates
     );
     // 二段階生成: first（最初の非null結果）を使用してヘッダ表示を高速化（体感≈56秒）
-    // AiStationAdapterは同じrunのfinalを待つため、Gemini呼び出しは1回のまま
+    // 収録 BothHit では generateSingleCallNavigatorRun が施設再試行を省略し、
+    // AiStationAdapter は .final を待たず .first 号車を peek する。
     const guide = await getSharedSingleCallNavigatorRun(cacheKey, () =>
       generateSingleCallNavigatorRun(
         this.geminiApiKey,

@@ -2,13 +2,19 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   buildNavigatorSearchPrompt,
   buildSharedGuideCacheKey,
+  CATALOG_FIRST_SEARCH_TIMEOUT_MS,
   generateSingleCallNavigatorGuide,
+  generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorGuide,
+  getSharedSingleCallNavigatorRun,
   isRouteConsistent,
+  peekSharedSingleCallNavigatorRun,
+  retrySearchTimeoutMs,
   selectFinalGuide,
   type SingleCallNavigatorGuide,
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
+import { UECHABE_DOGENZAKA } from "@/lib/eval/exit-quality-gate";
 
 const searchAndGenerateStructuredContentWithSearchText = vi.fn();
 vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
@@ -20,10 +26,14 @@ vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
 const mockEvaluateRetryGate = vi.fn();
 const mockIsJevAvailable = vi.fn();
 const mockCreateJevConfig = vi.fn();
+const mockSelectBestFacilityPair = vi.fn();
 vi.mock("@/lib/integrations/ai/JevClient", () => ({
   evaluateRetryGate: (...args: unknown[]) => mockEvaluateRetryGate(...args),
   isJevAvailable: () => mockIsJevAvailable(),
   createJevConfig: () => mockCreateJevConfig(),
+  selectBestFacilityPair: (...args: unknown[]) => mockSelectBestFacilityPair(...args),
+  evaluateRouteConsistency: vi.fn(),
+  evaluateFacilityCompleteness: vi.fn(),
 }));
 
 const NISHIYA: Station = {
@@ -87,6 +97,40 @@ describe("buildNavigatorSearchPrompt", () => {
     expect(prompt).toContain("複数改札がある駅での比較");
     expect(prompt).toContain("確証ありと判断するための条件");
   });
+
+  test("収録確定の改札があるとき号車をその改札基準にし施設選定ブロックを出さない", () => {
+    const prompt = buildNavigatorSearchPrompt(
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates,
+      "道玄坂改札"
+    );
+    expect(prompt).toContain("収録データで「道玄坂改札」に確定");
+    expect(prompt).toContain("改札名・出口名の選定・比較・逆算は行わず");
+    expect(prompt).toContain("改札が確定していても検索自体を省略してはならない");
+    expect(prompt).not.toContain("目的地からの逆算");
+    expect(prompt).not.toContain("複数改札がある駅での比較");
+    expect(prompt).not.toContain("ハチ公改札");
+  });
+
+  test("収録改札が無いときは施設選定条項を足さない", () => {
+    const prompt = buildNavigatorSearchPrompt(NISHIYA, SHIBUYA, "ウエチャベ");
+    expect(prompt).not.toContain("【収録確定の改札】");
+    expect(prompt).toContain("目的地からの逆算");
+  });
+
+  test("catalogGate が null なら座標があっても収録条項を出さない", () => {
+    const prompt = buildNavigatorSearchPrompt(
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates,
+      null
+    );
+    expect(prompt).not.toContain("【収録確定の改札】");
+    expect(prompt).toContain("目的地からの逆算");
+  });
 });
 
 describe("generateSingleCallNavigatorGuide", () => {
@@ -96,6 +140,7 @@ describe("generateSingleCallNavigatorGuide", () => {
     mockIsJevAvailable.mockReturnValue(false);
     mockCreateJevConfig.mockReturnValue(null);
     mockEvaluateRetryGate.mockResolvedValue({ shouldRetry: false });
+    mockSelectBestFacilityPair.mockReset();
   });
 
   test("正常な抽出結果からguideを組み立てる(改札・出口は1組のみ→confirmed)", async () => {
@@ -375,6 +420,163 @@ describe("generateSingleCallNavigatorGuide", () => {
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
   });
 
+  test("収録改札があるとき facility unavailable でも施設再試行しない(経路の .first を維持)", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        lines: ["相鉄本線"],
+        transferCount: 0,
+        estimatedMinutes: 13,
+        boardingCarNumber: 8,
+        boardingDoorPosition: "前方",
+        boardingReason: "道玄坂改札の階段に近いため",
+        boardingConfidence: "medium",
+      })
+    );
+
+    const result = await generateSingleCallNavigatorGuide(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+    expect(searchAndGenerateStructuredContentWithSearchText.mock.calls[0]?.[5]).toBe(
+      CATALOG_FIRST_SEARCH_TIMEOUT_MS
+    );
+    expect(result?.lines).toEqual(["相鉄本線"]);
+    expect(result?.boarding?.carNumber).toBe(8);
+    expect(result?.facility.state).toBe("unavailable");
+  });
+
+  test("収録改札があっても 1 回目が null なら経路再試行する", async () => {
+    searchAndGenerateStructuredContentWithSearchText
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(mockResult(VALID_RAW));
+
+    const result = await generateSingleCallNavigatorGuide(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(result?.lines).toEqual(["相鉄・東急直通線"]);
+
+    const firstPrompt = String(searchAndGenerateStructuredContentWithSearchText.mock.calls[0]?.[1]);
+    const retryPrompt = String(searchAndGenerateStructuredContentWithSearchText.mock.calls[1]?.[1]);
+    expect(firstPrompt).toContain("【収録確定の改札】");
+    expect(retryPrompt).not.toContain("【収録確定の改札】");
+    expect(retryPrompt).toContain("目的地からの逆算");
+  });
+
+  test("収録1回目が70sでnullでも残り予算で再試行し first がそれを待つ", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    searchAndGenerateStructuredContentWithSearchText
+      .mockImplementationOnce(async () => {
+        now += CATALOG_FIRST_SEARCH_TIMEOUT_MS;
+        return null;
+      })
+      .mockImplementationOnce(async () => {
+        now += 5_000;
+        return mockResult(VALID_RAW);
+      });
+
+    const run = generateSingleCallNavigatorRun(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+    const first = await run.first;
+    expect(first?.lines).toEqual(["相鉄・東急直通線"]);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText.mock.calls[1]?.[5]).toBe(
+      retrySearchTimeoutMs(CATALOG_FIRST_SEARCH_TIMEOUT_MS)
+    );
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  test("1回目がヘッダ予算を使い切ってnullなら再試行しない", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    searchAndGenerateStructuredContentWithSearchText.mockImplementation(async () => {
+      now += 100_000;
+      return null;
+    });
+
+    const run = generateSingleCallNavigatorRun(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+    await expect(run.first).resolves.toBeNull();
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  test("1回目が速いnullなら first は再試行結果を待つ", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    searchAndGenerateStructuredContentWithSearchText
+      .mockImplementationOnce(async () => {
+        now += 5_000;
+        return null;
+      })
+      .mockImplementationOnce(async () => {
+        now += 5_000;
+        return mockResult(VALID_RAW);
+      });
+
+    const run = generateSingleCallNavigatorRun(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+    const first = await run.first;
+    expect(first?.lines).toEqual(["相鉄・東急直通線"]);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  test("収録改札があるとき alternatives でも JEV 候補選択を呼ばない", async () => {
+    mockIsJevAvailable.mockReturnValue(true);
+    mockCreateJevConfig.mockReturnValue({ apiKey: "jev" });
+    mockSelectBestFacilityPair.mockResolvedValue({ selectedIndex: 0, reason: "should not run" });
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          ...VALID_RAW,
+          facilityCandidates: [
+            { gateName: "道玄坂改札", exitName: "A1出口", confidence: "medium" },
+            { gateName: "ハチ公改札", exitName: "ハチ公口", confidence: "medium" },
+          ],
+        },
+        `${VALID_SEARCH_TEXT} ハチ公改札 ハチ公口`
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+
+    expect(mockSelectBestFacilityPair).not.toHaveBeenCalled();
+    expect(result?.facility.state).toBe("alternatives");
+  });
+
   describe("JEV統合（Phase 1: retry gate判定）", () => {
     test("JEV_API_KEYが設定されていない場合、従来のルールベース判定を使用する", async () => {
       mockIsJevAvailable.mockReturnValue(false);
@@ -474,15 +676,75 @@ describe("generateSingleCallNavigatorGuide", () => {
   });
 });
 
+const SHARED_GUIDE_OK: SingleCallNavigatorGuide = {
+  lines: ["相鉄本線"],
+  transferCount: 0,
+  estimatedMinutes: 35,
+  arrivalPlatformNumber: null,
+  boarding: {
+    carNumber: 8,
+    doorPosition: "前方",
+    reason: "道玄坂改札の階段に近いため",
+    confidenceLevel: "medium",
+  },
+  facility: { state: "unavailable", reason: "テスト用" },
+};
+
+describe("retrySearchTimeoutMs", () => {
+  test("70s の1回目nullでも再試行時間を残す", () => {
+    expect(retrySearchTimeoutMs(70_000)).toBe(25_000);
+  });
+
+  test("20s の速いnullは 55s 再試行", () => {
+    expect(retrySearchTimeoutMs(20_000)).toBe(55_000);
+  });
+
+  test("予算不足なら再試行しない", () => {
+    expect(retrySearchTimeoutMs(100_000)).toBeNull();
+  });
+});
+
 describe("getSharedSingleCallNavigatorGuide", () => {
-  test("同じキーで短時間内に呼ばれた場合、generatorは1回しか実行されない(2重課金防止)", async () => {
-    const generator = vi.fn().mockResolvedValue(null);
-    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "ウエチャベ");
+  test("同じキーで短時間内に呼ばれた場合、成功したfinalはgeneratorを1回しか実行しない(2重課金防止)", async () => {
+    const generator = vi.fn().mockResolvedValue(SHARED_GUIDE_OK);
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "成功再利用");
 
     await getSharedSingleCallNavigatorGuide(key, generator);
     await getSharedSingleCallNavigatorGuide(key, generator);
 
     expect(generator).toHaveBeenCalledTimes(1);
+  });
+
+  test("決着したnullは再利用せず、次のgetSharedでgeneratorを再実行する(再検索が即落ちしない)", async () => {
+    const generator = vi.fn().mockResolvedValue(null);
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "失敗は再利用しない");
+
+    await getSharedSingleCallNavigatorGuide(key, generator);
+    await getSharedSingleCallNavigatorGuide(key, generator);
+
+    expect(generator).toHaveBeenCalledTimes(2);
+  });
+
+  test("in-flight中はfinalがnull予定でも同一runを共有する", async () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "in-flight共有");
+    let resolveFinal!: (value: SingleCallNavigatorGuide | null) => void;
+    const pending = new Promise<SingleCallNavigatorGuide | null>((resolve) => {
+      resolveFinal = resolve;
+    });
+    const generator = vi.fn(() => ({
+      first: pending,
+      final: pending,
+    }));
+
+    const run1 = getSharedSingleCallNavigatorRun(key, generator);
+    const run2 = getSharedSingleCallNavigatorRun(key, generator);
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(run1).toBe(run2);
+
+    resolveFinal(null);
+    await pending;
+    getSharedSingleCallNavigatorRun(key, generator);
+    expect(generator).toHaveBeenCalledTimes(2);
   });
 
   test("異なるキーでは別々にgeneratorが実行される", async () => {
@@ -494,6 +756,32 @@ describe("getSharedSingleCallNavigatorGuide", () => {
     await getSharedSingleCallNavigatorGuide(keyB, generator);
 
     expect(generator).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("peekSharedSingleCallNavigatorRun", () => {
+  test("未登録キーは null で、generator は起動しない", () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "peek-miss");
+    expect(peekSharedSingleCallNavigatorRun(key)).toBeNull();
+  });
+
+  test("共有済み run を generator なしで返す", async () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "peek-hit");
+    const generator = vi.fn(() => ({
+      first: Promise.resolve(null),
+      final: Promise.resolve(null),
+    }));
+    getSharedSingleCallNavigatorRun(key, generator);
+    const peeked = peekSharedSingleCallNavigatorRun(key);
+    expect(peeked).not.toBeNull();
+    expect(generator).toHaveBeenCalledTimes(1);
+    await peeked?.first;
+  });
+
+  test("決着したnullのあとpeekはnullを返す(失敗runを号車に使わない)", async () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "peek-after-null");
+    await getSharedSingleCallNavigatorGuide(key, () => Promise.resolve(null));
+    expect(peekSharedSingleCallNavigatorRun(key)).toBeNull();
   });
 });
 

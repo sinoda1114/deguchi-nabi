@@ -5,7 +5,21 @@ import type {
   Station,
   StationFacility,
 } from "@/lib/domain/station";
+import type { UniqueChosenGate } from "@/lib/domain/facility-recommendation";
 import type { GuideStep, UnifiedArrivalGuide } from "@/lib/domain/route";
+
+/**
+ * 到着区間の乗車（乗る駅・線区・方面）と降りる駅名。
+ * 目的地施設名・座標は持たない（号車生成器に改札を再選定させない）。
+ */
+export type ArrivalRide = {
+  fromStationId: string;
+  fromStationName: string;
+  arrivalStationName: string;
+  platformId: string;
+  line: string;
+  direction: string;
+};
 
 export interface StationProviderPort {
   searchStations(query: string): Promise<Station[]>;
@@ -27,6 +41,15 @@ export interface StationProviderPort {
     platformId: string,
     line: string,
     direction: string
+  ): Promise<BoardingPosition | null>;
+  /**
+   * 選んだ改札（UniqueChosenGate）に近い号車だけを生成する任意メソッド。
+   * 無条件 getBoardingPosition とは別操作。未実装なら呼ばれず号車は null
+   * （無条件号車へ黙って落ちない。2026-07-20 西谷→横浜の再発防止）。
+   */
+  getBoardingForChosenGate?(
+    ride: ArrivalRide,
+    gate: UniqueChosenGate
   ): Promise<BoardingPosition | null>;
   nearestStations(
     latitude: number,

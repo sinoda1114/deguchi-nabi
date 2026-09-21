@@ -74,6 +74,7 @@ const OK_RESULT: FacilitiesSearchResult = {
     hasAlternativesGuidance: false,
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
+    omitIndependentBoarding: false,
     arrivalGuide: { steps: [], destinationDirection: null, facility: { state: "unavailable", reason: "test" } },
   },
 };

@@ -155,6 +155,12 @@ export interface UnifiedArrivalGuide {
   } | null;
   facility: FacilityRecommendation;
   walkingSteps: GuideStep[];
+  /**
+   * true のとき、boardingPosition が null でも独立した getBoardingPosition を
+   * 走らせない。収録カタログで改札・出口を確定した経路で使う。号車は
+   * boardingPosition（共有 .first）か、無いときだけ getBoardingForChosenGate。
+   */
+  omitIndependentBoarding?: boolean;
 }
 
 export interface RouteGuide {
