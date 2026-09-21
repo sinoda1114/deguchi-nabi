@@ -36,12 +36,6 @@ import {
 
 export type { ArrivalCarPolicy, UnifiedBoardingPosition } from "./arrival-car-policy";
 export { arrivalCarPolicyFrom } from "./arrival-car-policy";
-export {
-  approximateWalkingDistanceMeters,
-  estimateWalkingMinutes,
-  WALKING_DETOUR_FACTOR,
-  WALKING_METERS_PER_MINUTE,
-} from "./walking-estimate";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 /**

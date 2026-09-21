@@ -7,8 +7,6 @@ import {
   computeConfidenceSummary,
   computeKeyInstruction,
   sortCandidatesByMode,
-  approximateWalkingDistanceMeters,
-  estimateWalkingMinutes,
   NO_DEPARTURE_TIME_DISCLAIMER,
 } from "@/lib/services/route-search";
 import type { RouteSearchDeps, UnifiedBoardingPosition } from "@/lib/services/route-search";
@@ -2063,13 +2061,6 @@ describe("computeKeyInstruction", () => {
 
     const keyInstruction = computeKeyInstruction(trainSegments, outcome.result);
     expect(keyInstruction.text).toContain("出口は確認できません(推奨方向: 北側)");
-  });
-});
-
-describe("walking estimate re-export", () => {
-  test("route-search は walking-estimate の分数式を再エクスポートする", () => {
-    expect(estimateWalkingMinutes(80)).toBe(2);
-    expect(approximateWalkingDistanceMeters(null, { lat: 35.0, lng: 139.0 })).toBeNull();
   });
 });
 

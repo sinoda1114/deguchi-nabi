@@ -7,9 +7,11 @@ import {
   buildTrainSegments,
   buildTrainSegmentsFromFacilities,
   buildTransferAndExitSegments,
+} from "@/lib/services/route-search";
+import {
   approximateWalkingDistanceMeters,
   estimateWalkingMinutes,
-} from "@/lib/services/route-search";
+} from "@/lib/services/walking-estimate";
 import { addHistoryEntry } from "@/lib/store/history-repository";
 import { buildReturnRouteUrl } from "@/lib/services/return-route-link";
 import type { AccessibilityCondition, RouteMode } from "@/lib/domain/route";

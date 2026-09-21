@@ -63,12 +63,16 @@ export function estimateWalkingMinutes(distanceMeters: number | null): number | 
 
 function namedFacilityCoordinates(
   facility: NamedFacility | null | undefined,
-  knownFacilities: readonly StationFacility[]
+  knownFacilities: readonly StationFacility[],
+  facilityType: "exit" | "gate"
 ): Coordinates | null {
   if (!facility) return null;
   if (facility.coordinates) return facility.coordinates;
   const match = knownFacilities.find(
-    (candidate) => candidate.name === facility.name && candidate.coordinates !== null
+    (candidate) =>
+      candidate.name === facility.name &&
+      candidate.facilityType === facilityType &&
+      candidate.coordinates !== null
   );
   return match?.coordinates ?? null;
 }
@@ -91,11 +95,19 @@ export function walkingOriginFromGuide(input: {
 }): WalkingOrigin | null {
   const known = input.knownFacilities ?? catalogFacilitiesForStation(input.stationName);
   if (input.recommendation?.state === "confirmed") {
-    const exitCoordinates = namedFacilityCoordinates(input.recommendation.pair.exit, known);
+    const exitCoordinates = namedFacilityCoordinates(
+      input.recommendation.pair.exit,
+      known,
+      "exit"
+    );
     if (exitCoordinates) {
       return { kind: "exit", coordinates: exitCoordinates };
     }
-    const gateCoordinates = namedFacilityCoordinates(input.recommendation.pair.gate, known);
+    const gateCoordinates = namedFacilityCoordinates(
+      input.recommendation.pair.gate,
+      known,
+      "gate"
+    );
     if (gateCoordinates) {
       return { kind: "gate", coordinates: gateCoordinates };
     }

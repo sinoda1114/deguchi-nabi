@@ -160,6 +160,30 @@ describe("walkingOriginFromGuide", () => {
     expect(origin).toEqual({ kind: "exit", coordinates: exitCoords });
   });
 
+  test("収録の名前照合は exit/gate の種別を区別する", () => {
+    const known: StationFacility[] = [
+      {
+        facilityId: "gate_east",
+        stationId: "st",
+        facilityType: "gate",
+        name: "東口",
+        level: "改札階",
+        accessible: true,
+        coordinates: gateCoords,
+        connectedGateId: null,
+        confidence: highConfidence,
+        verifiedAt: null,
+        provenance: "surveyed",
+      },
+    ];
+    const origin = walkingOriginFromGuide({
+      recommendation: confirmed(null, named("東口")),
+      stationCoordinates: station,
+      knownFacilities: known,
+    });
+    expect(origin).toEqual({ kind: "station", coordinates: station });
+  });
+
   test("都市名・駅名の特別分岐は持たない(未収録の駅名でも駅代表に落ちる)", () => {
     const origin = walkingOriginFromGuide({
       recommendation: confirmed(named("中央改札"), named("1番出口")),
