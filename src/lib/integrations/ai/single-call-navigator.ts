@@ -186,7 +186,7 @@ export function buildNavigatorSearchPrompt(
   destinationStation: Station,
   destinationHint: string | null,
   destinationPlaceCoordinates: Coordinates | null = null,
-  options?: { includeCatalogGate?: boolean }
+  catalogGate: string | null = null
 ): string {
   // destinationPlaceCoordinatesは目的地施設自体の実座標(駅の中心座標とは別物)。
   // 同名・支店違いの施設が複数存在する場合の曖昧性解消に使う
@@ -199,14 +199,6 @@ export function buildNavigatorSearchPrompt(
   const destinationTarget = destinationHint
     ? `${destinationStation.stationName}駅(${locationHint(destinationStation)})付近の「${destinationHint}」${destinationPlaceLocationHint ? `(${destinationPlaceLocationHint})` : ""}`
     : `${destinationStation.stationName}駅(${locationHint(destinationStation)})`;
-  const catalogGate =
-    options?.includeCatalogGate === false
-      ? null
-      : catalogChosenGateNameFromStation(
-          destinationStation,
-          destinationPlaceCoordinates
-        );
-
   const facilityOrCatalogSection = catalogGate
     ? `【収録確定の改札】
 到着駅の改札は収録データで「${catalogGate}」に確定しています。改札名・出口名の選定・比較・逆算は行わず、改札・出口は断定しないでください。号車・ドア位置は「${catalogGate}」に近い到着ホーム上の停止位置だけを検索し、確認できた場合は号車を断定してください。理由には「${catalogGate}」またはその語幹を含めてください。他の改札を基準にしないでください。改札が確定していても検索自体を省略してはならない。路線・乗換・所要時間・号車は必ずインターネット検索で確認すること。`
@@ -355,7 +347,7 @@ async function toGuide(
   context: {
     destinationHint: string | null;
     arrivalStationName: string;
-    catalogChosenGateName?: string;
+    catalogGate: string | null;
   }
 ): Promise<SingleCallNavigatorGuide | null> {
   if (!Array.isArray(raw.lines) || raw.lines.length === 0) return null;
@@ -391,7 +383,7 @@ async function toGuide(
 
   // Phase 2-B: Candidate Selection（alternatives → confirmed への昇格）
   // 収録 BothHit では Gemini 施設を使わないため、.first 臨界経路の JEV を省略する。
-  if (facility.state === "alternatives" && !context.catalogChosenGateName && isJevAvailable()) {
+  if (facility.state === "alternatives" && !context.catalogGate && isJevAvailable()) {
     const jevConfig = createJevConfig();
     if (jevConfig) {
       try {
@@ -438,15 +430,14 @@ async function attemptGenerateSingleCallNavigatorGuide(
   destinationStation: Station,
   destinationHint: string | null,
   destinationPlaceCoordinates: Coordinates | null,
-  catalogChosenGateName?: string,
-  includeCatalogGateInPrompt = true
+  catalogGate: string | null
 ): Promise<SingleCallNavigatorGuide | null> {
   const searchPrompt = buildNavigatorSearchPrompt(
     originStation,
     destinationStation,
     destinationHint,
     destinationPlaceCoordinates,
-    { includeCatalogGate: includeCatalogGateInPrompt }
+    catalogGate
   );
 
   const result = await searchAndGenerateStructuredContentWithSearchText<RawExtraction>(
@@ -461,7 +452,7 @@ async function attemptGenerateSingleCallNavigatorGuide(
   return await toGuide(result.data, result.searchText, {
     destinationHint,
     arrivalStationName: destinationStation.stationName,
-    catalogChosenGateName,
+    catalogGate,
   });
 }
 
@@ -672,54 +663,55 @@ export function generateSingleCallNavigatorRun(
   destinationHint: string | null,
   destinationPlaceCoordinates: Coordinates | null = null
 ): SingleCallNavigatorRun {
-  const catalogChosenGateName =
-    catalogChosenGateNameFromStation(destinationStation, destinationPlaceCoordinates) ?? undefined;
-  if (catalogChosenGateName) {
+  const catalogGate = catalogChosenGateNameFromStation(
+    destinationStation,
+    destinationPlaceCoordinates
+  );
+  if (catalogGate) {
     console.info("[exit-quality]", {
       event: "catalog_both_hit_at_route",
-      gate: catalogChosenGateName,
+      gate: catalogGate,
     });
   }
 
-  const attempt = (includeCatalogGateInPrompt: boolean) =>
+  const attempt = (catalogGateForPrompt: string | null) =>
     attemptGenerateSingleCallNavigatorGuide(
       apiKey,
       originStation,
       destinationStation,
       destinationHint,
       destinationPlaceCoordinates,
-      catalogChosenGateName,
-      includeCatalogGateInPrompt
+      catalogGateForPrompt
     );
-  
-  const attempt1 = attempt(true);
-  
+
+  const attempt1 = attempt(catalogGate);
+
   const final = attempt1.then(async (r1) => {
     // 収録 BothHit: 経路+号車の .first があれば施設再試行しない。
     // null のときだけ経路自体が無いので従来どおり再試行する。
-    if (r1 !== null && catalogChosenGateName) {
+    if (r1 !== null && catalogGate) {
       console.info("[exit-quality]", {
         event: "skip_facility_retry",
-        gate: catalogChosenGateName,
+        gate: catalogGate,
       });
       return r1;
     }
     if (r1 !== null && !(await isFacilityUnavailable(r1))) {
       return r1;
     }
-    
+
     // 再試行が必要
     const reason = r1 === null ? "結果がnullだった" : "改札・出口の情報が両方とも確認できなかった";
     console.warn(
       `[single-call-navigator] 1回目の試行で${reason}ため再試行します: origin=${originStation.stationName}, destination=${destinationStation.stationName}`
     );
-    if (catalogChosenGateName) {
-      console.info("[exit-quality]", { event: "retry_null_first", gate: catalogChosenGateName });
+    if (catalogGate) {
+      console.info("[exit-quality]", { event: "retry_null_first", gate: catalogGate });
     }
-    
+
     let r2: SingleCallNavigatorGuide | null;
     try {
-      r2 = await attempt(!catalogChosenGateName);
+      r2 = await attempt(null);
     } catch (error) {
       // 2回目が例外で失敗
       if (r1 === null) throw error; // 見せられる結果が無い

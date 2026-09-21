@@ -100,7 +100,8 @@ describe("buildNavigatorSearchPrompt", () => {
       NISHIYA,
       SHIBUYA,
       "ウエチャベ",
-      UECHABE_DOGENZAKA.coordinates
+      UECHABE_DOGENZAKA.coordinates,
+      "道玄坂改札"
     );
     expect(prompt).toContain("収録データで「道玄坂改札」に確定");
     expect(prompt).toContain("改札名・出口名の選定・比較・逆算は行わず");
@@ -116,13 +117,13 @@ describe("buildNavigatorSearchPrompt", () => {
     expect(prompt).toContain("目的地からの逆算");
   });
 
-  test("includeCatalogGate を切ると座標があっても収録条項を出さない", () => {
+  test("catalogGate が null なら座標があっても収録条項を出さない", () => {
     const prompt = buildNavigatorSearchPrompt(
       NISHIYA,
       SHIBUYA,
       "ウエチャベ",
       UECHABE_DOGENZAKA.coordinates,
-      { includeCatalogGate: false }
+      null
     );
     expect(prompt).not.toContain("【収録確定の改札】");
     expect(prompt).toContain("目的地からの逆算");

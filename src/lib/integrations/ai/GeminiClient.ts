@@ -41,7 +41,7 @@ async function callGemini(
     });
 
     if (!res.ok) {
-      console.info("[exit-quality]", { event: "gemini_http_null", status: res.status });
+      console.info("[gemini]", { event: "gemini_http_null", status: res.status });
       return null;
     }
 
@@ -116,7 +116,7 @@ export async function searchAndGenerateStructuredContent<T>(
   const searchText = searchCandidate?.content?.parts?.[0]?.text;
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
   if (!searchText || !searchExecuted) {
-    console.info("[exit-quality]", {
+    console.info("[gemini]", {
       event: "gemini_search_null",
       reason: !searchText ? "empty_text" : "no_grounding",
     });
@@ -156,7 +156,7 @@ export async function searchAndGenerateStructuredContentWithSearchText<T>(
   const searchText = searchCandidate?.content?.parts?.[0]?.text;
   const searchExecuted = (searchCandidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0;
   if (!searchText || !searchExecuted) {
-    console.info("[exit-quality]", {
+    console.info("[gemini]", {
       event: "gemini_search_null",
       reason: !searchText ? "empty_text" : "no_grounding",
     });
@@ -171,7 +171,7 @@ export async function searchAndGenerateStructuredContentWithSearchText<T>(
     responseSchema
   );
   if (data === null) {
-    console.info("[exit-quality]", { event: "gemini_extract_null" });
+    console.info("[gemini]", { event: "gemini_extract_null" });
     return null;
   }
 
