@@ -3,7 +3,7 @@ import {
   type NamedFacility,
   type FacilityRecommendation,
 } from "@/lib/domain/facility-recommendation";
-import type { Coordinates, StationFacility } from "@/lib/domain/station";
+import type { Coordinates, Station, StationFacility } from "@/lib/domain/station";
 import {
   catalogStationNameFrom,
   lookupCatalogStation,
@@ -126,4 +126,21 @@ export function catalogChosenGateNameOf(input: CatalogResolveInput): string | nu
   const { recommendation } = resolveFacilityFromCatalog(input);
   if (!isScoringBothHit(recommendation)) return null;
   return uniqueChosenGateOf(recommendation)?.name ?? null;
+}
+
+/** 到着駅と目的地座標から、収録 BothHit の改札名だけを取る。 */
+export function catalogChosenGateNameFromStation(
+  destinationStation: Station,
+  destinationPlaceCoordinates: Coordinates | null
+): string | null {
+  if (!destinationPlaceCoordinates) return null;
+  return catalogChosenGateNameOf({
+    stationName: destinationStation.stationName,
+    stationId: destinationStation.stationId,
+    stationCoordinates: {
+      lat: destinationStation.latitude,
+      lng: destinationStation.longitude,
+    },
+    destinationCoordinates: destinationPlaceCoordinates,
+  });
 }

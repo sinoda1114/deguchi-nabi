@@ -11,6 +11,7 @@ import {
   type SingleCallNavigatorGuide,
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
+import { UECHABE_DOGENZAKA } from "@/lib/eval/exit-quality-gate";
 
 const searchAndGenerateStructuredContentWithSearchText = vi.fn();
 vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
@@ -94,22 +95,24 @@ describe("buildNavigatorSearchPrompt", () => {
     expect(prompt).toContain("確証ありと判断するための条件");
   });
 
-  test("収録確定の改札があるとき号車をその改札基準にし施設選定を省略する条項を足す", () => {
+  test("収録確定の改札があるとき号車をその改札基準にし施設選定ブロックを出さない", () => {
     const prompt = buildNavigatorSearchPrompt(
       NISHIYA,
       SHIBUYA,
       "ウエチャベ",
-      { lat: 35.65755, lng: 139.69735 },
-      "道玄坂改札"
+      UECHABE_DOGENZAKA.coordinates
     );
     expect(prompt).toContain("収録データで「道玄坂改札」に確定");
-    expect(prompt).toContain("改札名・出口名の選定・比較・逆算に検索時間を使わず");
+    expect(prompt).toContain("改札名・出口名の選定・比較・逆算は行わず");
+    expect(prompt).not.toContain("目的地からの逆算");
+    expect(prompt).not.toContain("複数改札がある駅での比較");
     expect(prompt).not.toContain("ハチ公改札");
   });
 
   test("収録改札が無いときは施設選定条項を足さない", () => {
     const prompt = buildNavigatorSearchPrompt(NISHIYA, SHIBUYA, "ウエチャベ");
     expect(prompt).not.toContain("【収録確定の改札】");
+    expect(prompt).toContain("目的地からの逆算");
   });
 });
 
@@ -418,8 +421,7 @@ describe("generateSingleCallNavigatorGuide", () => {
       NISHIYA,
       SHIBUYA,
       "ウエチャベ",
-      { lat: 35.65755, lng: 139.69735 },
-      { catalogChosenGateName: "道玄坂改札" }
+      UECHABE_DOGENZAKA.coordinates
     );
 
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
@@ -438,8 +440,7 @@ describe("generateSingleCallNavigatorGuide", () => {
       NISHIYA,
       SHIBUYA,
       "ウエチャベ",
-      { lat: 35.65755, lng: 139.69735 },
-      { catalogChosenGateName: "道玄坂改札" }
+      UECHABE_DOGENZAKA.coordinates
     );
 
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
@@ -468,8 +469,7 @@ describe("generateSingleCallNavigatorGuide", () => {
       NISHIYA,
       SHIBUYA,
       "ウエチャベ",
-      { lat: 35.65755, lng: 139.69735 },
-      { catalogChosenGateName: "道玄坂改札" }
+      UECHABE_DOGENZAKA.coordinates
     );
 
     expect(mockSelectBestFacilityPair).not.toHaveBeenCalled();

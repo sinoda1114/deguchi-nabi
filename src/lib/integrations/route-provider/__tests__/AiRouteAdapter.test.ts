@@ -111,8 +111,7 @@ describe("AiRouteAdapter.findRailRoutes", () => {
       ORIGIN_STATION,
       DESTINATION_STATION,
       "組み立てテストA",
-      null,
-      undefined
+      null
     );
   });
 
@@ -179,7 +178,7 @@ describe("AiRouteAdapter.findRailRoutes", () => {
     expect(result[0].segments[0].platformId).toBe("3");
   });
 
-  test("渋谷+ウエチャベ座標なら収録改札名を共有 run に渡す", async () => {
+  test("渋谷+ウエチャベ座標でも共有 run は座標を渡すだけ(改札解決は navigator 内)", async () => {
     const shibuya: Station = {
       stationId: "hr_shibuya",
       stationName: "渋谷駅",
@@ -220,8 +219,7 @@ describe("AiRouteAdapter.findRailRoutes", () => {
       nishiya,
       shibuya,
       UECHABE_DOGENZAKA.label,
-      UECHABE_DOGENZAKA.coordinates,
-      { catalogChosenGateName: "道玄坂改札" }
+      UECHABE_DOGENZAKA.coordinates
     );
   });
 });

@@ -5,6 +5,7 @@ import {
   normalizeStationName,
 } from "@/lib/data/station-facility-catalog";
 import {
+  catalogChosenGateNameFromStation,
   catalogChosenGateNameOf,
   resolveFacilityFromCatalog,
 } from "@/lib/services/catalog-facility-resolver";
@@ -74,6 +75,23 @@ describe("resolveFacilityFromCatalog 西谷→ウエチャベ", () => {
         destinationCoordinates: UECHABE_DOGENZAKA.coordinates,
       })
     ).toBe("道玄坂改札");
+  });
+
+  test("catalogChosenGateNameFromStation は座標が無いと null", () => {
+    expect(
+      catalogChosenGateNameFromStation(
+        {
+          stationId: "hr_shibuya",
+          stationName: "渋谷駅",
+          operator: "東急電鉄",
+          lines: ["東急東横線"],
+          prefecture: "東京都",
+          latitude: 35.65861,
+          longitude: 139.70111,
+        },
+        null
+      )
+    ).toBeNull();
   });
 
   test("catalogChosenGateNameOf は収録の無い駅では null", () => {
