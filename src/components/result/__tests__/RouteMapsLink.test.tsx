@@ -61,7 +61,11 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
   return { ok: true as const, result: base };
 }
 
-const DESTINATION_COORDINATES = { lat: 35.4657, lng: 139.622 };
+const DESTINATION = {
+  name: "GINZA春秋 首都横浜店",
+  placeId: "ChIJ_testPlace",
+  coordinates: { lat: 35.4657, lng: 139.622 },
+};
 
 describe("RouteMapsLink", () => {
   test("facility.stateがconfirmedの場合、Google Mapsリンクを表示する", async () => {
@@ -78,17 +82,14 @@ describe("RouteMapsLink", () => {
           },
         })
       ),
-      destinationCoordinates: DESTINATION_COORDINATES,
+      destination: DESTINATION,
     });
     const html = renderToStaticMarkup(element as React.ReactElement);
     expect(html).toContain("Google Maps");
-    expect(html).toContain("35.4657");
-    expect(html).toContain("139.622");
-    // /ai-review指摘(Codex): origin未指定にすることで、Google Maps側が端末の
-    // 現在地を起点にできる(出口を出た直後に開く想定利用と合致)。誤った出発地を
-    // 断定しないよう、意図的にoriginパラメータを含めない。
+    expect(html).toContain("query_place_id=ChIJ_testPlace");
+    expect(html).toContain(encodeURIComponent("GINZA春秋 首都横浜店"));
+    expect(html).not.toContain("35.4657");
     expect(html).not.toContain("origin=");
-    // 「ルートを見る」等、特定の出発地からの経路を保証しているような文言にしない。
     expect(html).toContain("目的地を開く");
   });
 
@@ -109,7 +110,7 @@ describe("RouteMapsLink", () => {
           },
         })
       ),
-      destinationCoordinates: DESTINATION_COORDINATES,
+      destination: DESTINATION,
     });
     const html = renderToStaticMarkup(element as React.ReactElement);
     expect(html).toContain("Google Maps");
@@ -118,12 +119,12 @@ describe("RouteMapsLink", () => {
   test("facility.stateがunavailableの場合はリンクを表示しない", async () => {
     const element = await RouteMapsLink({
       facilitiesPromise: Promise.resolve(okResult()),
-      destinationCoordinates: DESTINATION_COORDINATES,
+      destination: DESTINATION,
     });
     expect(element).toBeNull();
   });
 
-  test("destinationCoordinatesがnullの場合はリンクを表示しない(目的地が駅そのもの)", async () => {
+  test("destinationがnullの場合はリンクを表示しない(目的地が駅そのもの)", async () => {
     const element = await RouteMapsLink({
       facilitiesPromise: Promise.resolve(
         okResult({
@@ -137,7 +138,7 @@ describe("RouteMapsLink", () => {
           },
         })
       ),
-      destinationCoordinates: null,
+      destination: null,
     });
     expect(element).toBeNull();
   });
@@ -145,7 +146,7 @@ describe("RouteMapsLink", () => {
   test("facilitiesPromiseがok:falseの場合はリンクを表示しない", async () => {
     const element = await RouteMapsLink({
       facilitiesPromise: Promise.resolve({ ok: false, reason: "test" }),
-      destinationCoordinates: DESTINATION_COORDINATES,
+      destination: DESTINATION,
     });
     expect(element).toBeNull();
   });

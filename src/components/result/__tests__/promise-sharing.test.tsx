@@ -196,7 +196,7 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
       RouteDiagramSection({
         trainSegmentsPromise,
         facilitiesPromise,
-        destinationCoordinates: { lat: 35.4657, lng: 139.622 },
+        destination: { coordinates: { lat: 35.4657, lng: 139.622 } },
       }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);
@@ -227,7 +227,7 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
       RouteDiagramSection({
         trainSegmentsPromise,
         facilitiesPromise,
-        destinationCoordinates: { lat: 35.4657, lng: 139.622 },
+        destination: { coordinates: { lat: 35.4657, lng: 139.622 } },
       }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);

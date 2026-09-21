@@ -1,27 +1,27 @@
 import { MapPin } from "lucide-react";
-import type { Coordinates } from "@/lib/domain/station";
-import { buildGoogleMapsUrl } from "@/lib/services/google-maps-url";
+import {
+  buildGoogleMapsUrl,
+  type MapsDestinationTarget,
+} from "@/lib/services/google-maps-url";
 
 interface GoogleMapsDestinationLinkProps {
-  destinationCoordinates: Coordinates;
+  destination: MapsDestinationTarget;
   className?: string;
 }
 
 /**
  * 出口の先は地図アプリに渡す前提の目的地リンク。
- * 地図ピンを付け、出口ステップの直下でもサマリーでも同じ文言にする。
+ * 店名 / Place ID を優先し、ピンに店名が載るようにする。
  */
 export function GoogleMapsDestinationLink({
-  destinationCoordinates,
+  destination,
   className,
 }: GoogleMapsDestinationLinkProps) {
+  const href = buildGoogleMapsUrl(destination);
+  if (!href) return null;
+
   return (
-    <a
-      href={buildGoogleMapsUrl(destinationCoordinates)}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={className}
-    >
+    <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
       <MapPin className="inline-block h-4 w-4 shrink-0" aria-hidden="true" />
       Google Mapsで目的地を開く
     </a>

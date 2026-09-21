@@ -83,7 +83,11 @@ describe("RouteDiagramSection", () => {
     const element = await RouteDiagramSection({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
-      destinationCoordinates: { lat: 35.4657, lng: 139.622 },
+      destination: {
+        name: "GINZA春秋 首都横浜店",
+        placeId: "ChIJ_testPlace",
+        coordinates: { lat: 35.4657, lng: 139.622 },
+      },
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("出発駅");
@@ -106,20 +110,26 @@ describe("RouteDiagramSection", () => {
           },
         },
       }),
-      destinationCoordinates: { lat: 35.4657, lng: 139.622 },
+      destination: {
+        name: "GINZA春秋 首都横浜店",
+        placeId: "ChIJ_testPlace",
+        coordinates: { lat: 35.4657, lng: 139.622 },
+      },
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("出口は確認できません。");
     expect(html).toContain("Google Mapsで目的地を開く");
-    expect(html).toContain("35.4657");
+    expect(html).toContain("query_place_id=ChIJ_testPlace");
+    expect(html).toContain(encodeURIComponent("GINZA春秋 首都横浜店"));
+    expect(html).not.toContain("35.4657");
     expect(html).not.toContain("origin=");
   });
 
-  test("目的地座標が無いときは Maps リンクを出さない", async () => {
+  test("目的地が無いときは Maps リンクを出さない", async () => {
     const element = await RouteDiagramSection({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
-      destinationCoordinates: null,
+      destination: null,
     });
     const html = renderToStaticMarkup(element);
     expect(html).not.toContain("Google Maps");
@@ -129,7 +139,11 @@ describe("RouteDiagramSection", () => {
     const element = await RouteDiagramSection({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(NG_RESULT),
-      destinationCoordinates: { lat: 35.4657, lng: 139.622 },
+      destination: {
+        name: "GINZA春秋 首都横浜店",
+        placeId: "ChIJ_testPlace",
+        coordinates: { lat: 35.4657, lng: 139.622 },
+      },
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("改札・出口情報を確認できません。");
