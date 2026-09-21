@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { swapOriginAndDestination } from "@/lib/services/swap-origin-destination";
-import type { OriginChoice } from "@/components/search/origin-choice";
+import type { OriginChoice } from "@/lib/services/origin-choice";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
 import type { Station } from "@/lib/domain/station";
 

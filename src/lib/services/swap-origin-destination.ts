@@ -1,4 +1,4 @@
-import { buildStationOriginChoice, type OriginChoice } from "@/components/search/origin-choice";
+import { buildStationOriginChoice, type OriginChoice } from "@/lib/services/origin-choice";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
 import type { Station } from "@/lib/domain/station";
 

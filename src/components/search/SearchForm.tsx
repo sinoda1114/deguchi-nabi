@@ -8,7 +8,12 @@ import type { Station } from "@/lib/domain/station";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
 import type { RouteMode } from "@/lib/domain/route";
 import { OriginField } from "./OriginField";
-import { repairStaleOriginChoice, buildStationOriginChoice, type OriginChoice } from "./origin-choice";
+import {
+  repairStaleOriginChoice,
+  buildStationOriginChoice,
+  originSearchCoordinates,
+  type OriginChoice,
+} from "@/lib/services/origin-choice";
 import { DestinationField } from "./DestinationField";
 import { RouteModeSelector } from "./RouteModeSelector";
 import { SwapFieldsButton } from "./SwapFieldsButton";
@@ -24,7 +29,6 @@ import {
   getLocalDefaultOriginStation,
   setLocalDefaultOriginStation as persistLocalDefaultOriginStation,
 } from "@/lib/services/local-default-origin-station";
-import { destinationSearchBiasCoordinates } from "@/lib/services/destination-search-bias";
 
 /**
  * 入れ替えロジック(swapOriginAndDestination)が要求する駅の完全情報フェッチ。
@@ -95,16 +99,24 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
     setOrigin((current) => repairStaleOriginChoice(current, user, defaultStation));
   }, [user]);
 
-  const originCoordinates = destinationSearchBiasCoordinates(origin, {
+  const originCoordinates = originSearchCoordinates(origin, {
     homeStation: user ? homeStation : null,
     localDefaultStation: localDefaultOriginStation,
   });
 
+  const originStationId = origin?.type === "station" ? origin.stationId : null;
+  const originHasOwnCoordinates =
+    origin?.type === "station" &&
+    typeof origin.latitude === "number" &&
+    typeof origin.longitude === "number" &&
+    Number.isFinite(origin.latitude) &&
+    Number.isFinite(origin.longitude);
+
   useEffect(() => {
-    if (!origin || origin.type !== "station") return;
+    if (!originStationId || originHasOwnCoordinates) return;
     if (originCoordinates) return;
     let cancelled = false;
-    fetchStation(origin.stationId)
+    fetchStation(originStationId)
       .then((station) => {
         if (cancelled || !station) return;
         setOrigin((current) => {
@@ -118,7 +130,9 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
     return () => {
       cancelled = true;
     };
-  }, [origin, originCoordinates]);
+    // originCoordinates は毎レンダー新しいオブジェクトになるので、有無は lat/lng で見る
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- originCoordinates の参照ではなく値
+  }, [originStationId, originHasOwnCoordinates, originCoordinates?.lat, originCoordinates?.lng]);
 
   function handleSetLocalDefaultOriginStation(station: Station) {
     if (persistLocalDefaultOriginStation(station)) {

@@ -3,8 +3,8 @@ import {
   buildHomeStationOriginChoice,
   repairStaleOriginChoice,
   resolveOriginInputValue,
-} from "../OriginField";
-import type { OriginChoice } from "../OriginField";
+  type OriginChoice,
+} from "@/lib/services/origin-choice";
 import type { Station } from "@/lib/domain/station";
 import type { User } from "@/lib/domain/user";
 

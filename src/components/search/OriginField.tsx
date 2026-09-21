@@ -10,18 +10,9 @@ import type { User } from "@/lib/domain/user";
 import {
   buildHomeStationOriginChoice,
   buildStationOriginChoice,
-  repairStaleOriginChoice,
   resolveOriginInputValue,
   type OriginChoice,
-} from "./origin-choice";
-
-export {
-  buildHomeStationOriginChoice,
-  buildStationOriginChoice,
-  repairStaleOriginChoice,
-  resolveOriginInputValue,
-};
-export type { OriginChoice };
+} from "@/lib/services/origin-choice";
 
 interface OriginFieldProps {
   user: User | null;

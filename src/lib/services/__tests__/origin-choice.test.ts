@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { destinationSearchBiasCoordinates } from "../destination-search-bias";
-import type { OriginChoice } from "@/components/search/origin-choice";
+import { originSearchCoordinates, type OriginChoice } from "../origin-choice";
 import type { Station } from "@/lib/domain/station";
 
 const NISHIYA: Station = {
@@ -23,24 +22,24 @@ const NAGOYA: Station = {
   longitude: 136.881537,
 };
 
-describe("destinationSearchBiasCoordinates", () => {
+describe("originSearchCoordinates", () => {
   test("出発地未選択ならバイアス無し", () => {
     expect(
-      destinationSearchBiasCoordinates(null, { homeStation: NISHIYA, localDefaultStation: NAGOYA })
+      originSearchCoordinates(null, { homeStation: NISHIYA, localDefaultStation: NAGOYA })
     ).toBeNull();
   });
 
   test("home_station なら登録駅の座標を使う", () => {
     const origin: OriginChoice = { type: "home_station", label: "西谷駅" };
     expect(
-      destinationSearchBiasCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
+      originSearchCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
     ).toEqual({ lat: NISHIYA.latitude, lng: NISHIYA.longitude });
   });
 
   test("home_station でも登録駅が無ければバイアス無し", () => {
     const origin: OriginChoice = { type: "home_station", label: "西谷駅" };
     expect(
-      destinationSearchBiasCoordinates(origin, { homeStation: null, localDefaultStation: NISHIYA })
+      originSearchCoordinates(origin, { homeStation: null, localDefaultStation: NISHIYA })
     ).toBeNull();
   });
 
@@ -53,7 +52,7 @@ describe("destinationSearchBiasCoordinates", () => {
       longitude: NAGOYA.longitude,
     };
     expect(
-      destinationSearchBiasCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
+      originSearchCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
     ).toEqual({ lat: NAGOYA.latitude, lng: NAGOYA.longitude });
   });
 
@@ -64,10 +63,10 @@ describe("destinationSearchBiasCoordinates", () => {
       label: NISHIYA.stationName,
     };
     expect(
-      destinationSearchBiasCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
+      originSearchCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
     ).toEqual({ lat: NISHIYA.latitude, lng: NISHIYA.longitude });
     expect(
-      destinationSearchBiasCoordinates(origin, { homeStation: null, localDefaultStation: NISHIYA })
+      originSearchCoordinates(origin, { homeStation: null, localDefaultStation: NISHIYA })
     ).toEqual({ lat: NISHIYA.latitude, lng: NISHIYA.longitude });
   });
 
@@ -78,7 +77,7 @@ describe("destinationSearchBiasCoordinates", () => {
       label: NAGOYA.stationName,
     };
     expect(
-      destinationSearchBiasCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
+      originSearchCoordinates(origin, { homeStation: NISHIYA, localDefaultStation: null })
     ).toBeNull();
   });
 });
