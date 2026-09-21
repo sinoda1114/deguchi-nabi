@@ -1,4 +1,5 @@
 import type { Confidence, Provenance } from "./confidence";
+import type { Coordinates } from "./station";
 
 /**
  * 改札・出口を「確証なしなら丸ごと非表示」の全か無かゲートで扱うのをやめ、
@@ -21,6 +22,11 @@ export interface NamedFacility {
    * (AI生成)由来のfacilityは常に"ai_inferred"を明示的に持つ。
    */
   provenance?: Provenance;
+  /**
+   * 改札・出口の地図座標。収録・OSM・設備一覧が持っているときだけ入る。
+   * AI 名だけの案内は座標を持たない。徒歩分数の起点に使う。
+   */
+  coordinates?: Coordinates | null;
 }
 
 /**

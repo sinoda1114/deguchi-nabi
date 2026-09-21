@@ -26,6 +26,8 @@ import { FacilitiesWarningBadges } from "@/components/result/FacilitiesWarningBa
 import { ConfidenceSummarySection } from "@/components/result/ConfidenceSummarySection";
 import { ConfidenceSummarySectionSkeleton } from "@/components/result/ConfidenceSummarySectionSkeleton";
 import { WarningBadgeList } from "@/components/diagram/WarningBadgeList";
+import { WalkingMinutesLine } from "@/components/result/WalkingMinutesLine";
+import { RouteWalkingMinutes } from "@/components/result/RouteWalkingMinutes";
 
 const DEFAULT_ACCESSIBILITY: AccessibilityCondition = {
   avoidStairs: false,
@@ -151,11 +153,13 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
     }
   }
 
-  // 出口から目的地までの徒歩時間(概算)。直線距離(近似値)ベースのため
-  // 実際より短く出うる目安(route-search.tsのJSDoc参照)。目的地が駅そのもの
-  // (destinationCoordinatesが無い)場合はnullのまま、乗車時間のみ表示する。
-  const walkingMinutes = estimateWalkingMinutes(
-    approximateWalkingDistanceMeters(candidate.arrivalStationCoordinates, resolved.destinationCoordinates)
+  // 出口(あれば)または到着駅から目的地までの徒歩時間(概算)。直線×道なり係数。
+  // 施設解決前は駅代表で出し、確定案内に座標が乗ったら出口/改札起点に差し替える。
+  const stationWalkingMinutes = estimateWalkingMinutes(
+    approximateWalkingDistanceMeters(
+      candidate.arrivalStationCoordinates,
+      resolved.destinationCoordinates
+    )
   );
 
   return (
@@ -169,7 +173,25 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
         destinationStationId={resolved.destinationStationId}
         canSave={Boolean(user)}
         estimatedDurationMinutes={candidate.estimatedDurationMinutes}
-        walkingMinutes={walkingMinutes}
+        walkingLineNode={
+          <Suspense
+            fallback={
+              <WalkingMinutesLine
+                estimatedDurationMinutes={candidate.estimatedDurationMinutes}
+                walkingMinutes={stationWalkingMinutes}
+                originKind="station"
+              />
+            }
+          >
+            <RouteWalkingMinutes
+              facilitiesPromise={facilitiesPromise}
+              stationCoordinates={candidate.arrivalStationCoordinates}
+              destinationCoordinates={resolved.destinationCoordinates}
+              estimatedDurationMinutes={candidate.estimatedDurationMinutes}
+              arrivalStationName={candidate.arrivalStationName}
+            />
+          </Suspense>
+        }
         overviewContentNode={
           <Suspense fallback={<RouteOverviewContentSkeleton />}>
             <RouteOverviewContent

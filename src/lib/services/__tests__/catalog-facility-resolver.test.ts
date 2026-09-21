@@ -42,6 +42,8 @@ describe("resolveFacilityFromCatalog 西谷→ウエチャベ", () => {
     expect(SHIBUYA_EAST_REJECT).not.toContain(rec.pair.exit!.name);
     expect(rec.pair.exit!.name).toBe("A1出口");
     expect(rec.pair.gate!.name).toBe("道玄坂改札");
+    expect(rec.pair.exit!.coordinates).toEqual({ lat: 35.658, lng: 139.6984 });
+    expect(rec.pair.gate!.coordinates).toEqual({ lat: 35.6582, lng: 139.6991 });
   });
 
   test("東側の目的地ではヒカリエ/宮益坂側を選び道玄坂を選ばない", () => {

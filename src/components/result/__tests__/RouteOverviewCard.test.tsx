@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RouteOverviewCard } from "@/components/result/RouteOverviewCard";
+import { WalkingMinutesLine } from "@/components/result/WalkingMinutesLine";
 
 describe("RouteOverviewCard", () => {
   test("モードバッジ・出発地/目的地・overviewContentNodeを描画する", () => {
@@ -14,7 +15,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={39}
-        walkingMinutes={null}
+        walkingLineNode={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -35,7 +36,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={39}
-        walkingMinutes={null}
+        walkingLineNode={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -53,7 +54,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={null}
-        walkingMinutes={null}
+        walkingLineNode={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -71,7 +72,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={39}
-        walkingMinutes={null}
+        walkingLineNode={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -89,14 +90,14 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={true}
         estimatedDurationMinutes={39}
-        walkingMinutes={null}
+        walkingLineNode={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );
     expect(html).toContain("ルートを保存");
   });
 
-  test("walkingMinutesがある場合、乗車時間+徒歩時間の合計目安を表示する", () => {
+  test("walkingLineNodeがある場合、カード末尾に合計目安を表示する", () => {
     const html = renderToStaticMarkup(
       <RouteOverviewCard
         mode="easy"
@@ -107,7 +108,13 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={10}
-        walkingMinutes={3}
+        walkingLineNode={
+          <WalkingMinutesLine
+            estimatedDurationMinutes={10}
+            walkingMinutes={3}
+            originKind="station"
+          />
+        }
         overviewContentNode={<span>テスト概要</span>}
       />
     );
@@ -116,7 +123,7 @@ describe("RouteOverviewCard", () => {
     expect(html).toContain("到着駅からの徒歩目安約3分");
   });
 
-  test("walkingMinutesがnullの場合、合計目安は表示しない(乗車時間のみ)", () => {
+  test("walkingLineNodeがnullの場合、合計目安は表示しない(乗車時間のみ)", () => {
     const html = renderToStaticMarkup(
       <RouteOverviewCard
         mode="easy"
@@ -127,7 +134,7 @@ describe("RouteOverviewCard", () => {
         destinationStationId="destination"
         canSave={false}
         estimatedDurationMinutes={10}
-        walkingMinutes={null}
+        walkingLineNode={null}
         overviewContentNode={<span>テスト概要</span>}
       />
     );

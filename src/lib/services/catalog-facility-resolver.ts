@@ -32,6 +32,7 @@ function toNamed(facility: StationFacility): NamedFacility {
     name: facility.name,
     confidence: facility.confidence,
     provenance: facility.provenance ?? "surveyed",
+    coordinates: facility.coordinates,
   };
 }
 

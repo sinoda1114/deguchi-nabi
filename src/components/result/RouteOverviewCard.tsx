@@ -12,14 +12,11 @@ interface RouteOverviewCardProps {
   canSave: boolean;
   estimatedDurationMinutes: number | null;
   /**
-   * 到着駅(代表座標)から目的地までの徒歩時間(概算、分)。/ai-review指摘、
-   * Codex: 実際の出口座標ではなく駅の代表座標からの直線距離が起点のため、
-   * 大規模駅では実態と乖離しうる(AI生成の改札・出口は座標を持たないため、
-   * 出口起点での算出は現状できない)。表示文言でも「到着駅からの」と明記し、
-   * 出口からの距離であるかのように誤認させない。null の場合(目的地座標が
-   * 無い/駅そのものが目的地等)は乗車時間のみを表示する。
+   * 乗車+徒歩の合計目安行。直線×道なり係数の概算なので、呼び出し側が
+   * 「目安」と起点(出口/改札/駅代表)を明記したノードを渡す。施設解決待ちは
+   * Suspense で包む。目的地座標が無いときは null。
    */
-  walkingMinutes: number | null;
+  walkingLineNode: ReactNode;
   /**
    * 号車・出口・乗換回数の概要部分。号車・改札・出口情報の
    * 解決を待つ必要があるため、呼び出し元(page.tsx)が
@@ -43,14 +40,9 @@ export function RouteOverviewCard({
   destinationStationId,
   canSave,
   estimatedDurationMinutes,
-  walkingMinutes,
+  walkingLineNode,
   overviewContentNode,
 }: RouteOverviewCardProps) {
-  const totalMinutes =
-    estimatedDurationMinutes != null && walkingMinutes != null
-      ? estimatedDurationMinutes + walkingMinutes
-      : null;
-
   return (
     <div className="rounded-[var(--radius-card)] bg-[var(--accent)] p-5 text-[var(--accent-foreground)]">
       <div className="flex items-center justify-between">
@@ -73,12 +65,7 @@ export function RouteOverviewCard({
         {" ・ "}
         {estimatedDurationMinutes != null ? `約${estimatedDurationMinutes}分` : "確認できません"}
       </p>
-      {totalMinutes != null ? (
-        <p className="mt-0.5 text-xs opacity-70">
-          目的地到着まで目安約{totalMinutes}分(乗車約{estimatedDurationMinutes}分+到着駅からの徒歩目安約
-          {walkingMinutes}分)
-        </p>
-      ) : null}
+      {walkingLineNode}
     </div>
   );
 }
