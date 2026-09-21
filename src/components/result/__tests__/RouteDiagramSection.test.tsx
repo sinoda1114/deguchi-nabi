@@ -68,6 +68,7 @@ const OK_RESULT: FacilitiesSearchResult = {
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
     omitIndependentBoarding: false,
+    gateExitRelation: { kind: "separate_exit", reason: "test" },
     arrivalGuide: { steps: [], destinationDirection: null, facility: { state: "unavailable", reason: "test" } },
   },
 };
@@ -82,6 +83,11 @@ describe("RouteDiagramSection", () => {
     const element = await RouteDiagramSection({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
+      destination: {
+        name: "GINZA春秋 首都横浜店",
+        placeId: "ChIJ_testPlace",
+        coordinates: { lat: 35.4657, lng: 139.622 },
+      },
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("出発駅");
@@ -89,10 +95,55 @@ describe("RouteDiagramSection", () => {
     expect(html).toContain("5号車");
   });
 
+  test("出口が確認できない場合でも目的地座標があれば Maps リンクを出口カードの下に出す", async () => {
+    const element = await RouteDiagramSection({
+      trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
+      facilitiesPromise: Promise.resolve({
+        ...OK_RESULT,
+        result: {
+          ...OK_RESULT.result,
+          recommendedExit: "確認できません",
+          exitSegment: {
+            ...OK_RESULT.result.exitSegment,
+            instruction: "出口は確認できません。",
+            facilities: [],
+          },
+        },
+      }),
+      destination: {
+        name: "GINZA春秋 首都横浜店",
+        placeId: "ChIJ_testPlace",
+        coordinates: { lat: 35.4657, lng: 139.622 },
+      },
+    });
+    const html = renderToStaticMarkup(element);
+    expect(html).toContain("出口は確認できません。");
+    expect(html).toContain("Google Mapsで目的地を開く");
+    expect(html).toContain("query_place_id=ChIJ_testPlace");
+    expect(html).toContain(encodeURIComponent("GINZA春秋 首都横浜店"));
+    expect(html).not.toContain("35.4657");
+    expect(html).not.toContain("origin=");
+  });
+
+  test("目的地が無いときは Maps リンクを出さない", async () => {
+    const element = await RouteDiagramSection({
+      trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
+      facilitiesPromise: Promise.resolve(OK_RESULT),
+      destination: null,
+    });
+    const html = renderToStaticMarkup(element);
+    expect(html).not.toContain("Google Maps");
+  });
+
   test("facilitiesがok:falseの場合はエラーメッセージを描画する", async () => {
     const element = await RouteDiagramSection({
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(NG_RESULT),
+      destination: {
+        name: "GINZA春秋 首都横浜店",
+        placeId: "ChIJ_testPlace",
+        coordinates: { lat: 35.4657, lng: 139.622 },
+      },
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("改札・出口情報を確認できません。");

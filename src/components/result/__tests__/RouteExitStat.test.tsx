@@ -52,6 +52,7 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
       approximateDirectionLabel: null,
       unifiedBoardingPosition: null,
       omitIndependentBoarding: false,
+      gateExitRelation: { kind: "separate_exit", reason: "test" },
       arrivalGuide: {
         steps: [
           {
@@ -143,6 +144,56 @@ describe("RouteExitStat", () => {
     const html = renderToStaticMarkup(element);
     expect(html).toContain("南口");
     expect(html).not.toContain("未確認情報");
+  });
+
+  test("gate_equals_exit のときは改札名を出口欄に出し確認不能とは書かない", async () => {
+    const element = await RouteExitStat({
+      facilitiesPromise: Promise.resolve(
+        okResult({
+          gateExitRelation: {
+            kind: "gate_equals_exit",
+            reason: "地上改札の合図があり、独立出口も地下鉄文脈も無い",
+          },
+          arrivalGuide: {
+            steps: [
+              {
+                type: "ticket_gate",
+                title: "2階改札口",
+                instruction: "2階改札口を利用してください。",
+                landmarks: [],
+                confidence: highConfidence,
+                provenance: "ai_inferred",
+              },
+              {
+                type: "street_exit",
+                title: "この改札が出口です",
+                instruction: "この改札が出口です。改札を出ると地上です。",
+                landmarks: [],
+                confidence: highConfidence,
+                provenance: "ai_inferred",
+              },
+            ],
+            destinationDirection: null,
+            facility: {
+              state: "confirmed",
+              pair: {
+                gate: { name: "2階改札口", confidence: highConfidence },
+                exit: null,
+                reason: null,
+              },
+            },
+            gateExitRelation: {
+              kind: "gate_equals_exit",
+              reason: "地上改札の合図があり、独立出口も地下鉄文脈も無い",
+            },
+          },
+        })
+      ),
+    });
+    const html = renderToStaticMarkup(element);
+    expect(html).toContain("2階改札口");
+    expect(html).toContain("この改札が出口です");
+    expect(html).not.toContain("確認できません");
   });
 
   test("facilitiesがok:falseの場合は確認できない旨を表示する", async () => {

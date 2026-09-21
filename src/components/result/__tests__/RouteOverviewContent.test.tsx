@@ -67,6 +67,7 @@ const OK_RESULT: FacilitiesSearchResult = {
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
     omitIndependentBoarding: false,
+    gateExitRelation: { kind: "separate_exit", reason: "test" },
     arrivalGuide: { steps: [], destinationDirection: null, facility: { state: "unavailable", reason: "test" } },
   },
 };
@@ -85,7 +86,7 @@ describe("RouteOverviewContent", () => {
       trainSegmentsPromise: Promise.resolve([TRAIN_SEGMENT]),
       facilitiesPromise: Promise.resolve(OK_RESULT),
       transferCount: 2,
-      destinationCoordinates: null,
+      destination: null,
     });
     const html = renderToStaticMarkup(element);
     expect(html).toContain("乗換2回");

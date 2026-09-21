@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import type { RouteSegment } from "@/lib/domain/route";
-import type { Coordinates } from "@/lib/domain/station";
 import type { FacilitiesSearchResult } from "@/lib/services/route-search";
+import type { MapsDestinationTarget } from "@/lib/services/google-maps-url";
 import { FacilityIcon } from "@/components/diagram/FacilityIcon";
 import { RouteBoardingStat } from "@/components/result/RouteBoardingStat";
 import { RouteBoardingStatSkeleton } from "@/components/result/RouteBoardingStatSkeleton";
@@ -15,8 +15,8 @@ interface RouteOverviewContentProps {
   trainSegmentsPromise: Promise<RouteSegment[]>;
   facilitiesPromise: Promise<FacilitiesSearchResult>;
   transferCount: number;
-  /** 目的地(place由来)の座標。Google Mapsリンクの組み立てに使う。 */
-  destinationCoordinates: Coordinates | null;
+  /** place 目的地。駅そのものが目的地の場合は null。 */
+  destination: MapsDestinationTarget | null;
 }
 
 /**
@@ -36,7 +36,7 @@ export function RouteOverviewContent({
   trainSegmentsPromise,
   facilitiesPromise,
   transferCount,
-  destinationCoordinates,
+  destination,
 }: RouteOverviewContentProps) {
   return (
     <div className="mt-4 grid grid-cols-3 gap-2">
@@ -56,7 +56,7 @@ export function RouteOverviewContent({
       <Suspense fallback={null}>
         <RouteMapsLink
           facilitiesPromise={facilitiesPromise}
-          destinationCoordinates={destinationCoordinates}
+          destination={destination}
         />
       </Suspense>
     </div>

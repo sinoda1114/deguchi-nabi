@@ -13,12 +13,16 @@ const highConfidence: Confidence = {
   sourceCount: 1,
 };
 
-type BaseResult = Pick<FacilitiesBuildSuccess, "facilityRecommendation" | "approximateDirectionLabel">;
+type BaseResult = Pick<
+  FacilitiesBuildSuccess,
+  "facilityRecommendation" | "approximateDirectionLabel" | "gateExitRelation"
+>;
 
 function baseResult(overrides: Partial<BaseResult> = {}): BaseResult {
   return {
     facilityRecommendation: { state: "unavailable", reason: "test" },
     approximateDirectionLabel: null,
+    gateExitRelation: { kind: "exit_unknown", missing: "gate_and_exit", reason: "改札も出口も無い" },
     ...overrides,
   };
 }
@@ -89,6 +93,29 @@ describe("buildArrivalGuide", () => {
   test("gate・exitともnullでもクラッシュせず空のstepsを返す", async () => {
     const guide = await buildArrivalGuide(baseResult(), "st_1", "テスト駅", null, "easy", false, {});
     expect(guide.steps).toEqual([]);
+  });
+
+  test("gate_equals_exit のときは出口ステップを『この改札が出口です』として足す", async () => {
+    const guide = await buildArrivalGuide(
+      baseResult({
+        facilityRecommendation: confirmed(namedFacility({ name: "2階改札口" }), null),
+        gateExitRelation: {
+          kind: "gate_equals_exit",
+          reason: "地上改札の合図があり、独立出口も地下鉄文脈も無い",
+        },
+      }),
+      "st_1",
+      "横浜駅",
+      null,
+      "easy",
+      false,
+      {}
+    );
+    expect(guide.steps.map((s) => s.type)).toEqual(["ticket_gate", "street_exit"]);
+    expect(guide.steps[0].title).toBe("2階改札口");
+    expect(guide.steps[1].title).toBe("この改札が出口です");
+    expect(guide.steps[1].instruction).toContain("この改札が出口です");
+    expect(guide.gateExitRelation?.kind).toBe("gate_equals_exit");
   });
 
   test("複数候補(alternatives)の場合、titleを全候補名の連結にし、いずれかであることを明示する", async () => {

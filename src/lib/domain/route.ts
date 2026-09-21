@@ -1,6 +1,7 @@
 import type { Confidence, Provenance } from "./confidence";
 import type { FacilityType } from "./station";
 import type { FacilityRecommendation } from "./facility-recommendation";
+import type { GateExitRelation } from "./gate-exit-relation";
 
 export type RouteMode = "fastest" | "easy" | "accessible";
 
@@ -128,6 +129,11 @@ export interface ArrivalGuide {
    * 保持する。
    */
   facility: FacilityRecommendation;
+  /**
+   * 改札＝出口の UX 判定。facility.pair.exit は書き換えない。
+   * isScoringBothHit / TripleHit はこれを見ない。
+   */
+  gateExitRelation?: GateExitRelation;
 }
 
 /**

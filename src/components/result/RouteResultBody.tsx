@@ -155,6 +155,15 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
     }
   }
 
+  const mapsDestination =
+    destination.type === "place"
+      ? {
+          name: resolved.destinationLabel,
+          placeId: destination.placeId,
+          coordinates: resolved.destinationCoordinates,
+        }
+      : null;
+
   // 出口(あれば)または到着駅から目的地までの徒歩時間(概算)。直線×道なり係数。
   // 施設解決前は駅代表で出し、確定案内に座標が乗ったら出口/改札起点に差し替える。
   const stationWalkingMinutes = estimateWalkingMinutes(
@@ -200,7 +209,7 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
               trainSegmentsPromise={trainSegmentsPromise}
               facilitiesPromise={facilitiesPromise}
               transferCount={candidate.transferCount}
-              destinationCoordinates={resolved.destinationCoordinates}
+              destination={mapsDestination}
             />
           </Suspense>
         }
@@ -231,6 +240,7 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
           <RouteDiagramSection
             trainSegmentsPromise={trainSegmentsPromise}
             facilitiesPromise={facilitiesPromise}
+            destination={mapsDestination}
           />
         </Suspense>
       </section>

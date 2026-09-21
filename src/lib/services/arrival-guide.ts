@@ -5,6 +5,7 @@ import type { StationProviderPort } from "@/lib/integrations/station-provider/St
 import { capConfidenceForProvenance } from "@/lib/domain/confidence";
 import type { FacilityPair, FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
 import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
+import { exitPresentationFor } from "@/lib/domain/gate-exit-relation";
 import { combinedFacilityConfidence } from "./confidence-engine";
 import { isGuideStepVisible } from "./guide-step-visibility";
 
@@ -114,7 +115,10 @@ function canGenerateNarrative(
  * 説明として読める方が自然なため、出口を徒歩ステップより前に配置する。
  */
 export async function buildArrivalGuide(
-  result: Pick<FacilitiesBuildSuccess, "facilityRecommendation" | "approximateDirectionLabel">,
+  result: Pick<
+    FacilitiesBuildSuccess,
+    "facilityRecommendation" | "approximateDirectionLabel" | "gateExitRelation"
+  >,
   arrivalStationId: string,
   arrivalStationName: string,
   arrivalStationCoordinates: Coordinates | null,
@@ -141,7 +145,24 @@ export async function buildArrivalGuide(
     (name) => `${name}から地上へ出てください。`,
     "利用できる出口"
   );
-  if (exitStep) steps.push(exitStep);
+  if (exitStep) {
+    steps.push(exitStep);
+  } else if (result.gateExitRelation?.kind === "gate_equals_exit" && gateStep) {
+    const presentation = exitPresentationFor(result.gateExitRelation, {
+      exitNames: [],
+      gateNames: [gateStep.title],
+      exitIsAlternatives: false,
+      directionLabel: result.approximateDirectionLabel,
+    });
+    steps.push({
+      type: "street_exit",
+      title: presentation.recommendedExit,
+      instruction: presentation.instruction,
+      landmarks: [],
+      confidence: gateStep.confidence,
+      provenance: gateStep.provenance,
+    });
+  }
 
   if (unifiedWalkingSteps !== null) {
     steps.push(...unifiedWalkingSteps);
@@ -165,5 +186,6 @@ export async function buildArrivalGuide(
     steps: steps.filter(isGuideStepVisible),
     destinationDirection: result.approximateDirectionLabel,
     facility: result.facilityRecommendation,
+    gateExitRelation: result.gateExitRelation,
   };
 }

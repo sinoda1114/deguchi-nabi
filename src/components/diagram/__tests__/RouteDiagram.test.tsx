@@ -93,6 +93,17 @@ describe("RouteDiagram", () => {
     expect(html).toContain(">3<");
   });
 
+  test("出口カードの下に Maps リンクを置ける", () => {
+    const html = renderToStaticMarkup(
+      <RouteDiagram
+        segments={[TRAIN_SEGMENT, TRANSFER_SEGMENT, EXIT_SEGMENT]}
+        exitMapsLink={<a href="https://www.google.com/maps/dir/?api=1&destination=1,2">Google Mapsで目的地を開く</a>}
+      />
+    );
+    expect(html).toContain("Google Mapsで目的地を開く");
+    expect(html).toContain("destination=1,2");
+  });
+
   test("ステップ番号バッジの文字色にaccentに対応するforegroundを使う(text-white固定だとコントラスト不足になるため)", () => {
     const html = renderToStaticMarkup(
       <RouteDiagram segments={[TRAIN_SEGMENT, TRANSFER_SEGMENT, EXIT_SEGMENT]} />

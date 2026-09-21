@@ -113,6 +113,8 @@ const CANDIDATE: RouteCandidateResult = {
   destinationName: "到着駅",
   arrivalStationName: "到着駅",
   arrivalStationCoordinates: null,
+  arrivalOperator: "テスト鉄道",
+  arrivalStationLines: ["テスト線"],
   estimatedDurationMinutes: 10,
   transferCount: 0,
   routeWarnings: [],
@@ -191,7 +193,11 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
         facilitiesPromise,
         destinationName: "到着駅",
       }),
-      RouteDiagramSection({ trainSegmentsPromise, facilitiesPromise }),
+      RouteDiagramSection({
+        trainSegmentsPromise,
+        facilitiesPromise,
+        destination: { coordinates: { lat: 35.4657, lng: 139.622 } },
+      }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);
 
@@ -218,7 +224,11 @@ describe("page.tsx の Promise as Props 配線(複数の実コンポーネント
         facilitiesPromise,
         destinationName: "到着駅",
       }),
-      RouteDiagramSection({ trainSegmentsPromise, facilitiesPromise }),
+      RouteDiagramSection({
+        trainSegmentsPromise,
+        facilitiesPromise,
+        destination: { coordinates: { lat: 35.4657, lng: 139.622 } },
+      }),
       ConfidenceSummarySection({ trainSegmentsPromise, facilitiesPromise, mode: "easy" }),
     ]);
 
