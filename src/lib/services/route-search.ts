@@ -13,6 +13,17 @@ import type { Coordinates, StationFacility } from "@/lib/domain/station";
 import { unavailableConfidence } from "@/lib/domain/confidence";
 import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
 import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
+import {
+  classifyGateExitRelation,
+  exitInstructionFor,
+  GATE_EQUALS_EXIT_LABEL,
+  recommendedExitFor,
+  type GateExitRelation,
+} from "@/lib/domain/gate-exit-relation";
+import {
+  catalogStationNameFrom,
+  lookupCatalogStation,
+} from "@/lib/data/station-facility-catalog";
 import type {
   RailRouteCandidate,
   RouteProviderPort,
@@ -314,6 +325,11 @@ export interface FacilitiesBuildSuccess {
    * buildTrainSegments は到着区間の独立 getBoardingPosition を走らせない。
    */
   omitIndependentBoarding: boolean;
+  /**
+   * 改札＝出口の UX 判定。facilityRecommendation の exit は書き換えない。
+   * isScoringBothHit はこれを見ない。
+   */
+  gateExitRelation: GateExitRelation;
 }
 
 /**
@@ -383,11 +399,13 @@ export async function buildTransferAndExitSegments(
     input.mode !== "accessible" && Boolean(deps.stationProvider.getUnifiedArrivalGuide);
 
   let unified: UnifiedArrivalGuide | null = null;
+  let arrivalOperator: string | null = null;
   if (canTryUnified) {
     const [originStation, destinationStation] = await Promise.all([
       deps.stationProvider.getStation(input.originStationId),
       deps.stationProvider.getStation(input.destinationStationId),
     ]);
+    arrivalOperator = destinationStation?.operator ?? null;
     if (originStation && destinationStation) {
       // 到着駅に接続する最終区間(乗車位置の決定に必要な線区・方面)。
       // 現行のAI生成経路は常に単一区間だが、将来複数区間になっても
@@ -557,6 +575,22 @@ export async function buildTransferAndExitSegments(
   const exitFacilities = facilityCandidatesOf(facilityRecommendation, (pair) => pair.exit);
   const exitNames = exitFacilities.map((f) => f.name);
   const exitIsAlternatives = facilityRecommendation.state === "alternatives" && exitFacilities.length > 1;
+  const arrivalLine = candidate.chosen.segments[candidate.chosen.segments.length - 1]?.line ?? null;
+  const catalogRow = lookupCatalogStation(
+    catalogStationNameFrom({
+      stationName: candidate.arrivalStationName,
+      stationId: input.destinationStationId,
+    })
+  );
+  const gateExitRelation = classifyGateExitRelation({
+    gateNames,
+    exitNames,
+    arrivalLine,
+    arrivalOperator,
+    knownSeparateExitCount: catalogRow
+      ? catalogRow.facilities.filter((facility) => facility.facilityType === "exit").length
+      : null,
+  });
 
   const exitSegment: RouteSegment = {
     type: "exit",
@@ -566,21 +600,23 @@ export async function buildTransferAndExitSegments(
     direction: null,
     platform: null,
     boardingPosition: null,
-    facilities: exitFacilities.map((f) => ({
-      facilityType: "exit" as const,
-      name: f.name,
-      confidence: f.confidence,
-    })),
+    facilities:
+      gateExitRelation.kind === "gate_equals_exit"
+        ? gateFacilities.map((f) => ({
+            facilityType: "exit" as const,
+            name: f.name,
+            confidence: f.confidence,
+          }))
+        : exitFacilities.map((f) => ({
+            facilityType: "exit" as const,
+            name: f.name,
+            confidence: f.confidence,
+          })),
     // 具体的な出口名を確認できていない場合のみ「確認できません」と明示する。
     // 方角(◯◯側)を出口名の代用として表示しない設計は維持する(方角は
     // hasApproximateGuidance/approximateDirectionLabel経由で「推奨方向」として
     // 別途提示する)。
-    instruction:
-      exitNames.length === 0
-        ? "出口は確認できません。"
-        : exitIsAlternatives
-          ? `利用できる出口: ${exitNames.join(" / ")}(いずれか。現地の案内表示でご確認ください)。`
-          : `${exitNames[0]}から出てください。`,
+    instruction: exitInstructionFor(gateExitRelation, exitIsAlternatives, exitNames),
     // 出口自体が未確定(実在するかどうか未確認)の場合は、常にunavailable
     // (確認不能)として扱う。実在する場合は、実際のconfidenceをそのまま
     // 保持する(confidenceSummary.exit等との整合を保つため)。
@@ -594,12 +630,12 @@ export async function buildTransferAndExitSegments(
 
   // 方角(◯◯側)を出口名の代用にしない。実際の出口名を確認できなければ
   // 「確認できません」と明示する。alternatives時は「A / B(いずれか)」と表示する。
-  const recommendedExit =
-    exitNames.length === 0
-      ? "確認できません"
-      : exitIsAlternatives
-        ? `${exitNames.join(" / ")}(いずれか)`
-        : exitNames[0];
+  const recommendedExit = recommendedExitFor(
+    gateExitRelation,
+    exitIsAlternatives,
+    exitNames,
+    gateNames
+  );
 
   // 統合生成使用時はrecommendationを常にtier: "exact"として組み立てているため
   // (上記参照)、この判定は自動的にfalseになる。
@@ -628,6 +664,7 @@ export async function buildTransferAndExitSegments(
     // 不要に握りつぶさない/ai-review指摘、Codex参照)。
     unifiedBoardingPosition: unified && gateFacilities.length === 1 ? unified.boardingPosition : null,
     omitIndependentBoarding: Boolean(unified?.omitIndependentBoarding),
+    gateExitRelation,
   };
 
   // ここで1度だけ生成する(POST API経由・ストリーミング表示経由のどちらから
@@ -670,7 +707,10 @@ export function computeConfidenceSummary(
     ),
     transferGuide: worstConfidenceLevel([facilities.transferSegment.confidence]),
     gate: worstConfidenceLevel(gateConfidences),
-    exit: worstConfidenceLevel(exitConfidences),
+    exit:
+      facilities.gateExitRelation.kind === "gate_equals_exit"
+        ? worstConfidenceLevel(gateConfidences)
+        : worstConfidenceLevel(exitConfidences),
     accessibility:
       mode === "accessible" ? facilities.elevator?.confidence.level ?? "unavailable" : null,
   };
@@ -705,9 +745,13 @@ export function computeKeyInstruction(
     gateNames.length > 0 ? gateNames.join(" / ") : "改札は確認できません",
     exitNames.length > 0
       ? `${exitNames.join(" / ")}へ`
-      : directionLabel
-        ? `出口は確認できません(推奨方向: ${directionLabel}側)`
-        : "出口は確認できません",
+      : facilities.gateExitRelation.kind === "gate_equals_exit"
+        ? GATE_EQUALS_EXIT_LABEL
+        : gateNames.length > 0
+          ? "出口名は確認できません"
+          : directionLabel
+            ? `出口は確認できません(推奨方向: ${directionLabel}側)`
+            : "出口は確認できません",
   ];
 
   return { text: keyInstructionParts.join("、") + "。" };

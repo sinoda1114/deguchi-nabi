@@ -52,6 +52,7 @@ function okResult(overrides: Partial<FacilitiesBuildSuccess> = {}): FacilitiesSe
       approximateDirectionLabel: null,
       unifiedBoardingPosition: null,
       omitIndependentBoarding: false,
+      gateExitRelation: { kind: "separate_exit", reason: "test" },
       arrivalGuide: {
         steps: [
           {

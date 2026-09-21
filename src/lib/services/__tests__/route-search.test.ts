@@ -23,6 +23,8 @@ import type {
 } from "@/lib/domain/station";
 import { unavailableConfidence, type Confidence } from "@/lib/domain/confidence";
 import { haversineMeters } from "@/lib/geo/haversine";
+import { isScoringBothHit } from "@/lib/eval/both-hit";
+import { GATE_EQUALS_EXIT_INSTRUCTION } from "@/lib/domain/gate-exit-relation";
 
 const highConfidence: Confidence = {
   level: "high",
@@ -1224,6 +1226,137 @@ describe("buildTransferAndExitSegments", () => {
     }
     expect(outcome.result.hasApproximateGuidance).toBe(false);
     expect(getFacilities).not.toHaveBeenCalled();
+    expect(outcome.result.exitSegment.instruction).toBe(
+      "出口名は確認できません。改札を出て目的地へ向かってください。"
+    );
+    expect(isScoringBothHit(outcome.result.facilityRecommendation)).toBe(false);
+  });
+
+  test("2階改札口+相鉄で出口が無いときは改札＝出口の案内にし、BothHit にはしない", async () => {
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "2階改札口", confidence: highConfidence },
+          exit: null,
+          reason: null,
+        },
+      },
+      walkingSteps: [],
+    }));
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider([]),
+      getUnifiedArrivalGuide,
+      async getStation(stationId: string) {
+        const base = STATIONS[stationId];
+        if (stationId === "destination" && base) {
+          return { ...base, stationName: "横浜駅", operator: "相模鉄道", lines: ["相鉄本線"] };
+        }
+        return base ?? null;
+      },
+    };
+    const routeProvider: RouteProviderPort = {
+      async findRailRoutes() {
+        return [
+          {
+            originStationId: "origin",
+            arrivalStationId: "destination",
+            transferCount: 0,
+            estimatedDurationMinutes: 10,
+            segments: [
+              {
+                fromStationId: "origin",
+                toStationId: "destination",
+                line: "相鉄本線",
+                direction: "横浜方面",
+                platformId: PLATFORM.platformId,
+                estimatedMinutes: 10,
+              },
+            ],
+          },
+        ];
+      },
+    };
+    const deps: RouteSearchDeps = { routeProvider, stationProvider };
+    const input = { ...BASE_INPUT, mode: "easy" as const };
+    const candidate = await resolveRouteCandidate(input, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const outcome = await buildTransferAndExitSegments(candidate, input, deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    expect(outcome.result.gateExitRelation.kind).toBe("gate_equals_exit");
+    expect(outcome.result.exitSegment.instruction).toBe(GATE_EQUALS_EXIT_INSTRUCTION);
+    expect(outcome.result.recommendedExit).toBe("2階改札口");
+    expect(outcome.result.arrivalGuide.steps.some((s) => s.title === "この改札が出口です")).toBe(true);
+    expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
+    if (outcome.result.facilityRecommendation.state === "confirmed") {
+      expect(outcome.result.facilityRecommendation.pair.exit).toBeNull();
+    }
+    expect(isScoringBothHit(outcome.result.facilityRecommendation)).toBe(false);
+  });
+
+  test("渋谷収録に独立出口があるとき、改札だけでも改札＝出口にしない", async () => {
+    const getUnifiedArrivalGuide = vi.fn(async () => ({
+      boardingPosition: null,
+      facility: {
+        state: "confirmed" as const,
+        pair: {
+          gate: { name: "ハチ公改札", confidence: highConfidence },
+          exit: null,
+          reason: null,
+        },
+      },
+      walkingSteps: [],
+    }));
+    const stationProvider: StationProviderPort = {
+      ...buildStationProvider([]),
+      getUnifiedArrivalGuide,
+      async getStation(stationId: string) {
+        const base = STATIONS[stationId];
+        if (stationId === "destination" && base) {
+          return { ...base, stationName: "渋谷駅", operator: "JR東日本", lines: ["JR山手線"] };
+        }
+        return base ?? null;
+      },
+    };
+    const routeProvider: RouteProviderPort = {
+      async findRailRoutes() {
+        return [
+          {
+            originStationId: "origin",
+            arrivalStationId: "destination",
+            transferCount: 0,
+            estimatedDurationMinutes: 10,
+            segments: [
+              {
+                fromStationId: "origin",
+                toStationId: "destination",
+                line: "JR山手線",
+                direction: "渋谷方面",
+                platformId: PLATFORM.platformId,
+                estimatedMinutes: 10,
+              },
+            ],
+          },
+        ];
+      },
+    };
+    const deps: RouteSearchDeps = { routeProvider, stationProvider };
+    const candidate = await resolveRouteCandidate({ ...BASE_INPUT, mode: "easy" }, deps);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const outcome = await buildTransferAndExitSegments(candidate, { ...BASE_INPUT, mode: "easy" }, deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    expect(outcome.result.gateExitRelation.kind).toBe("exit_unknown");
+    expect(outcome.result.exitSegment.instruction).toContain("出口名は確認できません");
+    expect(isScoringBothHit(outcome.result.facilityRecommendation)).toBe(false);
   });
 
   test("統合生成が改札・出口とも確認できなかった場合は両方nullのまま返す(旧方式へのフォールバックはしない)", async () => {

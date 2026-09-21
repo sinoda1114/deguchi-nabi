@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { RouteSegment, RouteSegmentType } from "@/lib/domain/route";
 import { StationNode } from "./StationNode";
 import { DirectionArrow } from "./DirectionArrow";
@@ -7,6 +8,8 @@ import { SegmentDetail } from "./SegmentDetail";
 
 interface RouteDiagramProps {
   segments: RouteSegment[];
+  /** 出口ステップカードの直下に置く Maps リンク。 */
+  exitMapsLink?: ReactNode;
 }
 
 /**
@@ -50,7 +53,7 @@ const SEGMENT_STEP_LABEL: Record<RouteSegmentType, string> = {
  * カードごとに「信頼度: 低」等が並ぶと利用者を不安にさせるとの
  * フィードバックを受け、ページ末尾のConfidenceSummarySectionに一本化した)。
  */
-export function RouteDiagram({ segments }: RouteDiagramProps) {
+export function RouteDiagram({ segments, exitMapsLink }: RouteDiagramProps) {
   return (
     <div aria-label="ルートの簡易図" className="flex flex-col">
       {segments.map((segment, i) => (
@@ -84,6 +87,9 @@ export function RouteDiagram({ segments }: RouteDiagramProps) {
             ))}
             <SegmentDetail segment={segment} />
           </StationNode>
+          {segment.type === "exit" && exitMapsLink ? (
+            <div className="mt-2">{exitMapsLink}</div>
+          ) : null}
         </div>
       ))}
     </div>

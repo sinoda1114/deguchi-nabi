@@ -1,10 +1,13 @@
 import type { RouteSegment } from "@/lib/domain/route";
+import type { Coordinates } from "@/lib/domain/station";
 import type { FacilitiesSearchResult } from "@/lib/services/route-search";
 import { RouteDiagram } from "@/components/diagram/RouteDiagram";
+import { GoogleMapsDestinationLink } from "@/components/result/GoogleMapsDestinationLink";
 
 interface RouteDiagramSectionProps {
   trainSegmentsPromise: Promise<RouteSegment[]>;
   facilitiesPromise: Promise<FacilitiesSearchResult>;
+  destinationCoordinates: Coordinates | null;
 }
 
 /**
@@ -15,6 +18,7 @@ interface RouteDiagramSectionProps {
 export async function RouteDiagramSection({
   trainSegmentsPromise,
   facilitiesPromise,
+  destinationCoordinates,
 }: RouteDiagramSectionProps) {
   const [trainSegments, facilitiesResult] = await Promise.all([
     trainSegmentsPromise,
@@ -35,9 +39,16 @@ export async function RouteDiagramSection({
     facilitiesResult.result.exitSegment,
   ];
 
+  const exitMapsLink = destinationCoordinates ? (
+    <GoogleMapsDestinationLink
+      destinationCoordinates={destinationCoordinates}
+      className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--accent)] underline"
+    />
+  ) : null;
+
   return (
     <div className="stream-reveal">
-      <RouteDiagram segments={segments} />
+      <RouteDiagram segments={segments} exitMapsLink={exitMapsLink} />
     </div>
   );
 }

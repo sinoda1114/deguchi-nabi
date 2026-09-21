@@ -231,6 +231,7 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
           <RouteDiagramSection
             trainSegmentsPromise={trainSegmentsPromise}
             facilitiesPromise={facilitiesPromise}
+            destinationCoordinates={resolved.destinationCoordinates}
           />
         </Suspense>
       </section>

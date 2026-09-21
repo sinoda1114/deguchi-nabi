@@ -1,4 +1,5 @@
 import type { ArrivalGuide } from "@/lib/domain/route";
+import { GATE_EQUALS_EXIT_LABEL } from "@/lib/domain/gate-exit-relation";
 
 export const NOT_CONFIRMED = "確認できません";
 
@@ -30,12 +31,20 @@ export function ticketGateField(arrivalGuide: ArrivalGuide): OverviewField {
  * 必ず出口名を表示する(値自体は隠さない、ticketGateFieldと同じ方針)。
  */
 export function streetExitField(arrivalGuide: ArrivalGuide): OverviewField {
+  if (arrivalGuide.gateExitRelation?.kind === "gate_equals_exit") {
+    const gate = arrivalGuide.steps.find((s) => s.type === "ticket_gate");
+    return {
+      primary: gate?.title ?? GATE_EQUALS_EXIT_LABEL,
+      secondary: GATE_EQUALS_EXIT_LABEL,
+    };
+  }
   const step = arrivalGuide.steps.find((s) => s.type === "street_exit");
   if (step) {
     return { primary: step.title, secondary: undefined };
   }
+  const hasGate = arrivalGuide.steps.some((s) => s.type === "ticket_gate");
   return {
-    primary: NOT_CONFIRMED,
+    primary: hasGate ? "出口名は未確認" : NOT_CONFIRMED,
     secondary: arrivalGuide.destinationDirection
       ? `推奨方向: ${arrivalGuide.destinationDirection}側`
       : undefined,

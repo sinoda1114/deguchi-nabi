@@ -67,6 +67,7 @@ const OK_RESULT: FacilitiesSearchResult = {
     approximateDirectionLabel: null,
     unifiedBoardingPosition: null,
     omitIndependentBoarding: false,
+    gateExitRelation: { kind: "separate_exit", reason: "test" },
     arrivalGuide: {
       steps: [
         {
