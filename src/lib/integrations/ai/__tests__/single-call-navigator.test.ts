@@ -104,6 +104,7 @@ describe("buildNavigatorSearchPrompt", () => {
     );
     expect(prompt).toContain("収録データで「道玄坂改札」に確定");
     expect(prompt).toContain("改札名・出口名の選定・比較・逆算は行わず");
+    expect(prompt).toContain("改札が確定していても検索自体を省略してはならない");
     expect(prompt).not.toContain("目的地からの逆算");
     expect(prompt).not.toContain("複数改札がある駅での比較");
     expect(prompt).not.toContain("ハチ公改札");
@@ -445,6 +446,12 @@ describe("generateSingleCallNavigatorGuide", () => {
 
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
     expect(result?.lines).toEqual(["相鉄・東急直通線"]);
+
+    const firstPrompt = String(searchAndGenerateStructuredContentWithSearchText.mock.calls[0]?.[1]);
+    const retryPrompt = String(searchAndGenerateStructuredContentWithSearchText.mock.calls[1]?.[1]);
+    expect(firstPrompt).toContain("【収録確定の改札】");
+    expect(retryPrompt).not.toContain("【収録確定の改札】");
+    expect(retryPrompt).toContain("目的地からの逆算");
   });
 
   test("収録改札があるとき alternatives でも JEV 候補選択を呼ばない", async () => {
