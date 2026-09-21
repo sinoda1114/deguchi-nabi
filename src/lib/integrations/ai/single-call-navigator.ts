@@ -787,16 +787,15 @@ export async function generateSingleCallNavigatorGuide(
  * 固定するのではなく、実行中の1回分の呼び出しを二重に課金・待たせないための
  * 実装上の工夫)。
  */
-// 解決後30秒: 生成が完了してから、その結果を後続の呼び出しへ再利用してよい
-// 猶予時間(結果を長期間固定しないというPR #80の趣旨を保つため、完了後は
-// 短時間で共有を打ち切る)。生成中(in-flight)のエントリはこのTTLの対象外とし、
-// 解決するまで無期限に共有可能とする(下記getSharedSingleCallNavigatorGuide参照)。
-// 検索を伴う生成はリトライ込みで100秒超かかることがあり(MAX_ATTEMPTS×
-// SEARCH_REQUEST_TIMEOUT_MS)、生成開始時点からの固定TTLだと、resolveRoute
-// Candidate(findRailRoutes呼び出し)がまだ生成中の間にTTLが切れてしまい、
-// 直後のbuildTransferAndExitSegments(getUnifiedArrivalGuide呼び出し)が
-// キャッシュを再利用できず二重生成してしまう不具合を実機検証で確認したため、
-// 「解決後からのTTL」に設計を変更した。
+// 成功した解決後30秒: 非nullのfinalだけ後続へ再利用する。null / reject は
+// RetrySearchButton・RouteResultBody の「生成失敗はキャッシュされない」前提に合わせ
+// 即削除する(失敗を30秒残すと再検索が即「経路情報なし」になる)。
+// 生成中(in-flight)のエントリはこのTTLの対象外とし、解決するまで無期限に
+// 共有可能とする。検索を伴う生成はリトライ込みで100秒超かかることがあり
+// (MAX_ATTEMPTS×SEARCH_REQUEST_TIMEOUT_MS)、生成開始時点からの固定TTLだと、
+// resolveRouteCandidate(findRailRoutes)がまだ生成中の間にTTLが切れてしまい、
+// 直後のbuildTransferAndExitSegmentsがキャッシュを再利用できず二重生成する
+// 不具合を実機検証で確認したため、「解決後からのTTL」に設計を変更した。
 const SHARED_GUIDE_TTL_AFTER_SETTLE_MS = 30_000;
 const sharedGuideCache = new Map<
   string,
@@ -839,6 +838,23 @@ function sweepExpiredGuideCacheEntries(now: number): void {
   }
 }
 
+function settleSharedGuideCache(
+  cacheKey: string,
+  run: SingleCallNavigatorRun,
+  keep: boolean
+): void {
+  const current = sharedGuideCache.get(cacheKey);
+  if (!(current && current.run === run)) return;
+  if (!keep) {
+    sharedGuideCache.delete(cacheKey);
+    return;
+  }
+  sharedGuideCache.set(cacheKey, {
+    run,
+    expiresAt: Date.now() + SHARED_GUIDE_TTL_AFTER_SETTLE_MS,
+  });
+}
+
 /**
  * 既存の共有 run だけを返す。無いときは null（新しい Gemini は起動しない）。
  * 収録 BothHit が経路ヘッダの .first 号車を拾うために使う。
@@ -875,22 +891,19 @@ export function getSharedSingleCallNavigatorRun(
   const run = generator();
   // 生成中(in-flight)は expiresAt を Infinity にし、first決着後もfinal完了まで
   // 同一キーの後続呼び出しが同じrunを再利用できるようにする。
-  // final解決後にTTLを付け直し、以降はSHARED_GUIDE_TTL_AFTER_SETTLE_MS秒だけ
-  // 共有可能にする(PR #80の趣旨: 結果を長期間固定しない)。
+  // 成功したfinalだけ SHARED_GUIDE_TTL_AFTER_SETTLE_MS 共有する。
+  // null / reject は即削除し、再検索が同じ失敗を再利用しないようにする。
   sharedGuideCache.set(cacheKey, { run, expiresAt: Infinity });
-  
-  run.final
-    .finally(() => {
-      const current = sharedGuideCache.get(cacheKey);
-      if (current && current.run === run) {
-        sharedGuideCache.set(cacheKey, {
-          run,
-          expiresAt: Date.now() + SHARED_GUIDE_TTL_AFTER_SETTLE_MS,
-        });
-      }
-    })
-    .catch(() => {});
-  
+
+  run.final.then(
+    (guide) => {
+      settleSharedGuideCache(cacheKey, run, guide != null);
+    },
+    () => {
+      settleSharedGuideCache(cacheKey, run, false);
+    }
+  );
+
   return run;
 }
 
