@@ -115,6 +115,18 @@ describe("buildNavigatorSearchPrompt", () => {
     expect(prompt).not.toContain("【収録確定の改札】");
     expect(prompt).toContain("目的地からの逆算");
   });
+
+  test("includeCatalogGate を切ると座標があっても収録条項を出さない", () => {
+    const prompt = buildNavigatorSearchPrompt(
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates,
+      { includeCatalogGate: false }
+    );
+    expect(prompt).not.toContain("【収録確定の改札】");
+    expect(prompt).toContain("目的地からの逆算");
+  });
 });
 
 describe("generateSingleCallNavigatorGuide", () => {

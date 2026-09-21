@@ -185,7 +185,8 @@ export function buildNavigatorSearchPrompt(
   originStation: Station,
   destinationStation: Station,
   destinationHint: string | null,
-  destinationPlaceCoordinates: Coordinates | null = null
+  destinationPlaceCoordinates: Coordinates | null = null,
+  options?: { includeCatalogGate?: boolean }
 ): string {
   // destinationPlaceCoordinatesは目的地施設自体の実座標(駅の中心座標とは別物)。
   // 同名・支店違いの施設が複数存在する場合の曖昧性解消に使う
@@ -198,14 +199,17 @@ export function buildNavigatorSearchPrompt(
   const destinationTarget = destinationHint
     ? `${destinationStation.stationName}駅(${locationHint(destinationStation)})付近の「${destinationHint}」${destinationPlaceLocationHint ? `(${destinationPlaceLocationHint})` : ""}`
     : `${destinationStation.stationName}駅(${locationHint(destinationStation)})`;
-  const catalogGate = catalogChosenGateNameFromStation(
-    destinationStation,
-    destinationPlaceCoordinates
-  );
+  const catalogGate =
+    options?.includeCatalogGate === false
+      ? null
+      : catalogChosenGateNameFromStation(
+          destinationStation,
+          destinationPlaceCoordinates
+        );
 
   const facilityOrCatalogSection = catalogGate
     ? `【収録確定の改札】
-到着駅の改札は収録データで「${catalogGate}」に確定しています。改札名・出口名の選定・比較・逆算は行わず、改札・出口は断定しないでください。号車・ドア位置は「${catalogGate}」に近い到着ホーム上の停止位置だけを検索し、確認できた場合は号車を断定してください。理由には「${catalogGate}」またはその語幹を含めてください。他の改札を基準にしないでください。`
+到着駅の改札は収録データで「${catalogGate}」に確定しています。改札名・出口名の選定・比較・逆算は行わず、改札・出口は断定しないでください。号車・ドア位置は「${catalogGate}」に近い到着ホーム上の停止位置だけを検索し、確認できた場合は号車を断定してください。理由には「${catalogGate}」またはその語幹を含めてください。他の改札を基準にしないでください。改札が確定していても検索自体を省略してはならない。路線・乗換・所要時間・号車は必ずインターネット検索で確認すること。`
     : `【重要な原則：実在確認と適合性検証は別物】
 改札・出口が実在することと、その改札・出口が今回の目的地にとって最適であることは、まったく別の確認です。検索結果に実在する改札名が出てきたからといって、それを推測ではないと判断してはいけません。実在確認は適合性確認の代替になりません。
 
@@ -434,13 +438,15 @@ async function attemptGenerateSingleCallNavigatorGuide(
   destinationStation: Station,
   destinationHint: string | null,
   destinationPlaceCoordinates: Coordinates | null,
-  catalogChosenGateName?: string
+  catalogChosenGateName?: string,
+  includeCatalogGateInPrompt = true
 ): Promise<SingleCallNavigatorGuide | null> {
   const searchPrompt = buildNavigatorSearchPrompt(
     originStation,
     destinationStation,
     destinationHint,
-    destinationPlaceCoordinates
+    destinationPlaceCoordinates,
+    { includeCatalogGate: includeCatalogGateInPrompt }
   );
 
   const result = await searchAndGenerateStructuredContentWithSearchText<RawExtraction>(
@@ -675,17 +681,18 @@ export function generateSingleCallNavigatorRun(
     });
   }
 
-  const attempt = () =>
+  const attempt = (includeCatalogGateInPrompt: boolean) =>
     attemptGenerateSingleCallNavigatorGuide(
       apiKey,
       originStation,
       destinationStation,
       destinationHint,
       destinationPlaceCoordinates,
-      catalogChosenGateName
+      catalogChosenGateName,
+      includeCatalogGateInPrompt
     );
   
-  const attempt1 = attempt();
+  const attempt1 = attempt(true);
   
   const final = attempt1.then(async (r1) => {
     // 収録 BothHit: 経路+号車の .first があれば施設再試行しない。
@@ -712,7 +719,7 @@ export function generateSingleCallNavigatorRun(
     
     let r2: SingleCallNavigatorGuide | null;
     try {
-      r2 = await attempt();
+      r2 = await attempt(!catalogChosenGateName);
     } catch (error) {
       // 2回目が例外で失敗
       if (r1 === null) throw error; // 見せられる結果が無い
