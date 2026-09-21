@@ -59,10 +59,21 @@ describe("sharedBoardingFitsChosenGate", () => {
     ).toBe(false);
   });
 
-  test(".first 施設が無い一般理由は採用する", () => {
+  test(".first 施設が無い一般理由は捨てる（逆算再試行の号車を収録改札に載せない）", () => {
     expect(
       sharedBoardingFitsChosenGate({
         reason: "階段に近いため",
+        chosenGateName: "道玄坂改札",
+        siblingGateNames: SIBLINGS,
+        firstFacilityGateName: null,
+      })
+    ).toBe(false);
+  });
+
+  test("選んだ改札の語幹があれば施設が無くても採用する", () => {
+    expect(
+      sharedBoardingFitsChosenGate({
+        reason: "道玄坂方面の階段に近いため",
         chosenGateName: "道玄坂改札",
         siblingGateNames: SIBLINGS,
         firstFacilityGateName: null,

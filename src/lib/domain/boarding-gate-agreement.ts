@@ -33,7 +33,7 @@ export function boardingAgreesWithChosenGate(
 
 /**
  * 共有 .first 号車をカタログ改札に載せてよいか。
- * Gemini が別改札を断定しているのに reason が選んだ改札を指さないなら捨てる。
+ * 逆算再試行は別改札基準の号車を返しうるので、選んだ改札への言及を必須にする。
  */
 export function sharedBoardingFitsChosenGate(input: {
   reason: string;
@@ -41,10 +41,10 @@ export function sharedBoardingFitsChosenGate(input: {
   siblingGateNames: readonly string[];
   firstFacilityGateName: string | null;
 }): boolean {
+  if (!reasonCitesGate(input.reason, input.chosenGateName)) return false;
   if (
     input.firstFacilityGateName &&
-    input.firstFacilityGateName !== input.chosenGateName &&
-    !reasonCitesGate(input.reason, input.chosenGateName)
+    input.firstFacilityGateName !== input.chosenGateName
   ) {
     return false;
   }

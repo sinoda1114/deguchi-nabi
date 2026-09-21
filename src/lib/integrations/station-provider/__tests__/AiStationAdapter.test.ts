@@ -972,6 +972,45 @@ describe("AiStationAdapter.getUnifiedArrivalGuide", () => {
     }
   });
 
+  test("共有 .first 施設が無く一般理由なら号車は捨てる（逆算再試行を収録改札に載せない）", async () => {
+    peekSharedSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        lines: ["東急東横線"],
+        transferCount: 0,
+        estimatedMinutes: 20,
+        arrivalPlatformNumber: null,
+        boarding: {
+          carNumber: 2,
+          doorPosition: "後方",
+          reason: "階段に近いため",
+          confidenceLevel: "medium",
+        },
+        facility: { state: "unavailable", reason: "test" },
+      }),
+      final: Promise.resolve(null),
+    });
+    const adapter = new AiStationAdapter("test-key");
+    const result = await adapter.getUnifiedArrivalGuide(
+      "hr_shibuya",
+      "渋谷駅",
+      "JR",
+      ["山手線"],
+      "西谷駅",
+      "相鉄本線",
+      "横浜方面",
+      "居酒屋ウエチャベ",
+      { lat: 35.65861, lng: 139.70111 },
+      { lat: 35.65755, lng: 139.69735 },
+      "st_nishiya"
+    );
+
+    expect(result?.boardingPosition).toBeNull();
+    expect(result?.omitIndependentBoarding).toBe(true);
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("道玄坂改札");
+    }
+  });
+
   test("共有 .first が別改札を断定し reason が一般的なら号車は捨てる", async () => {
     peekSharedSingleCallNavigatorRun.mockReturnValue({
       first: Promise.resolve({
