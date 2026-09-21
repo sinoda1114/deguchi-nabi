@@ -7,7 +7,13 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import type { Station } from "@/lib/domain/station";
 import type { FavoriteDestination, User } from "@/lib/domain/user";
 import type { RouteMode } from "@/lib/domain/route";
-import { OriginField, repairStaleOriginChoice, type OriginChoice } from "./OriginField";
+import { OriginField } from "./OriginField";
+import {
+  repairStaleOriginChoice,
+  buildStationOriginChoice,
+  originSearchCoordinates,
+  type OriginChoice,
+} from "@/lib/services/origin-choice";
 import { DestinationField } from "./DestinationField";
 import { RouteModeSelector } from "./RouteModeSelector";
 import { SwapFieldsButton } from "./SwapFieldsButton";
@@ -93,7 +99,40 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
     setOrigin((current) => repairStaleOriginChoice(current, user, defaultStation));
   }, [user]);
 
-  const effectiveHomeStation = user ? homeStation : localDefaultOriginStation;
+  const originCoordinates = originSearchCoordinates(origin, {
+    homeStation: user ? homeStation : null,
+    localDefaultStation: localDefaultOriginStation,
+  });
+
+  const originStationId = origin?.type === "station" ? origin.stationId : null;
+  const originHasOwnCoordinates =
+    origin?.type === "station" &&
+    typeof origin.latitude === "number" &&
+    typeof origin.longitude === "number" &&
+    Number.isFinite(origin.latitude) &&
+    Number.isFinite(origin.longitude);
+
+  useEffect(() => {
+    if (!originStationId || originHasOwnCoordinates) return;
+    if (originCoordinates) return;
+    let cancelled = false;
+    fetchStation(originStationId)
+      .then((station) => {
+        if (cancelled || !station) return;
+        setOrigin((current) => {
+          if (current?.type !== "station" || current.stationId !== station.stationId) {
+            return current;
+          }
+          return buildStationOriginChoice(station);
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // originCoordinates は毎レンダー新しいオブジェクトになるので、有無は lat/lng で見る
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- originCoordinates の参照ではなく値
+  }, [originStationId, originHasOwnCoordinates, originCoordinates?.lat, originCoordinates?.lng]);
 
   function handleSetLocalDefaultOriginStation(station: Station) {
     if (persistLocalDefaultOriginStation(station)) {
@@ -201,21 +240,17 @@ export function SearchForm({ user, homeStation, favoriteDestinations = [] }: Sea
         onPress={handleSwap}
       />
       {/*
-        目的地検索の位置バイアスは常に「実効ホーム駅」(ログイン時はhomeStation、未ログイン時は
-        この端末のデフォルト出発駅)の座標を使う。origin が現在地/他駅選択でも追従はしない
-        近似(現在地座標は都度取得しておらずここでは扱えない)が、多くの場合出発地はこの駅で
-        あり、無バイアス(全国検索)よりは大幅に精度が上がるため許容する。
+        目的地検索の位置バイアスは選択中の出発地の座標を使う。
+        座標がまだ無い(古い下書きなど)ときは付けず、駅情報を引けたら付け直す。
+        Google Places は半径 30km の locationBias と 60km の距離フィルタがあるので、
+        遠い出発地を選ぶと同名の遠方店舗は候補から外れる。
       */}
       <DestinationField
         user={user}
         favoriteDestinations={favoriteDestinations}
         value={destination}
         onChange={setDestination}
-        originCoordinates={
-          effectiveHomeStation
-            ? { lat: effectiveHomeStation.latitude, lng: effectiveHomeStation.longitude }
-            : null
-        }
+        originCoordinates={originCoordinates}
       />
       {swapError ? <p className="text-sm text-[var(--danger)]">{swapError}</p> : null}
       <div>
