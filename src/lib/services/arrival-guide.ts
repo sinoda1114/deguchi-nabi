@@ -5,10 +5,7 @@ import type { StationProviderPort } from "@/lib/integrations/station-provider/St
 import { capConfidenceForProvenance } from "@/lib/domain/confidence";
 import type { FacilityPair, FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
 import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
-import {
-  GATE_EQUALS_EXIT_INSTRUCTION,
-  GATE_EQUALS_EXIT_LABEL,
-} from "@/lib/domain/gate-exit-relation";
+import { exitPresentationFor } from "@/lib/domain/gate-exit-relation";
 import { combinedFacilityConfidence } from "./confidence-engine";
 import { isGuideStepVisible } from "./guide-step-visibility";
 
@@ -151,10 +148,16 @@ export async function buildArrivalGuide(
   if (exitStep) {
     steps.push(exitStep);
   } else if (result.gateExitRelation?.kind === "gate_equals_exit" && gateStep) {
+    const presentation = exitPresentationFor(result.gateExitRelation, {
+      exitNames: [],
+      gateNames: [gateStep.title],
+      exitIsAlternatives: false,
+      directionLabel: result.approximateDirectionLabel,
+    });
     steps.push({
       type: "street_exit",
-      title: GATE_EQUALS_EXIT_LABEL,
-      instruction: GATE_EQUALS_EXIT_INSTRUCTION,
+      title: presentation.recommendedExit,
+      instruction: presentation.instruction,
       landmarks: [],
       confidence: gateStep.confidence,
       provenance: gateStep.provenance,

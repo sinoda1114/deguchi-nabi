@@ -113,6 +113,8 @@ const CANDIDATE: RouteCandidateResult = {
   destinationName: "到着駅",
   arrivalStationName: "到着駅",
   arrivalStationCoordinates: null,
+  arrivalOperator: "テスト鉄道",
+  arrivalStationLines: ["テスト線"],
   estimatedDurationMinutes: 10,
   transferCount: 0,
   routeWarnings: [],

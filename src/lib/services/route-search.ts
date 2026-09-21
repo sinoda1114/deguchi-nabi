@@ -15,9 +15,7 @@ import type { FacilityRecommendation } from "@/lib/domain/facility-recommendatio
 import { facilityCandidatesOf } from "@/lib/domain/facility-recommendation";
 import {
   classifyGateExitRelation,
-  exitInstructionFor,
-  GATE_EQUALS_EXIT_LABEL,
-  recommendedExitFor,
+  exitPresentationFor,
   type GateExitRelation,
 } from "@/lib/domain/gate-exit-relation";
 import {
@@ -111,6 +109,10 @@ export interface RouteCandidateResult {
    * buildTransferAndExitSegments 側での再フェッチを避けられる。
    */
   arrivalStationCoordinates: Coordinates | null;
+  /** 到着駅の事業者。HeartRails では空文字になりうる。 */
+  arrivalOperator: string | null;
+  /** 到着駅の路線一覧。改札＝出口判定の地下鉄文脈に使う。 */
+  arrivalStationLines: readonly string[];
   estimatedDurationMinutes: number;
   transferCount: number;
   routeWarnings: string[];
@@ -195,6 +197,8 @@ export async function resolveRouteCandidate(
     arrivalStationCoordinates: arrivalStation
       ? { lat: arrivalStation.latitude, lng: arrivalStation.longitude }
       : null,
+    arrivalOperator: arrivalStation?.operator ?? null,
+    arrivalStationLines: arrivalStation?.lines ?? [],
     estimatedDurationMinutes: chosen.estimatedDurationMinutes,
     transferCount: chosen.transferCount,
     routeWarnings,
@@ -399,13 +403,13 @@ export async function buildTransferAndExitSegments(
     input.mode !== "accessible" && Boolean(deps.stationProvider.getUnifiedArrivalGuide);
 
   let unified: UnifiedArrivalGuide | null = null;
-  let arrivalOperator: string | null = null;
+  const arrivalOperator = candidate.arrivalOperator;
+  const arrivalStationLines = candidate.arrivalStationLines;
   if (canTryUnified) {
     const [originStation, destinationStation] = await Promise.all([
       deps.stationProvider.getStation(input.originStationId),
       deps.stationProvider.getStation(input.destinationStationId),
     ]);
-    arrivalOperator = destinationStation?.operator ?? null;
     if (originStation && destinationStation) {
       // 到着駅に接続する最終区間(乗車位置の決定に必要な線区・方面)。
       // 現行のAI生成経路は常に単一区間だが、将来複数区間になっても
@@ -587,9 +591,17 @@ export async function buildTransferAndExitSegments(
     exitNames,
     arrivalLine,
     arrivalOperator,
+    stationLines: arrivalStationLines,
     knownSeparateExitCount: catalogRow
       ? catalogRow.facilities.filter((facility) => facility.facilityType === "exit").length
       : null,
+  });
+  const exitPresentation = exitPresentationFor(gateExitRelation, {
+    exitNames,
+    gateNames,
+    exitIsAlternatives,
+    directionLabel:
+      recommendation.tier === "approximate" ? recommendation.destinationDirectionLabel : null,
   });
 
   const exitSegment: RouteSegment = {
@@ -615,27 +627,26 @@ export async function buildTransferAndExitSegments(
     // 具体的な出口名を確認できていない場合のみ「確認できません」と明示する。
     // 方角(◯◯側)を出口名の代用として表示しない設計は維持する(方角は
     // hasApproximateGuidance/approximateDirectionLabel経由で「推奨方向」として
-    // 別途提示する)。
-    instruction: exitInstructionFor(gateExitRelation, exitIsAlternatives, exitNames),
+    // 別途提示する)。改札＝出口のときは失敗文を出さない。
+    instruction: exitPresentation.instruction,
     // 出口自体が未確定(実在するかどうか未確認)の場合は、常にunavailable
     // (確認不能)として扱う。実在する場合は、実際のconfidenceをそのまま
     // 保持する(confidenceSummary.exit等との整合を保つため)。
+    // 改札＝出口のときは改札の信頼度を出口欄に使う(確認不能にしない)。
     confidence:
-      exitFacilities.length === 0
-        ? unavailableConfidence("出口情報が不足しています")
-        : combinedFacilityConfidence(exitFacilities.map((f) => f.confidence)),
+      gateExitRelation.kind === "gate_equals_exit"
+        ? combinedFacilityConfidence(gateFacilities.map((f) => f.confidence))
+        : exitFacilities.length === 0
+          ? unavailableConfidence("出口情報が不足しています")
+          : combinedFacilityConfidence(exitFacilities.map((f) => f.confidence)),
     sourceReferences: [],
     warnings: [],
   };
 
   // 方角(◯◯側)を出口名の代用にしない。実際の出口名を確認できなければ
   // 「確認できません」と明示する。alternatives時は「A / B(いずれか)」と表示する。
-  const recommendedExit = recommendedExitFor(
-    gateExitRelation,
-    exitIsAlternatives,
-    exitNames,
-    gateNames
-  );
+  // 改札＝出口の recommendedExit は改札固有名ではなく「この改札が出口です」。
+  const recommendedExit = exitPresentation.recommendedExit;
 
   // 統合生成使用時はrecommendationを常にtier: "exact"として組み立てているため
   // (上記参照)、この判定は自動的にfalseになる。
@@ -725,33 +736,28 @@ export function computeKeyInstruction(
 ): KeyInstruction {
   const firstBoarding = trainSegments.find((s) => s.boardingPosition);
 
-  const directionLabel = facilities.approximateDirectionLabel;
   const gateNames = facilityCandidatesOf(facilities.facilityRecommendation, (p) => p.gate).map(
     (f) => f.name
   );
   const exitNames = facilityCandidatesOf(facilities.facilityRecommendation, (p) => p.exit).map(
     (f) => f.name
   );
+  const exitPresentation = exitPresentationFor(facilities.gateExitRelation, {
+    exitNames,
+    gateNames,
+    exitIsAlternatives:
+      facilities.facilityRecommendation.state === "alternatives" && exitNames.length > 1,
+    directionLabel: facilities.approximateDirectionLabel,
+  });
 
-  // 改札・出口は具体的な名称が確認できた場合のみ名指しする。方角
-  // (directionLabel)は改札名・出口名の代わりには使わず、出口が未確認の
-  // 場合にのみ「推奨方向」として付記する(ユーザーフィードバックに基づき、
-  // 「南側」等を出口名の代用にしない設計へ変更)。複数候補(alternatives)の
-  // 場合は"/"区切りで全候補名を列挙する。
+  // 改札・出口は具体的な名称が確認できた場合のみ名指しする。方角は
+  // 改札名・出口名の代わりには使わず、exitPresentation が推奨方向を付記する。
   const keyInstructionParts = [
     firstBoarding?.boardingPosition
       ? `${firstBoarding.boardingPosition.carNumber}号車付近に乗車`
       : "乗車位置は確認できません",
     gateNames.length > 0 ? gateNames.join(" / ") : "改札は確認できません",
-    exitNames.length > 0
-      ? `${exitNames.join(" / ")}へ`
-      : facilities.gateExitRelation.kind === "gate_equals_exit"
-        ? GATE_EQUALS_EXIT_LABEL
-        : gateNames.length > 0
-          ? "出口名は確認できません"
-          : directionLabel
-            ? `出口は確認できません(推奨方向: ${directionLabel}側)`
-            : "出口は確認できません",
+    exitPresentation.keyExitPhrase,
   ];
 
   return { text: keyInstructionParts.join("、") + "。" };

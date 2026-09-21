@@ -24,7 +24,10 @@ import type {
 import { unavailableConfidence, type Confidence } from "@/lib/domain/confidence";
 import { haversineMeters } from "@/lib/geo/haversine";
 import { isScoringBothHit } from "@/lib/eval/both-hit";
-import { GATE_EQUALS_EXIT_INSTRUCTION } from "@/lib/domain/gate-exit-relation";
+import {
+  GATE_EQUALS_EXIT_INSTRUCTION,
+  GATE_EQUALS_EXIT_LABEL,
+} from "@/lib/domain/gate-exit-relation";
 
 const highConfidence: Confidence = {
   level: "high",
@@ -1290,8 +1293,9 @@ describe("buildTransferAndExitSegments", () => {
 
     expect(outcome.result.gateExitRelation.kind).toBe("gate_equals_exit");
     expect(outcome.result.exitSegment.instruction).toBe(GATE_EQUALS_EXIT_INSTRUCTION);
-    expect(outcome.result.recommendedExit).toBe("2階改札口");
-    expect(outcome.result.arrivalGuide.steps.some((s) => s.title === "この改札が出口です")).toBe(true);
+    expect(outcome.result.recommendedExit).toBe(GATE_EQUALS_EXIT_LABEL);
+    expect(outcome.result.exitSegment.confidence.level).not.toBe("unavailable");
+    expect(outcome.result.arrivalGuide.steps.some((s) => s.title === GATE_EQUALS_EXIT_LABEL)).toBe(true);
     expect(outcome.result.facilityRecommendation.state).toBe("confirmed");
     if (outcome.result.facilityRecommendation.state === "confirmed") {
       expect(outcome.result.facilityRecommendation.pair.exit).toBeNull();

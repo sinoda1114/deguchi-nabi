@@ -22,7 +22,7 @@ function baseResult(overrides: Partial<BaseResult> = {}): BaseResult {
   return {
     facilityRecommendation: { state: "unavailable", reason: "test" },
     approximateDirectionLabel: null,
-    gateExitRelation: { kind: "exit_unknown", reason: "改札も出口も無い" },
+    gateExitRelation: { kind: "exit_unknown", missing: "gate_and_exit", reason: "改札も出口も無い" },
     ...overrides,
   };
 }

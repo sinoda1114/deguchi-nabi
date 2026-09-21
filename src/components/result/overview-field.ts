@@ -1,5 +1,5 @@
 import type { ArrivalGuide } from "@/lib/domain/route";
-import { GATE_EQUALS_EXIT_LABEL } from "@/lib/domain/gate-exit-relation";
+import { EXIT_UNKNOWN_SOFT_LABEL, exitPresentationFor } from "@/lib/domain/gate-exit-relation";
 
 export const NOT_CONFIRMED = "確認できません";
 
@@ -31,11 +31,18 @@ export function ticketGateField(arrivalGuide: ArrivalGuide): OverviewField {
  * 必ず出口名を表示する(値自体は隠さない、ticketGateFieldと同じ方針)。
  */
 export function streetExitField(arrivalGuide: ArrivalGuide): OverviewField {
-  if (arrivalGuide.gateExitRelation?.kind === "gate_equals_exit") {
+  const relation = arrivalGuide.gateExitRelation;
+  if (relation && relation.kind !== "separate_exit") {
     const gate = arrivalGuide.steps.find((s) => s.type === "ticket_gate");
+    const presentation = exitPresentationFor(relation, {
+      exitNames: [],
+      gateNames: gate ? [gate.title] : [],
+      exitIsAlternatives: false,
+      directionLabel: arrivalGuide.destinationDirection,
+    });
     return {
-      primary: gate?.title ?? GATE_EQUALS_EXIT_LABEL,
-      secondary: GATE_EQUALS_EXIT_LABEL,
+      primary: presentation.overviewPrimary,
+      secondary: presentation.overviewSecondary,
     };
   }
   const step = arrivalGuide.steps.find((s) => s.type === "street_exit");
@@ -44,7 +51,7 @@ export function streetExitField(arrivalGuide: ArrivalGuide): OverviewField {
   }
   const hasGate = arrivalGuide.steps.some((s) => s.type === "ticket_gate");
   return {
-    primary: hasGate ? "出口名は未確認" : NOT_CONFIRMED,
+    primary: hasGate ? EXIT_UNKNOWN_SOFT_LABEL : NOT_CONFIRMED,
     secondary: arrivalGuide.destinationDirection
       ? `推奨方向: ${arrivalGuide.destinationDirection}側`
       : undefined,
