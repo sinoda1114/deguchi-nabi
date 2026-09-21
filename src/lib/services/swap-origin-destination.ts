@@ -1,4 +1,4 @@
-import type { OriginChoice } from "@/components/search/OriginField";
+import { buildStationOriginChoice, type OriginChoice } from "@/components/search/origin-choice";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
 import type { Station } from "@/lib/domain/station";
 
@@ -23,11 +23,7 @@ async function resolveDestinationAsOrigin(
   fetchStation: (stationId: string) => Promise<Station | null>
 ): Promise<OriginChoice | null> {
   if (destination.kind === "station") {
-    return {
-      type: "station",
-      stationId: destination.station.stationId,
-      label: destination.station.stationName,
-    };
+    return buildStationOriginChoice(destination.station);
   }
 
   // 施設からは出発できないため、最寄り駅候補の先頭を出発駅として採用する。
@@ -37,13 +33,13 @@ async function resolveDestinationAsOrigin(
   const station = await fetchStation(nearestStationId);
   if (!station) return null;
 
-  return { type: "station", stationId: station.stationId, label: station.stationName };
+  return buildStationOriginChoice(station);
 }
 
 /**
  * 出発地と目的地を入れ替える。
  *
- * 出発地(OriginChoice)は駅ID+ラベルしか持たない軽量な型、目的地(SearchCandidate)は
+ * 出発地(OriginChoice)は駅ID・ラベルと、わかれば座標を持つ。目的地(SearchCandidate)は
  * 駅・施設の完全なオブジェクトを持つ型という非対称な設計のため、単純な代入では
  * 入れ替えられない。不足する駅の完全情報は `fetchStation` (通常は
  * `/api/stations/[stationId]` 経由)で補って変換する。

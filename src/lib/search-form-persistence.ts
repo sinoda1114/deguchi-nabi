@@ -1,6 +1,6 @@
 import type { RouteMode } from "@/lib/domain/route";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
-import type { OriginChoice } from "@/components/search/OriginField";
+import type { OriginChoice } from "@/components/search/origin-choice";
 
 export interface SearchFormDraft {
   origin: OriginChoice | null;

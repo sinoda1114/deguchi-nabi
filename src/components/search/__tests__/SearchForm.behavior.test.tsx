@@ -173,4 +173,63 @@ describe("SearchForm 目的地検索の位置バイアスは選択中の出発�
     expect(params?.get("lat")).not.toBe(String(NISHIYA.latitude));
     expect(params?.get("lng")).not.toBe(String(NISHIYA.longitude));
   });
+
+  test("出発地入力中で未選択なら目的地検索に lat/lng を付けない(登録駅へフォールバックしない)", async () => {
+    const fetchMock = await renderForm();
+    const originInput = container.querySelector(
+      'input[aria-label="出発駅を検索"]'
+    ) as HTMLInputElement;
+
+    act(() => {
+      typeInto(originInput, "名古屋");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const destInput = container.querySelector('input[aria-label="目的地"]') as HTMLInputElement;
+    act(() => {
+      destInput.dispatchEvent(new Event("focus", { bubbles: true }));
+      typeInto(destInput, "焼肉ワガママ気まま");
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    const params = lastPlacesSearchParams(fetchMock);
+    expect(params).not.toBeNull();
+    expect(params?.get("q")).toBe("焼肉ワガママ気まま");
+    expect(params?.has("lat")).toBe(false);
+    expect(params?.has("lng")).toBe(false);
+  });
+
+  test("座標の無い出発地下書きは駅APIで補い、その lat/lng を目的地検索に使う", async () => {
+    window.sessionStorage.setItem(
+      "deguchi-nabi:search-form-draft",
+      JSON.stringify({
+        origin: { type: "station", stationId: NAGOYA.stationId, label: NAGOYA.stationName },
+        destination: null,
+        mode: "easy",
+      })
+    );
+
+    const fetchMock = await renderForm();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const destInput = container.querySelector('input[aria-label="目的地"]') as HTMLInputElement;
+    act(() => {
+      destInput.dispatchEvent(new Event("focus", { bubbles: true }));
+      typeInto(destInput, "焼肉ワガママ気まま");
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    const params = lastPlacesSearchParams(fetchMock);
+    expect(params).not.toBeNull();
+    expect(params?.get("lat")).toBe(String(NAGOYA.latitude));
+    expect(params?.get("lng")).toBe(String(NAGOYA.longitude));
+  });
 });

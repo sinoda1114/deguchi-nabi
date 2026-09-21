@@ -84,6 +84,8 @@ describe("OriginField 実効ホーム駅ボタン(サーバー側 resolveOriginD
       type: "station",
       stationId: "st_nishiya",
       label: "西谷駅",
+      latitude: 35.4696,
+      longitude: 139.5679,
     });
   });
 

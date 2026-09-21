@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { swapOriginAndDestination } from "@/lib/services/swap-origin-destination";
-import type { OriginChoice } from "@/components/search/OriginField";
+import type { OriginChoice } from "@/components/search/origin-choice";
 import type { SearchCandidate } from "@/lib/services/place-resolution";
 import type { Station } from "@/lib/domain/station";
 
@@ -47,6 +47,8 @@ describe("swapOriginAndDestination", () => {
       type: "station",
       stationId: NISHIYA_STATION.stationId,
       label: NISHIYA_STATION.stationName,
+      latitude: NISHIYA_STATION.latitude,
+      longitude: NISHIYA_STATION.longitude,
     });
     expect(result?.newDestination).toEqual({ kind: "station", station: HOME_STATION });
     // 駅の完全情報はどちらもpropsだけで揃うため、追加APIフェッチは不要
@@ -71,6 +73,8 @@ describe("swapOriginAndDestination", () => {
       type: "station",
       stationId: YOKOHAMA_STATION.stationId,
       label: YOKOHAMA_STATION.stationName,
+      latitude: YOKOHAMA_STATION.latitude,
+      longitude: YOKOHAMA_STATION.longitude,
     });
     expect(result?.newDestination).toEqual({ kind: "station", station: NISHIYA_STATION });
     expect(fetchStation).toHaveBeenCalledWith(NISHIYA_STATION.stationId);
@@ -101,6 +105,8 @@ describe("swapOriginAndDestination", () => {
       type: "station",
       stationId: YOKOHAMA_STATION.stationId,
       label: YOKOHAMA_STATION.stationName,
+      latitude: YOKOHAMA_STATION.latitude,
+      longitude: YOKOHAMA_STATION.longitude,
     });
     expect(result?.newDestination).toEqual({ kind: "station", station: HOME_STATION });
     expect(fetchStation).toHaveBeenCalledWith(YOKOHAMA_STATION.stationId);

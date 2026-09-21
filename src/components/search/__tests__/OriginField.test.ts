@@ -62,7 +62,13 @@ describe("buildHomeStationOriginChoice", () => {
 
   test("未ログイン時は type: home_station を使わず、具体的な駅IDを持つ type: station を返す(サーバー側はhome_stationをログインユーザーのDB登録駅としてしか解釈できず、未ログインだと「最寄り駅が登録されていません」エラーになるため)", () => {
     const result = buildHomeStationOriginChoice(null, HOME_STATION);
-    expect(result).toEqual({ type: "station", stationId: "st_shibuya", label: "渋谷駅" });
+    expect(result).toEqual({
+      type: "station",
+      stationId: "st_shibuya",
+      label: "渋谷駅",
+      latitude: 35.658,
+      longitude: 139.7016,
+    });
   });
 });
 
@@ -92,7 +98,13 @@ describe("repairStaleOriginChoice", () => {
   test("未ログイン中に type: home_station の壊れた下書きが残っている場合、デフォルト駅を使ってtype: stationに補正する", () => {
     const staleOrigin: OriginChoice = { type: "home_station", label: "西谷駅" };
     const result = repairStaleOriginChoice(staleOrigin, null, HOME_STATION);
-    expect(result).toEqual({ type: "station", stationId: "st_shibuya", label: "渋谷駅" });
+    expect(result).toEqual({
+      type: "station",
+      stationId: "st_shibuya",
+      label: "渋谷駅",
+      latitude: 35.658,
+      longitude: 139.7016,
+    });
   });
 
   test("未ログイン中にtype: home_stationの下書きが残っているが、デフォルト駅も無い(取得失敗等)場合はnullにする(送信不能な状態を維持しないため)", () => {
@@ -103,7 +115,13 @@ describe("repairStaleOriginChoice", () => {
 
   test("未ログイン中にoriginが未選択で、デフォルト駅があれば自動選択する(従来の自動選択動作)", () => {
     const result = repairStaleOriginChoice(null, null, HOME_STATION);
-    expect(result).toEqual({ type: "station", stationId: "st_shibuya", label: "渋谷駅" });
+    expect(result).toEqual({
+      type: "station",
+      stationId: "st_shibuya",
+      label: "渋谷駅",
+      latitude: 35.658,
+      longitude: 139.7016,
+    });
   });
 
   test("未ログイン中に既にtype: stationが選択されていれば変更しない", () => {
