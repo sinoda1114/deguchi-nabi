@@ -22,10 +22,14 @@ vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
 const mockEvaluateRetryGate = vi.fn();
 const mockIsJevAvailable = vi.fn();
 const mockCreateJevConfig = vi.fn();
+const mockSelectBestFacilityPair = vi.fn();
 vi.mock("@/lib/integrations/ai/JevClient", () => ({
   evaluateRetryGate: (...args: unknown[]) => mockEvaluateRetryGate(...args),
   isJevAvailable: () => mockIsJevAvailable(),
   createJevConfig: () => mockCreateJevConfig(),
+  selectBestFacilityPair: (...args: unknown[]) => mockSelectBestFacilityPair(...args),
+  evaluateRouteConsistency: vi.fn(),
+  evaluateFacilityCompleteness: vi.fn(),
 }));
 
 const NISHIYA: Station = {
@@ -89,6 +93,24 @@ describe("buildNavigatorSearchPrompt", () => {
     expect(prompt).toContain("複数改札がある駅での比較");
     expect(prompt).toContain("確証ありと判断するための条件");
   });
+
+  test("収録確定の改札があるとき号車をその改札基準にし施設選定を省略する条項を足す", () => {
+    const prompt = buildNavigatorSearchPrompt(
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      { lat: 35.65755, lng: 139.69735 },
+      "道玄坂改札"
+    );
+    expect(prompt).toContain("収録データで「道玄坂改札」に確定");
+    expect(prompt).toContain("改札名・出口名の選定・比較・逆算に検索時間を使わず");
+    expect(prompt).not.toContain("ハチ公改札");
+  });
+
+  test("収録改札が無いときは施設選定条項を足さない", () => {
+    const prompt = buildNavigatorSearchPrompt(NISHIYA, SHIBUYA, "ウエチャベ");
+    expect(prompt).not.toContain("【収録確定の改札】");
+  });
 });
 
 describe("generateSingleCallNavigatorGuide", () => {
@@ -98,6 +120,7 @@ describe("generateSingleCallNavigatorGuide", () => {
     mockIsJevAvailable.mockReturnValue(false);
     mockCreateJevConfig.mockReturnValue(null);
     mockEvaluateRetryGate.mockResolvedValue({ shouldRetry: false });
+    mockSelectBestFacilityPair.mockReset();
   });
 
   test("正常な抽出結果からguideを組み立てる(改札・出口は1組のみ→confirmed)", async () => {
@@ -375,6 +398,82 @@ describe("generateSingleCallNavigatorGuide", () => {
 
     await generateSingleCallNavigatorGuide("key", NISHIYA, SHIBUYA, "ウエチャベ");
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+  });
+
+  test("収録改札があるとき facility unavailable でも施設再試行しない(経路の .first を維持)", async () => {
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult({
+        lines: ["相鉄本線"],
+        transferCount: 0,
+        estimatedMinutes: 13,
+        boardingCarNumber: 8,
+        boardingDoorPosition: "前方",
+        boardingReason: "道玄坂改札の階段に近いため",
+        boardingConfidence: "medium",
+      })
+    );
+
+    const result = await generateSingleCallNavigatorGuide(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      { lat: 35.65755, lng: 139.69735 },
+      { catalogChosenGateName: "道玄坂改札" }
+    );
+
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+    expect(result?.lines).toEqual(["相鉄本線"]);
+    expect(result?.boarding?.carNumber).toBe(8);
+    expect(result?.facility.state).toBe("unavailable");
+  });
+
+  test("収録改札があっても 1 回目が null なら経路再試行する", async () => {
+    searchAndGenerateStructuredContentWithSearchText
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(mockResult(VALID_RAW));
+
+    const result = await generateSingleCallNavigatorGuide(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      { lat: 35.65755, lng: 139.69735 },
+      { catalogChosenGateName: "道玄坂改札" }
+    );
+
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(result?.lines).toEqual(["相鉄・東急直通線"]);
+  });
+
+  test("収録改札があるとき alternatives でも JEV 候補選択を呼ばない", async () => {
+    mockIsJevAvailable.mockReturnValue(true);
+    mockCreateJevConfig.mockReturnValue({ apiKey: "jev" });
+    mockSelectBestFacilityPair.mockResolvedValue({ selectedIndex: 0, reason: "should not run" });
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          ...VALID_RAW,
+          facilityCandidates: [
+            { gateName: "道玄坂改札", exitName: "A1出口", confidence: "medium" },
+            { gateName: "ハチ公改札", exitName: "ハチ公口", confidence: "medium" },
+          ],
+        },
+        `${VALID_SEARCH_TEXT} ハチ公改札 ハチ公口`
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      { lat: 35.65755, lng: 139.69735 },
+      { catalogChosenGateName: "道玄坂改札" }
+    );
+
+    expect(mockSelectBestFacilityPair).not.toHaveBeenCalled();
+    expect(result?.facility.state).toBe("alternatives");
   });
 
   describe("JEV統合（Phase 1: retry gate判定）", () => {

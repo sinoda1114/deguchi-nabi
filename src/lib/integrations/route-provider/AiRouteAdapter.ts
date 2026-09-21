@@ -1,11 +1,12 @@
 import type { RailRouteCandidate, RouteProviderPort } from "./RouteProviderPort";
-import type { Coordinates } from "@/lib/domain/station";
+import type { Coordinates, Station } from "@/lib/domain/station";
 import type { StationProviderPort } from "@/lib/integrations/station-provider/StationProviderPort";
 import {
   buildSharedGuideCacheKey,
   generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorRun,
 } from "@/lib/integrations/ai/single-call-navigator";
+import { catalogChosenGateNameOf } from "@/lib/services/catalog-facility-resolver";
 
 /**
  * 全駅間の経路をGeminiのGoogle Search Groundingで検索の裏付けを取って生成する
@@ -48,15 +49,26 @@ export class AiRouteAdapter implements RouteProviderPort {
       destinationHint,
       destinationPlaceCoordinates
     );
+    const catalogChosenGateName = catalogChosenGateNameFor(
+      destinationStation,
+      destinationPlaceCoordinates
+    );
+    if (catalogChosenGateName) {
+      console.info("[exit-quality]", {
+        event: "catalog_both_hit_at_route",
+        gate: catalogChosenGateName,
+      });
+    }
     // 二段階生成: first（最初の非null結果）を使用してヘッダ表示を高速化（体感≈56秒）
-    // AiStationAdapterは同じrunのfinalを待つため、Gemini呼び出しは1回のまま
+    // 収録 BothHit では AiStationAdapter は .final を待たず .first 号車を peek する。
     const guide = await getSharedSingleCallNavigatorRun(cacheKey, () =>
       generateSingleCallNavigatorRun(
         this.geminiApiKey,
         originStation,
         destinationStation,
         destinationHint,
-        destinationPlaceCoordinates
+        destinationPlaceCoordinates,
+        catalogChosenGateName ? { catalogChosenGateName } : undefined
       )
     ).first;
     if (!guide) return [];
@@ -81,4 +93,22 @@ export class AiRouteAdapter implements RouteProviderPort {
       },
     ];
   }
+}
+
+function catalogChosenGateNameFor(
+  destinationStation: Station,
+  destinationPlaceCoordinates: Coordinates | null
+): string | undefined {
+  if (!destinationPlaceCoordinates) return undefined;
+  return (
+    catalogChosenGateNameOf({
+      stationName: destinationStation.stationName,
+      stationId: destinationStation.stationId,
+      stationCoordinates: {
+        lat: destinationStation.latitude,
+        lng: destinationStation.longitude,
+      },
+      destinationCoordinates: destinationPlaceCoordinates,
+    }) ?? undefined
+  );
 }

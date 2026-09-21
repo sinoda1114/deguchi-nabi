@@ -87,9 +87,15 @@ async function boardingFromSharedFirst(
   const chosen = uniqueChosenGateOf(recommendation);
   if (!chosen) return null;
   const peeked = peekSharedSingleCallNavigatorRun(cacheKey);
-  if (!peeked) return null;
+  if (!peeked) {
+    console.info("[exit-quality]", { event: "peek_miss", gate: chosen.name });
+    return null;
+  }
   const first = await peeked.first;
-  if (!first?.boarding) return null;
+  if (!first?.boarding) {
+    console.info("[exit-quality]", { event: "peek_empty_boarding", gate: chosen.name });
+    return null;
+  }
   if (
     !sharedBoardingFitsChosenGate({
       reason: first.boarding.reason,
@@ -98,8 +104,14 @@ async function boardingFromSharedFirst(
       firstFacilityGateName: firstFacilityGateName(first.facility),
     })
   ) {
+    console.info("[exit-quality]", {
+      event: "peek_reject",
+      gate: chosen.name,
+      firstFacilityGate: firstFacilityGateName(first.facility),
+    });
     return null;
   }
+  console.info("[exit-quality]", { event: "peek_hit", gate: chosen.name });
   return {
     carNumber: first.boarding.carNumber,
     doorPosition: first.boarding.doorPosition,
@@ -292,6 +304,7 @@ export class AiStationAdapter implements StationProviderPort {
       ride.direction
     );
 
+    console.info("[exit-quality]", { event: "for_gate_gemini", gate: gate.name });
     return generateBoardingPositionForChosenGate(
       this.geminiApiKey,
       ride,

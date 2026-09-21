@@ -1,9 +1,14 @@
-import type { NamedFacility, FacilityRecommendation } from "@/lib/domain/facility-recommendation";
+import {
+  uniqueChosenGateOf,
+  type NamedFacility,
+  type FacilityRecommendation,
+} from "@/lib/domain/facility-recommendation";
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
 import {
   catalogStationNameFrom,
   lookupCatalogStation,
 } from "@/lib/data/station-facility-catalog";
+import { isScoringBothHit } from "@/lib/eval/both-hit";
 import {
   linkedGateForExit,
   resolveExitRecommendation,
@@ -111,4 +116,14 @@ export function resolveFacilityFromCatalog(input: CatalogResolveInput): CatalogR
     },
     facilities,
   };
+}
+
+/**
+ * 収録だけで BothHit したときの改札名。Gemini 経路生成の号車ヒントと
+ * 施設再試行スキップに使う。OSM / 分割生成は見ない（経路ヘッダ開始前の同期判定）。
+ */
+export function catalogChosenGateNameOf(input: CatalogResolveInput): string | null {
+  const { recommendation } = resolveFacilityFromCatalog(input);
+  if (!isScoringBothHit(recommendation)) return null;
+  return uniqueChosenGateOf(recommendation)?.name ?? null;
 }

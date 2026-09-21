@@ -398,6 +398,11 @@ ${platformHint}
   );
   const citedGate = gateName.trim();
   if (!boarding || !reasonCitesGate(boarding.reason, citedGate)) {
+    console.info("[exit-quality]", {
+      event: "for_gate_discard",
+      gate: citedGate,
+      hadBoarding: Boolean(boarding),
+    });
     return null;
   }
   return boarding;

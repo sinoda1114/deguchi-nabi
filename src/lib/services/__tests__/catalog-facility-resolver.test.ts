@@ -4,7 +4,10 @@ import {
   lookupCatalogStation,
   normalizeStationName,
 } from "@/lib/data/station-facility-catalog";
-import { resolveFacilityFromCatalog } from "@/lib/services/catalog-facility-resolver";
+import {
+  catalogChosenGateNameOf,
+  resolveFacilityFromCatalog,
+} from "@/lib/services/catalog-facility-resolver";
 import { isScoringBothHit } from "@/lib/eval/both-hit";
 import {
   SHIBUYA_EAST_REJECT,
@@ -61,6 +64,26 @@ describe("resolveFacilityFromCatalog 西谷→ウエチャベ", () => {
     }).recommendation;
     expect(isScoringBothHit(rec)).toBe(false);
     expect(rec.state).toBe("unavailable");
+  });
+
+  test("catalogChosenGateNameOf はウエチャベで道玄坂改札を返す", () => {
+    expect(
+      catalogChosenGateNameOf({
+        stationName: "渋谷駅",
+        stationCoordinates: { lat: 35.65861, lng: 139.70111 },
+        destinationCoordinates: UECHABE_DOGENZAKA.coordinates,
+      })
+    ).toBe("道玄坂改札");
+  });
+
+  test("catalogChosenGateNameOf は収録の無い駅では null", () => {
+    expect(
+      catalogChosenGateNameOf({
+        stationName: "横浜駅",
+        stationCoordinates: { lat: 35.466, lng: 139.622 },
+        destinationCoordinates: { lat: 35.465, lng: 139.622 },
+      })
+    ).toBeNull();
   });
 
   test("収録の無い駅は unavailable", () => {
