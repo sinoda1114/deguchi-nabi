@@ -8,7 +8,14 @@ import {
   buildTransferAndExitSegments,
   approximateWalkingDistanceMeters,
   estimateWalkingMinutes,
+  buildRouteId,
 } from "@/lib/services/route-search";
+import type { FacilitiesSearchResult, RouteCandidateResult } from "@/lib/services/route-search";
+import {
+  getCachedRouteResult,
+  setCachedRouteResult,
+  buildReloadCacheKey,
+} from "@/lib/services/route-result-cache";
 import { addHistoryEntry } from "@/lib/store/history-repository";
 import { buildReturnRouteUrl } from "@/lib/services/return-route-link";
 import type { AccessibilityCondition, RouteMode } from "@/lib/domain/route";
@@ -41,6 +48,14 @@ interface RouteResultBodyProps {
     | { type: "station"; stationId: string };
   mode: RouteMode;
   user: Awaited<ReturnType<typeof getSessionUser>>;
+  /**
+   * リロード耐性キャッシュ(route-result-cache.ts)のキーにIPアドレスを含めるため
+   * page.tsxから受け取る(既にIPレートリミットで取得済みのextractClientIpの結果を
+   * 再利用し、二重取得しない)。routeId単体をキーにすると、無関係な別ユーザーが
+   * 同じ経路を10分以内に検索した場合に他人の生成結果を受け取れてしまうため
+   * (/ai-review指摘、Codex参照)。
+   */
+  clientIp: string;
 }
 
 /**
@@ -51,7 +66,7 @@ interface RouteResultBodyProps {
  * RouteResultBodySkeletonが表示され、検索直後に白い画面のまま止まって
  * 見えることを防ぐ(「検索画面が長い」というユーザーフィードバックに基づく)。
  */
-export async function RouteResultBody({ origin, destination, mode, user }: RouteResultBodyProps) {
+export async function RouteResultBody({ origin, destination, mode, user, clientIp }: RouteResultBodyProps) {
   // origin/destination の解決(stationId特定)は経路全体の解決より軽いため先にawaitする。
   // これが失敗する場合、経路自体を組み立てられずストリーミング表示のしようがない。
   const resolved = await resolveOriginDestination(
@@ -75,46 +90,90 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
     accessibility: DEFAULT_ACCESSIBILITY,
   };
 
-  // 経路候補自体(号車・改札・出口を除く骨格)が無ければ何も表示できないためawaitする。
-  const candidate = await resolveRouteCandidate(searchInput, { routeProvider, stationProvider });
+  // リロード耐性キャッシュ(2026-07-22追加)。モバイルブラウザは検索中に
+  // Google Mapsアプリ/タブへ離脱すると、メモリ節約のためバックグラウンドタブを
+  // 破棄することがあり、戻ってきたときのフルリロードでAI生成(最大数十秒〜
+  // 100秒超)が最初からやり直しになっていた(ユーザー報告)。routeId(出発駅+
+  // 到着駅+モード)をキーに、直近10分以内の同じ検索結果があればそれを使う
+  // (route-result-cache.tsのJSDoc参照。PR #80が撤去した「異なるリクエスト間の
+  // 使い回し」とは異なり、同一routeId・短TTLに限定したユーザー承認済みの設計)。
+  const routeId = buildRouteId(resolved.originStationId, resolved.destinationStationId, mode);
+  // ログイン済みなら改ざん不能なセッションCookie由来のuserIdを優先する
+  // (x-forwarded-for等スプーフィング可能なIPだけでスコープすると、CGNAT/公衆
+  // Wi-Fi共有や偽装ヘッダで他人の結果、特にorigin=home_stationでは「自宅最寄り駅」
+  // まで読めてしまう。security-reviewer指摘、route-result-cache.tsのJSDoc参照)。
+  const cacheKey = buildReloadCacheKey(routeId, user ? { userId: user.userId } : { clientIp });
+  const cached = await getCachedRouteResult(cacheKey);
 
-  if (!candidate.ok) {
-    // 経路探索(AI/Web検索によるルート生成を含む)の失敗。
-    // タイムアウトや一時的なAPI障害の可能性があり、生成失敗はキャッシュされない
-    // ため再試行で成功しうる。
-    return <ResultErrorMessage message={candidate.reason} retryable />;
+  let candidate: RouteCandidateResult;
+  let facilitiesPromise: Promise<FacilitiesSearchResult>;
+  let trainSegmentsPromise: ReturnType<typeof buildTrainSegments>;
+
+  if (cached) {
+    candidate = cached.candidate;
+    facilitiesPromise = Promise.resolve({ ok: true, result: cached.facilitiesResult });
+    trainSegmentsPromise = Promise.resolve(cached.trainSegments);
+  } else {
+    // 経路候補自体(号車・改札・出口を除く骨格)が無ければ何も表示できないためawaitする。
+    const candidateResult = await resolveRouteCandidate(searchInput, { routeProvider, stationProvider });
+
+    if (!candidateResult.ok) {
+      // 経路探索(AI/Web検索によるルート生成を含む)の失敗。
+      // タイムアウトや一時的なAPI障害の可能性があり、生成失敗はキャッシュされない
+      // ため再試行で成功しうる。
+      return <ResultErrorMessage message={candidateResult.reason} retryable />;
+    }
+    candidate = candidateResult;
+
+    // ここから先(号車・改札・出口情報)は Gemini 呼び出しを含み数秒〜数十秒かかりうるため、
+    // await せず Promise のまま各セクションへ渡す。同じ Promise インスタンスは
+    // 「生成元の処理を1回だけ表す」という JS の仕様上、複数コンポーネントで
+    // 共有しても buildTrainSegments/buildTransferAndExitSegments が重複実行されることはない。
+    //
+    // accessibleモードは統合生成を使わない(route-search.ts canTryUnified参照)
+    // ため、両者を独立実行する(Phase 3時点の並列動作を維持)。
+    //
+    // accessible以外のモードはtrainSegmentsPromiseがfacilitiesPromiseの解決を
+    // .then()で待ってからbuildTrainSegmentsを呼ぶ(2026-07-20
+    // fix/unified-guide-boarding-and-operator-disambiguation)。統合生成
+    // (facilitiesPromise内)がgateを基準に決めた乗車位置をbuildTrainSegments
+    // へ渡すことで、両者が無関係な改札を基準にした号車を独立に返してしまう
+    // 不整合を防ぐ(西谷駅→横浜駅の実機検証で確認済みの不具合)。通常ケース
+    // (統合生成成功時)ではbuildTrainSegments自体は追加のAI呼び出しをしない
+    // ため、直列化による体感速度への影響は小さい(route-search.ts
+    // searchRouteGuideの並列/直列分岐、maxDurationのコメントも参照)。
+    facilitiesPromise = buildTransferAndExitSegments(candidate, searchInput, {
+      stationProvider,
+    });
+    trainSegmentsPromise =
+      mode === "accessible"
+        ? buildTrainSegments(candidate.chosen, { stationProvider })
+        : facilitiesPromise.then((outcome) =>
+            buildTrainSegments(
+              candidate.chosen,
+              { stationProvider },
+              outcome.ok ? outcome.result.unifiedBoardingPosition : null
+            )
+          );
+
+    // 生成が両方成功した場合のみリロード耐性キャッシュへ書き込む(失敗結果は
+    // 保存しない)。描画を遅らせないよう await せず fire-and-forget にする。
+    // どちらかのPromiseがreject(例外)した場合に未処理rejection警告を出さないよう
+    // 明示的に握りつぶす(single-call-navigator.tsのgetSharedSingleCallNavigator
+    // Guideと同じ防御パターン)。facilitiesPromise/trainSegmentsPromise自体は
+    // 呼び出し元(Suspense配下の各コンポーネント)が別途subscribeするため、
+    // ここでcatchしても呼び出し元の例外処理には影響しない。
+    Promise.all([facilitiesPromise, trainSegmentsPromise])
+      .then(([facilitiesResult, trainSegments]) => {
+        if (!facilitiesResult.ok) return;
+        return setCachedRouteResult(cacheKey, {
+          candidate,
+          facilitiesResult: facilitiesResult.result,
+          trainSegments,
+        });
+      })
+      .catch(() => {});
   }
-
-  // ここから先(号車・改札・出口情報)は Gemini 呼び出しを含み数秒〜数十秒かかりうるため、
-  // await せず Promise のまま各セクションへ渡す。同じ Promise インスタンスは
-  // 「生成元の処理を1回だけ表す」という JS の仕様上、複数コンポーネントで
-  // 共有しても buildTrainSegments/buildTransferAndExitSegments が重複実行されることはない。
-  //
-  // accessibleモードは統合生成を使わない(route-search.ts canTryUnified参照)
-  // ため、両者を独立実行する(Phase 3時点の並列動作を維持)。
-  //
-  // accessible以外のモードはtrainSegmentsPromiseがfacilitiesPromiseの解決を
-  // .then()で待ってからbuildTrainSegmentsを呼ぶ(2026-07-20
-  // fix/unified-guide-boarding-and-operator-disambiguation)。統合生成
-  // (facilitiesPromise内)がgateを基準に決めた乗車位置をbuildTrainSegments
-  // へ渡すことで、両者が無関係な改札を基準にした号車を独立に返してしまう
-  // 不整合を防ぐ(西谷駅→横浜駅の実機検証で確認済みの不具合)。通常ケース
-  // (統合生成成功時)ではbuildTrainSegments自体は追加のAI呼び出しをしない
-  // ため、直列化による体感速度への影響は小さい(route-search.ts
-  // searchRouteGuideの並列/直列分岐、maxDurationのコメントも参照)。
-  const facilitiesPromise = buildTransferAndExitSegments(candidate, searchInput, {
-    stationProvider,
-  });
-  const trainSegmentsPromise =
-    mode === "accessible"
-      ? buildTrainSegments(candidate.chosen, { stationProvider })
-      : facilitiesPromise.then((outcome) =>
-          buildTrainSegments(
-            candidate.chosen,
-            { stationProvider },
-            outcome.ok ? outcome.result.unifiedBoardingPosition : null
-          )
-        );
 
   // accessible(バリアフリー)モードは、エレベーター情報を確認できない経路を
   // 「利用可能な経路」に見せてはならない(安全に関わる)。buildTransferAndExitSegments は
@@ -135,7 +194,9 @@ export async function RouteResultBody({ origin, destination, mode, user }: Route
   // resolveAndSearchRoute と同じ不変条件)。easy/fastest モードは
   // buildTransferAndExitSegments が ok:false を返すことがないため、facilities の
   // 解決を待たずにここで保存してよい(ストリーミング表示を妨げない)。
-  if (user) {
+  // キャッシュヒット時(リロード等)は既に同じ検索を履歴保存済みのはずのため、
+  // 重複保存しないようスキップする。
+  if (user && !cached) {
     try {
       addHistoryEntry({
         userId: user.userId,

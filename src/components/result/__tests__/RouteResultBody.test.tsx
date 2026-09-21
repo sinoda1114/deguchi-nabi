@@ -83,6 +83,21 @@ const BASE_USER: User = {
 const getFacilitiesMock = vi.fn<(stationId: string) => Promise<StationFacility[]>>();
 const addHistoryEntryMock = vi.fn();
 const findRailRoutesMock = vi.fn();
+const getCachedRouteResultMock = vi.fn();
+const setCachedRouteResultMock = vi.fn();
+
+// リロード耐性キャッシュ(route-result-cache.ts)は既定でnull(キャッシュ無し)を
+// 返すようモックする。実際のKvCacheStore(globalThisにメモ化されるシングルトン)
+// を経由させると、このファイル内の複数テストが同じorigin/destination/modeを
+// 使い回すため、あるテストのfire-and-forget書き込みが後続テストへ意図せず
+// ヒットしてしまう(テスト間の状態漏れ)。個別のキャッシュ挙動テストは
+// 別ファイル(RouteResultBody.cache.test.tsx)で行う。
+vi.mock("@/lib/services/route-result-cache", () => ({
+  getCachedRouteResult: (...args: unknown[]) => getCachedRouteResultMock(...args),
+  setCachedRouteResult: (...args: unknown[]) => setCachedRouteResultMock(...args),
+  buildReloadCacheKey: (routeId: string, scope: { userId: string } | { clientIp: string }) =>
+    "userId" in scope ? `${routeId}::user:${scope.userId}` : `${routeId}::ip:${scope.clientIp}`,
+}));
 
 const DEFAULT_RAIL_ROUTE = {
   originStationId: "origin",
@@ -154,6 +169,10 @@ describe("RouteResultBody", () => {
     addHistoryEntryMock.mockReset();
     findRailRoutesMock.mockReset();
     findRailRoutesMock.mockResolvedValue([DEFAULT_RAIL_ROUTE]);
+    getCachedRouteResultMock.mockReset();
+    getCachedRouteResultMock.mockResolvedValue(null);
+    setCachedRouteResultMock.mockReset();
+    setCachedRouteResultMock.mockResolvedValue(undefined);
   });
 
   test("accessibleモードでエレベーター情報が確認できない場合、通常表示にならずエラー画面を返し、履歴も保存しない", async () => {
@@ -165,6 +184,7 @@ describe("RouteResultBody", () => {
       destination: DESTINATION,
       mode: "accessible",
       user: BASE_USER,
+      clientIp: "203.0.113.1",
     });
     const html = renderToStaticMarkup(element);
 
@@ -185,6 +205,7 @@ describe("RouteResultBody", () => {
       destination: DESTINATION,
       mode: "accessible",
       user: BASE_USER,
+      clientIp: "203.0.113.1",
     });
     const html = renderToStaticMarkup(element);
 
@@ -209,6 +230,7 @@ describe("RouteResultBody", () => {
       destination: DESTINATION,
       mode: "easy",
       user: BASE_USER,
+      clientIp: "203.0.113.1",
     });
 
     expect(addHistoryEntryMock).toHaveBeenCalledTimes(1);
@@ -224,6 +246,7 @@ describe("RouteResultBody", () => {
       destination: DESTINATION,
       mode: "easy",
       user: BASE_USER,
+      clientIp: "203.0.113.1",
     });
     const html = renderToStaticMarkup(element);
 
@@ -242,6 +265,7 @@ describe("RouteResultBody", () => {
       destination: DESTINATION,
       mode: "accessible",
       user: BASE_USER,
+      clientIp: "203.0.113.1",
     });
     const html = renderToStaticMarkup(element);
 
@@ -258,6 +282,7 @@ describe("RouteResultBody", () => {
       destination: DESTINATION,
       mode: "easy",
       user: BASE_USER,
+      clientIp: "203.0.113.1",
     });
     const html = renderToStaticMarkup(element);
 
@@ -274,6 +299,7 @@ describe("RouteResultBody", () => {
       destination: { type: "station", stationId: "not_found_station" },
       mode: "easy",
       user: BASE_USER,
+      clientIp: "203.0.113.1",
     });
     const html = renderToStaticMarkup(element);
 
