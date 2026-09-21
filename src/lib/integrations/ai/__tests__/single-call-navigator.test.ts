@@ -594,15 +594,61 @@ describe("generateSingleCallNavigatorGuide", () => {
   });
 });
 
+const SHARED_GUIDE_OK: SingleCallNavigatorGuide = {
+  lines: ["相鉄本線"],
+  transferCount: 0,
+  estimatedMinutes: 35,
+  arrivalPlatformNumber: null,
+  boarding: {
+    carNumber: 8,
+    doorPosition: "前方",
+    reason: "道玄坂改札の階段に近いため",
+    confidenceLevel: "medium",
+  },
+  facility: { state: "unavailable", reason: "テスト用" },
+};
+
 describe("getSharedSingleCallNavigatorGuide", () => {
-  test("同じキーで短時間内に呼ばれた場合、generatorは1回しか実行されない(2重課金防止)", async () => {
-    const generator = vi.fn().mockResolvedValue(null);
-    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "ウエチャベ");
+  test("同じキーで短時間内に呼ばれた場合、成功したfinalはgeneratorを1回しか実行しない(2重課金防止)", async () => {
+    const generator = vi.fn().mockResolvedValue(SHARED_GUIDE_OK);
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "成功再利用");
 
     await getSharedSingleCallNavigatorGuide(key, generator);
     await getSharedSingleCallNavigatorGuide(key, generator);
 
     expect(generator).toHaveBeenCalledTimes(1);
+  });
+
+  test("決着したnullは再利用せず、次のgetSharedでgeneratorを再実行する(再検索が即落ちしない)", async () => {
+    const generator = vi.fn().mockResolvedValue(null);
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "失敗は再利用しない");
+
+    await getSharedSingleCallNavigatorGuide(key, generator);
+    await getSharedSingleCallNavigatorGuide(key, generator);
+
+    expect(generator).toHaveBeenCalledTimes(2);
+  });
+
+  test("in-flight中はfinalがnull予定でも同一runを共有する", async () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "in-flight共有");
+    let resolveFinal!: (value: SingleCallNavigatorGuide | null) => void;
+    const pending = new Promise<SingleCallNavigatorGuide | null>((resolve) => {
+      resolveFinal = resolve;
+    });
+    const generator = vi.fn(() => ({
+      first: pending,
+      final: pending,
+    }));
+
+    const run1 = getSharedSingleCallNavigatorRun(key, generator);
+    const run2 = getSharedSingleCallNavigatorRun(key, generator);
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(run1).toBe(run2);
+
+    resolveFinal(null);
+    await pending;
+    getSharedSingleCallNavigatorRun(key, generator);
+    expect(generator).toHaveBeenCalledTimes(2);
   });
 
   test("異なるキーでは別々にgeneratorが実行される", async () => {
@@ -634,6 +680,12 @@ describe("peekSharedSingleCallNavigatorRun", () => {
     expect(peeked).not.toBeNull();
     expect(generator).toHaveBeenCalledTimes(1);
     await peeked?.first;
+  });
+
+  test("決着したnullのあとpeekはnullを返す(失敗runを号車に使わない)", async () => {
+    const key = buildSharedGuideCacheKey("st_nishiya", "st_shibuya", "peek-after-null");
+    await getSharedSingleCallNavigatorGuide(key, () => Promise.resolve(null));
+    expect(peekSharedSingleCallNavigatorRun(key)).toBeNull();
   });
 });
 
