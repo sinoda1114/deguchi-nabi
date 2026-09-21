@@ -688,7 +688,6 @@ export function generateSingleCallNavigatorRun(
 
   const final = attempt1.then(async (r1) => {
     // 収録 BothHit: 経路+号車の .first があれば施設再試行しない。
-    // null のときだけ経路自体が無いので従来どおり再試行する。
     if (r1 !== null && catalogGate) {
       console.info("[exit-quality]", {
         event: "skip_facility_retry",
