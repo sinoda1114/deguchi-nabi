@@ -2,12 +2,16 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   buildNavigatorSearchPrompt,
   buildSharedGuideCacheKey,
+  CATALOG_FIRST_SEARCH_TIMEOUT_MS,
+  FIRST_RETRY_ATTACH_MAX_MS,
   generateSingleCallNavigatorGuide,
+  generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorGuide,
   getSharedSingleCallNavigatorRun,
   isRouteConsistent,
   peekSharedSingleCallNavigatorRun,
   selectFinalGuide,
+  shouldWaitForRetryOnFirst,
   type SingleCallNavigatorGuide,
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
@@ -439,6 +443,9 @@ describe("generateSingleCallNavigatorGuide", () => {
     );
 
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+    expect(searchAndGenerateStructuredContentWithSearchText.mock.calls[0]?.[5]).toBe(
+      CATALOG_FIRST_SEARCH_TIMEOUT_MS
+    );
     expect(result?.lines).toEqual(["相鉄本線"]);
     expect(result?.boarding?.carNumber).toBe(8);
     expect(result?.facility.state).toBe("unavailable");
@@ -465,6 +472,53 @@ describe("generateSingleCallNavigatorGuide", () => {
     expect(firstPrompt).toContain("【収録確定の改札】");
     expect(retryPrompt).not.toContain("【収録確定の改札】");
     expect(retryPrompt).toContain("目的地からの逆算");
+  });
+
+  test("1回目が遅いnullなら first は再試行を待たず、Geminiは1回で終わる", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    searchAndGenerateStructuredContentWithSearchText.mockImplementation(async () => {
+      now += FIRST_RETRY_ATTACH_MAX_MS + 1_000;
+      return null;
+    });
+
+    const run = generateSingleCallNavigatorRun(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+    await expect(run.first).resolves.toBeNull();
+    await expect(run.final).resolves.toBeNull();
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  test("1回目が速いnullなら first は再試行結果を待つ", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    searchAndGenerateStructuredContentWithSearchText
+      .mockImplementationOnce(async () => {
+        now += 5_000;
+        return null;
+      })
+      .mockImplementationOnce(async () => {
+        now += 5_000;
+        return mockResult(VALID_RAW);
+      });
+
+    const run = generateSingleCallNavigatorRun(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+    const first = await run.first;
+    expect(first?.lines).toEqual(["相鉄・東急直通線"]);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    vi.mocked(Date.now).mockRestore();
   });
 
   test("収録改札があるとき alternatives でも JEV 候補選択を呼ばない", async () => {
@@ -608,6 +662,15 @@ const SHARED_GUIDE_OK: SingleCallNavigatorGuide = {
   },
   facility: { state: "unavailable", reason: "テスト用" },
 };
+
+describe("shouldWaitForRetryOnFirst", () => {
+  test("45秒未満の1回目失敗だけヘッダ再試行に繋ぐ", () => {
+    expect(shouldWaitForRetryOnFirst(0)).toBe(true);
+    expect(shouldWaitForRetryOnFirst(FIRST_RETRY_ATTACH_MAX_MS - 1)).toBe(true);
+    expect(shouldWaitForRetryOnFirst(FIRST_RETRY_ATTACH_MAX_MS)).toBe(false);
+    expect(shouldWaitForRetryOnFirst(70_000)).toBe(false);
+  });
+});
 
 describe("getSharedSingleCallNavigatorGuide", () => {
   test("同じキーで短時間内に呼ばれた場合、成功したfinalはgeneratorを1回しか実行しない(2重課金防止)", async () => {

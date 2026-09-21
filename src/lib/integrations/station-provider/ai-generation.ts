@@ -317,18 +317,22 @@ function platformHintText(arrivalPlatformNumber: string | null): string {
     : "";
 }
 
+export const FOR_GATE_SEARCH_TIMEOUT_MS = 25_000;
+
 async function generateBoardingFromPrompts(
   apiKey: string,
   searchPrompt: string,
   extractionInstruction: string,
-  platformId: string
+  platformId: string,
+  searchTimeoutMs?: number
 ): Promise<BoardingPosition | null> {
   const result = await searchAndGenerateStructuredContent<GeneratedBoardingPosition>(
     apiKey,
     searchPrompt,
     extractionInstruction,
     BOARDING_SCHEMA,
-    "gemini-3.8-flash"
+    "gemini-3.8-flash",
+    searchTimeoutMs
   );
   if (!isValidBoardingPosition(result)) return null;
   return toBoardingPosition(result, platformId);
@@ -394,7 +398,8 @@ ${platformHint}
     apiKey,
     searchPrompt,
     extractionInstruction,
-    platformId
+    platformId,
+    FOR_GATE_SEARCH_TIMEOUT_MS
   );
   const citedGate = gateName.trim();
   if (!boarding || !reasonCitesGate(boarding.reason, citedGate)) {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  FOR_GATE_SEARCH_TIMEOUT_MS,
   generateBoardingPosition,
   generateBoardingPositionForChosenGate,
   generateStationFacilities,
@@ -382,6 +383,7 @@ describe("generateBoardingPositionForChosenGate", () => {
     expect(searchPrompt).toContain("一般的な改札寄りの号車で埋めない");
     expect(searchPrompt).not.toContain("最も一般的な情報のみ");
     expect(searchPrompt).not.toContain("ウエチャベ");
+    expect(searchAndGenerateStructuredContent.mock.calls[0][5]).toBe(FOR_GATE_SEARCH_TIMEOUT_MS);
     expect(searchPrompt).not.toContain("道玄坂2-9-2");
   });
 

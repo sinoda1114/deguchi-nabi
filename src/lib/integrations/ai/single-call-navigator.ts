@@ -58,6 +58,16 @@ const MAX_CAR_NUMBER = 16;
 // nullの場合のみ丸ごと1回だけ再試行する(合計最大2試行)。
 const MAX_ATTEMPTS = 2;
 
+/** 1回目がこの時間以上かかって null なら、ヘッダ(.first)は再試行を待たない。 */
+export const FIRST_RETRY_ATTACH_MAX_MS = 45_000;
+
+export function shouldWaitForRetryOnFirst(attempt1ElapsedMs: number): boolean {
+  return attempt1ElapsedMs < FIRST_RETRY_ATTACH_MAX_MS;
+}
+
+/** 収録プロンプトは逆算条項が無いので 100s フルは使わない。 */
+export const CATALOG_FIRST_SEARCH_TIMEOUT_MS = 70_000;
+
 /** single-call-navigator.ts自身は自己申告のConfidenceLevel(生の文字列)しか
  * 持たず、検証度Confidenceオブジェクト(reasons/verifiedAt等)への変換は
  * AiStationAdapter層(groundedAiConfidence)の責務。domain/facility-
@@ -430,7 +440,8 @@ async function attemptGenerateSingleCallNavigatorGuide(
   destinationStation: Station,
   destinationHint: string | null,
   destinationPlaceCoordinates: Coordinates | null,
-  catalogGate: string | null
+  catalogGate: string | null,
+  searchTimeoutMs?: number
 ): Promise<SingleCallNavigatorGuide | null> {
   const searchPrompt = buildNavigatorSearchPrompt(
     originStation,
@@ -445,7 +456,8 @@ async function attemptGenerateSingleCallNavigatorGuide(
     searchPrompt,
     EXTRACTION_INSTRUCTION,
     EXTRACTION_SCHEMA,
-    MODEL
+    MODEL,
+    searchTimeoutMs
   );
 
   if (!result) return null;
@@ -674,17 +686,22 @@ export function generateSingleCallNavigatorRun(
     });
   }
 
-  const attempt = (catalogGateForPrompt: string | null) =>
+  const attempt = (catalogGateForPrompt: string | null, searchTimeoutMs?: number) =>
     attemptGenerateSingleCallNavigatorGuide(
       apiKey,
       originStation,
       destinationStation,
       destinationHint,
       destinationPlaceCoordinates,
-      catalogGateForPrompt
+      catalogGateForPrompt,
+      searchTimeoutMs
     );
 
-  const attempt1 = attempt(catalogGate);
+  const attempt1StartedAt = Date.now();
+  const attempt1 = attempt(
+    catalogGate,
+    catalogGate ? CATALOG_FIRST_SEARCH_TIMEOUT_MS : undefined
+  );
 
   const final = attempt1.then(async (r1) => {
     // 収録 BothHit: 経路+号車の .first があれば施設再試行しない。
@@ -696,6 +713,18 @@ export function generateSingleCallNavigatorRun(
       return r1;
     }
     if (r1 !== null && !(await isFacilityUnavailable(r1))) {
+      return r1;
+    }
+
+    const elapsedMs = Date.now() - attempt1StartedAt;
+    const waitOnFirst = r1 === null && shouldWaitForRetryOnFirst(elapsedMs);
+    const retryForFacility = r1 !== null && !catalogGate;
+    if (!waitOnFirst && !retryForFacility) {
+      console.info("[exit-quality]", {
+        event: "skip_slow_null_retry",
+        elapsedMs,
+        gate: catalogGate,
+      });
       return r1;
     }
 
@@ -725,8 +754,13 @@ export function generateSingleCallNavigatorRun(
     return await selectFinalGuide(r1, r2);
   });
   
-  // first: 1回目の結果、またはnullならfinalと同時に決着
-  const first = attempt1.then((r1) => r1 ?? final);
+  // first: 非nullなら即公開。速い null だけ再試行を待ち、遅い null で骨格を
+  // 200秒止めない（Preview 120s 待ちで検索中のまま切れるため）。
+  const first = attempt1.then((r1) => {
+    if (r1 !== null) return r1;
+    if (!shouldWaitForRetryOnFirst(Date.now() - attempt1StartedAt)) return null;
+    return final;
+  });
   
   // 未購読側の未処理rejection防止（accessibleモードではfinal、逆経路ではfirst）
   // 呼び出し元がawaitしたrejectionはそのまま観測できる
