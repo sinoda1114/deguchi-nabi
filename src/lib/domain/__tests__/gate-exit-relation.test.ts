@@ -27,6 +27,7 @@ describe("hasSurfaceGateCue", () => {
   test("地下を含む改札は合図にしない", () => {
     expect(hasSurfaceGateCue("八重洲地下改札")).toBe(false);
     expect(hasSurfaceGateCue("2階地下改札口")).toBe(false);
+    expect(hasSurfaceGateCue("B1階改札口")).toBe(false);
   });
 
   test("中央改札だけは合図にしない", () => {
@@ -40,12 +41,14 @@ describe("looksLikeSubwayContext", () => {
     expect(looksLikeSubwayContext("横浜市営地下鉄ブルーライン", "横浜市交通局")).toBe(true);
     expect(looksLikeSubwayContext("東京メトロ銀座線", "東京地下鉄")).toBe(true);
     expect(looksLikeSubwayContext("都営三田線", null)).toBe(true);
-    expect(looksLikeSubwayContext("ブルーライン", "", ["横浜市営ブルーライン"])).toBe(true);
+    expect(looksLikeSubwayContext("ブルーライン", "", ["横浜市ブルーライン"])).toBe(true);
+    expect(looksLikeSubwayContext("東山線", "", ["名古屋市東山線"])).toBe(true);
   });
 
   test("相鉄・JRは地下鉄文脈にしない", () => {
     expect(looksLikeSubwayContext("相鉄本線", "", ["相鉄本線"])).toBe(false);
     expect(looksLikeSubwayContext("JR東海道線", "", ["JR東海道線"])).toBe(false);
+    expect(looksLikeSubwayContext("相鉄本線", "", ["相鉄本線", "横浜市ブルーライン"])).toBe(false);
   });
 });
 
@@ -68,7 +71,7 @@ describe("classifyGateExitRelation", () => {
       exitNames: [],
       arrivalLine: "相鉄本線",
       arrivalOperator: "",
-      stationLines: ["相鉄本線"],
+      stationLines: ["相鉄本線", "横浜市ブルーライン"],
       knownSeparateExitCount: null,
     });
     expect(relation.kind).toBe("gate_equals_exit");
@@ -109,6 +112,18 @@ describe("classifyGateExitRelation", () => {
       arrivalLine: "銀座線",
       arrivalOperator: "",
       stationLines: ["東京メトロ銀座線"],
+      knownSeparateExitCount: null,
+    });
+    expect(relation.kind).toBe("exit_unknown");
+  });
+
+  test("HeartRails の横浜市ブルーラインは市営なしでも exit_unknown", () => {
+    const relation = classifyGateExitRelation({
+      gateNames: ["2階改札口"],
+      exitNames: [],
+      arrivalLine: "ブルーライン",
+      arrivalOperator: "",
+      stationLines: ["横浜市ブルーライン"],
       knownSeparateExitCount: null,
     });
     expect(relation.kind).toBe("exit_unknown");

@@ -46,8 +46,11 @@ export const EXIT_UNKNOWN_SOFT_INSTRUCTION =
 export const EXIT_UNKNOWN_HARD_INSTRUCTION = "出口は確認できません。";
 export const EXIT_UNKNOWN_SOFT_LABEL = "出口名は未確認";
 
-const SUBWAY_HINT = /地下鉄|メトロ|Metro|都営|市営/i;
+// HeartRails の市営地下鉄は「横浜市ブルーライン」「名古屋市東山線」のように
+// 「市営」を含まない。都市名の allowlist は置かず、市＋線／ライン／交通局だけ見る。
+const SUBWAY_HINT = /地下鉄|メトロ|Metro|都営|市営|市交通局|市.+線|市.+ライン/i;
 const UNDERGROUND = /地下/;
+const BASEMENT_FLOOR = /B[1-9]階/;
 const FLOOR_OR_SURFACE = /[1-9]階|地上/;
 const NAMED_EXIT_GATE = /口改札/;
 
@@ -56,12 +59,19 @@ export function looksLikeSubwayContext(
   operator: string | null,
   stationLines: readonly string[] = []
 ): boolean {
-  return [line, operator, ...stationLines].some((part) => Boolean(part && SUBWAY_HINT.test(part)));
+  if (line && SUBWAY_HINT.test(line)) return true;
+  if (operator && SUBWAY_HINT.test(operator)) return true;
+  const arrival = line?.trim() ?? "";
+  return stationLines.some((part) => {
+    if (!part || !SUBWAY_HINT.test(part)) return false;
+    if (!arrival) return true;
+    return part.includes(arrival) || arrival.includes(part);
+  });
 }
 
 export function hasSurfaceGateCue(name: string): boolean {
   const normalized = name.normalize("NFKC");
-  if (UNDERGROUND.test(normalized)) return false;
+  if (UNDERGROUND.test(normalized) || BASEMENT_FLOOR.test(normalized)) return false;
   return FLOOR_OR_SURFACE.test(normalized) || NAMED_EXIT_GATE.test(normalized);
 }
 
