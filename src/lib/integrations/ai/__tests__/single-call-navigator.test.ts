@@ -3,15 +3,14 @@ import {
   buildNavigatorSearchPrompt,
   buildSharedGuideCacheKey,
   CATALOG_FIRST_SEARCH_TIMEOUT_MS,
-  FIRST_RETRY_ATTACH_MAX_MS,
   generateSingleCallNavigatorGuide,
   generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorGuide,
   getSharedSingleCallNavigatorRun,
   isRouteConsistent,
   peekSharedSingleCallNavigatorRun,
+  retrySearchTimeoutMs,
   selectFinalGuide,
-  shouldWaitForRetryOnFirst,
   type SingleCallNavigatorGuide,
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
@@ -474,11 +473,40 @@ describe("generateSingleCallNavigatorGuide", () => {
     expect(retryPrompt).toContain("目的地からの逆算");
   });
 
-  test("1回目が遅いnullなら first は再試行を待たず、Geminiは1回で終わる", async () => {
+  test("収録1回目が70sでnullでも残り予算で再試行し first がそれを待つ", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    searchAndGenerateStructuredContentWithSearchText
+      .mockImplementationOnce(async () => {
+        now += CATALOG_FIRST_SEARCH_TIMEOUT_MS;
+        return null;
+      })
+      .mockImplementationOnce(async () => {
+        now += 5_000;
+        return mockResult(VALID_RAW);
+      });
+
+    const run = generateSingleCallNavigatorRun(
+      "key",
+      NISHIYA,
+      SHIBUYA,
+      "ウエチャベ",
+      UECHABE_DOGENZAKA.coordinates
+    );
+    const first = await run.first;
+    expect(first?.lines).toEqual(["相鉄・東急直通線"]);
+    expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(2);
+    expect(searchAndGenerateStructuredContentWithSearchText.mock.calls[1]?.[5]).toBe(
+      retrySearchTimeoutMs(CATALOG_FIRST_SEARCH_TIMEOUT_MS)
+    );
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  test("1回目がヘッダ予算を使い切ってnullなら再試行しない", async () => {
     let now = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
     searchAndGenerateStructuredContentWithSearchText.mockImplementation(async () => {
-      now += FIRST_RETRY_ATTACH_MAX_MS + 1_000;
+      now += 100_000;
       return null;
     });
 
@@ -490,7 +518,6 @@ describe("generateSingleCallNavigatorGuide", () => {
       UECHABE_DOGENZAKA.coordinates
     );
     await expect(run.first).resolves.toBeNull();
-    await expect(run.final).resolves.toBeNull();
     expect(searchAndGenerateStructuredContentWithSearchText).toHaveBeenCalledTimes(1);
     vi.mocked(Date.now).mockRestore();
   });
@@ -663,12 +690,17 @@ const SHARED_GUIDE_OK: SingleCallNavigatorGuide = {
   facility: { state: "unavailable", reason: "テスト用" },
 };
 
-describe("shouldWaitForRetryOnFirst", () => {
-  test("45秒未満の1回目失敗だけヘッダ再試行に繋ぐ", () => {
-    expect(shouldWaitForRetryOnFirst(0)).toBe(true);
-    expect(shouldWaitForRetryOnFirst(FIRST_RETRY_ATTACH_MAX_MS - 1)).toBe(true);
-    expect(shouldWaitForRetryOnFirst(FIRST_RETRY_ATTACH_MAX_MS)).toBe(false);
-    expect(shouldWaitForRetryOnFirst(70_000)).toBe(false);
+describe("retrySearchTimeoutMs", () => {
+  test("70s の1回目nullでも再試行時間を残す", () => {
+    expect(retrySearchTimeoutMs(70_000)).toBe(25_000);
+  });
+
+  test("20s の速いnullは 55s 再試行", () => {
+    expect(retrySearchTimeoutMs(20_000)).toBe(55_000);
+  });
+
+  test("予算不足なら再試行しない", () => {
+    expect(retrySearchTimeoutMs(100_000)).toBeNull();
   });
 });
 

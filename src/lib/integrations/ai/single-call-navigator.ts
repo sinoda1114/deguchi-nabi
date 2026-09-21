@@ -58,15 +58,19 @@ const MAX_CAR_NUMBER = 16;
 // nullの場合のみ丸ごと1回だけ再試行する(合計最大2試行)。
 const MAX_ATTEMPTS = 2;
 
-/** 1回目がこの時間以上かかって null なら、ヘッダ(.first)は再試行を待たない。 */
-export const FIRST_RETRY_ATTACH_MAX_MS = 45_000;
-
-export function shouldWaitForRetryOnFirst(attempt1ElapsedMs: number): boolean {
-  return attempt1ElapsedMs < FIRST_RETRY_ATTACH_MAX_MS;
-}
-
 /** 収録プロンプトは逆算条項が無いので 100s フルは使わない。 */
 export const CATALOG_FIRST_SEARCH_TIMEOUT_MS = 70_000;
+/** Preview 120s 待ちに収める。抽出 15s を残して再試行の検索時間を決める。 */
+export const HEADER_BUDGET_MS = 110_000;
+export const EXTRACT_BUDGET_MS = 15_000;
+export const MIN_RETRY_SEARCH_MS = 20_000;
+export const RETRY_SEARCH_TIMEOUT_MS = 55_000;
+
+export function retrySearchTimeoutMs(attempt1ElapsedMs: number): number | null {
+  const remaining = HEADER_BUDGET_MS - attempt1ElapsedMs - EXTRACT_BUDGET_MS;
+  if (remaining < MIN_RETRY_SEARCH_MS) return null;
+  return Math.min(RETRY_SEARCH_TIMEOUT_MS, remaining);
+}
 
 /** single-call-navigator.ts自身は自己申告のConfidenceLevel(生の文字列)しか
  * 持たず、検証度Confidenceオブジェクト(reasons/verifiedAt等)への変換は
@@ -717,11 +721,11 @@ export function generateSingleCallNavigatorRun(
     }
 
     const elapsedMs = Date.now() - attempt1StartedAt;
-    const waitOnFirst = r1 === null && shouldWaitForRetryOnFirst(elapsedMs);
-    const retryForFacility = r1 !== null && !catalogGate;
-    if (!waitOnFirst && !retryForFacility) {
+    const retryTimeoutMs =
+      r1 === null ? retrySearchTimeoutMs(elapsedMs) : RETRY_SEARCH_TIMEOUT_MS;
+    if (r1 === null && retryTimeoutMs === null) {
       console.info("[exit-quality]", {
-        event: "skip_slow_null_retry",
+        event: "skip_no_retry_budget",
         elapsedMs,
         gate: catalogGate,
       });
@@ -739,7 +743,7 @@ export function generateSingleCallNavigatorRun(
 
     let r2: SingleCallNavigatorGuide | null;
     try {
-      r2 = await attempt(null);
+      r2 = await attempt(null, retryTimeoutMs ?? undefined);
     } catch (error) {
       // 2回目が例外で失敗
       if (r1 === null) throw error; // 見せられる結果が無い
@@ -754,13 +758,8 @@ export function generateSingleCallNavigatorRun(
     return await selectFinalGuide(r1, r2);
   });
   
-  // first: 非nullなら即公開。速い null だけ再試行を待ち、遅い null で骨格を
-  // 200秒止めない（Preview 120s 待ちで検索中のまま切れるため）。
-  const first = attempt1.then((r1) => {
-    if (r1 !== null) return r1;
-    if (!shouldWaitForRetryOnFirst(Date.now() - attempt1StartedAt)) return null;
-    return final;
-  });
+  // first: 1回目の結果。null なら予算内の再試行を待つ（22b1c04 の回復）。
+  const first = attempt1.then((r1) => r1 ?? final);
   
   // 未購読側の未処理rejection防止（accessibleモードではfinal、逆経路ではfirst）
   // 呼び出し元がawaitしたrejectionはそのまま観測できる

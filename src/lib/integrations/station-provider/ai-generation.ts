@@ -317,7 +317,7 @@ function platformHintText(arrivalPlatformNumber: string | null): string {
     : "";
 }
 
-export const FOR_GATE_SEARCH_TIMEOUT_MS = 25_000;
+export const FOR_GATE_SEARCH_TIMEOUT_MS = 55_000;
 
 async function generateBoardingFromPrompts(
   apiKey: string,
