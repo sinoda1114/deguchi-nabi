@@ -432,9 +432,11 @@ export class AiStationAdapter implements StationProviderPort {
         : null,
       facility: isScoringBothHit(resolved.recommendation)
         ? resolved.recommendation
-        : guide
-          ? resolveFacilityRecommendationConfidence(guide.facility)
-          : resolved.recommendation,
+        : resolved.recommendation.state !== "unavailable"
+          ? resolved.recommendation
+          : guide
+            ? resolveFacilityRecommendationConfidence(guide.facility)
+            : resolved.recommendation,
       walkingSteps: [],
     };
   }
