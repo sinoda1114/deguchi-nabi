@@ -228,9 +228,13 @@ export function buildNavigatorSearchPrompt(
 
 `
     : "";
-  const facilityOrCatalogSection = catalogGate
-    ? `【収録確定の改札】
+  const facilityOrCatalogSection =
+    catalogGate && !onStationArrival
+      ? `【収録確定の改札】
 到着駅の改札は収録データで「${catalogGate}」に確定しています。改札名・出口名の選定・比較・逆算は行わず、改札・出口は断定しないでください。号車・ドア位置は「${catalogGate}」に近い到着ホーム上の停止位置だけを検索し、確認できた場合は号車を断定してください。理由には「${catalogGate}」またはその語幹を含めてください。他の改札を基準にしないでください。改札が確定していても検索自体を省略してはならない。路線・乗換・所要時間・号車は必ずインターネット検索で確認すること。`
+      : catalogGate && onStationArrival
+        ? `【収録確定の改札】
+到着駅の改札は収録データで「${catalogGate}」に確定しています。鉄道乗車は不要なため路線・乗換・号車の検索は不要です。改札・出口は断定せず、収録改札名を参考に目的地への最適な出口を検索で特定してください。`
     : `【重要な原則：実在確認と適合性検証は別物】
 改札・出口が実在することと、その改札・出口が今回の目的地にとって最適であることは、まったく別の確認です。検索結果に実在する改札名が出てきたからといって、それを推測ではないと判断してはいけません。実在確認は適合性確認の代替になりません。
 
@@ -398,15 +402,15 @@ async function toGuide(
   ) {
     return null;
   }
-  if (
-    typeof raw.transferCount !== "number" ||
-    !Number.isInteger(raw.transferCount) ||
-    raw.transferCount < 0 ||
-    raw.transferCount > MAX_TRANSFER_COUNT
-  ) {
-    return null;
-  }
-  if (context.onStationArrival && raw.transferCount !== 0) {
+  const normalizedLines = context.onStationArrival
+    ? [ON_STATION_RAIL_LINE_LABEL]
+    : (lines as string[]);
+  const transferCount = context.onStationArrival
+    ? 0
+    : typeof raw.transferCount === "number" && Number.isInteger(raw.transferCount)
+      ? raw.transferCount
+      : null;
+  if (transferCount === null || transferCount < 0 || transferCount > MAX_TRANSFER_COUNT) {
     return null;
   }
   if (
@@ -452,8 +456,8 @@ async function toGuide(
   }
 
   const guide: SingleCallNavigatorGuide = {
-    lines: lines as string[],
-    transferCount: raw.transferCount,
+    lines: normalizedLines,
+    transferCount,
     estimatedMinutes: raw.estimatedMinutes,
     arrivalPlatformNumber: extractArrivalPlatformNumber(raw.arrivalPlatformNumber),
     boarding: extractBoarding(raw),

@@ -200,6 +200,36 @@ describe("generateSingleCallNavigatorGuide", () => {
     }
   });
 
+  test("同一駅でモデルが transferCount 1 を返しても 0 に正規化する", async () => {
+    const sakae: Station = {
+      stationId: "hr_sakae",
+      stationName: "栄駅",
+      operator: "",
+      lines: ["名古屋市営地下鉄東山線"],
+      prefecture: "愛知県",
+      latitude: 35.17,
+      longitude: 136.908,
+    };
+    const searchText = "降りる改札は矢場改札、利用する出口はラシック出口です。";
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          lines: ["名古屋市営地下鉄"],
+          transferCount: 1,
+          estimatedMinutes: 3,
+          facilityCandidates: [
+            { gateName: "矢場改札", exitName: "ラシック出口", confidence: "medium" },
+          ],
+        },
+        searchText
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide("key", sakae, sakae, "店");
+    expect(result?.transferCount).toBe(0);
+    expect(result?.lines).toEqual([ON_STATION_RAIL_LINE_LABEL]);
+  });
+
   test("正常な抽出結果からguideを組み立てる(改札・出口は1組のみ→confirmed)", async () => {
     searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(mockResult(VALID_RAW));
 
