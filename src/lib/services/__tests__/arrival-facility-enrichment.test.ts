@@ -60,6 +60,41 @@ describe("enrichPartialFacilityPair", () => {
     }
   });
 
+  test("接続改札が無いときも確定改札を維持して出口だけ補完する", async () => {
+    vi.mocked(generateExitOnly).mockResolvedValue({
+      exit: {
+        name: "電気街口",
+        confidence: lowConfidence("ai"),
+        provenance: "ai_inferred",
+      },
+      pairedGateName: null,
+    });
+    vi.mocked(generateSplitFacilityPair).mockResolvedValue({
+      gate: null,
+      exit: null,
+      paired: false,
+    });
+
+    const result = await enrichPartialFacilityPair(BASE_INPUT, {
+      state: "confirmed",
+      pair: {
+        gate: {
+          name: "中央改札",
+          confidence: lowConfidence("ai"),
+          provenance: "ai_inferred",
+        },
+        exit: null,
+        reason: null,
+      },
+    });
+
+    expect(isScoringBothHit(result)).toBe(true);
+    if (result.state === "confirmed") {
+      expect(result.pair.gate?.name).toBe("中央改札");
+      expect(result.pair.exit?.name).toBe("電気街口");
+    }
+  });
+
   test("接続改札が一致しないとき確定改札を別ペアで置き換えない", async () => {
     vi.mocked(generateExitOnly).mockResolvedValue({
       exit: {

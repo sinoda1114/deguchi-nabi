@@ -58,18 +58,26 @@ export function parseOverpassExits(payload: unknown): OsmExit[] {
 }
 
 export async function fetchOsmSubwayEntrances(center: Coordinates): Promise<OsmExit[]> {
-  try {
-    const response = await fetch(OVERPASS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-      body: new URLSearchParams({ data: buildSubwayEntranceQuery(center) }),
-      signal: AbortSignal.timeout(OSM_TIMEOUT_MS),
-    });
-    if (!response.ok) return [];
-    return parseOverpassExits(await response.json());
-  } catch {
-    return [];
+  const urls = [
+    OVERPASS_URL,
+    "https://overpass.kumi.systems/api/interpreter",
+  ];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: new URLSearchParams({ data: buildSubwayEntranceQuery(center) }),
+        signal: AbortSignal.timeout(OSM_TIMEOUT_MS),
+      });
+      if (!response.ok) continue;
+      const parsed = parseOverpassExits(await response.json());
+      if (parsed.length > 0) return parsed;
+    } catch {
+      // fail-open: try next endpoint
+    }
   }
+  return [];
 }
 
 export function osmExitsToFacilities(exits: OsmExit[], stationId: string): StationFacility[] {
