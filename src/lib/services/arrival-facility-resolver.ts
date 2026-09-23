@@ -191,10 +191,10 @@ export async function resolveArrivalFacility(
   });
   if (mergedPartial && isScoringBothHit(mergedPartial)) {
     seed = mergedPartial;
-    usedGeminiFinal = Boolean(last && mergedPartial.pair.gate === last.pair.gate);
+    usedGeminiFinal = gateNameMatchesLast(last, mergedPartial);
   } else if (mergedPartial) {
     seed = mergedPartial;
-    usedGeminiFinal = Boolean(last && mergedPartial.pair.gate === last.pair.gate);
+    usedGeminiFinal = gateNameMatchesLast(last, mergedPartial);
   } else if (last) {
     seed = last;
     usedGeminiFinal = true;
@@ -245,6 +245,16 @@ function pickNamedFrom(
     if (value) return value;
   }
   return null;
+}
+
+function gateNameMatchesLast(
+  last: FacilityRecommendation | null,
+  merged: FacilityRecommendation
+): boolean {
+  if (last?.state !== "confirmed" || merged.state !== "confirmed") return false;
+  const lastGate = last.pair.gate?.name ?? null;
+  const mergedGate = merged.pair.gate?.name ?? null;
+  return lastGate !== null && lastGate === mergedGate;
 }
 
 /** 単一呼び出し・分割・収録・OSM の片方だけ確定を、改札/出口ごとに優先順位で合成する。 */
