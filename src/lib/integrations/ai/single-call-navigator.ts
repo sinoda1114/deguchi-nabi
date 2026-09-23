@@ -9,6 +9,10 @@ import {
 import { searchAndGenerateStructuredContentWithSearchText } from "@/lib/integrations/ai/GeminiClient";
 import { catalogChosenGateNameFromStation } from "@/lib/services/catalog-facility-resolver";
 import {
+  isSameStationRailRoute,
+  ON_STATION_RAIL_LINE_LABEL,
+} from "@/lib/integrations/route-provider/same-station-route";
+import {
   isJevAvailable,
   createJevConfig,
   evaluateRetryGate,
@@ -213,6 +217,17 @@ export function buildNavigatorSearchPrompt(
   const destinationTarget = destinationHint
     ? `${destinationStation.stationName}駅(${locationHint(destinationStation)})付近の「${destinationHint}」${destinationPlaceLocationHint ? `(${destinationPlaceLocationHint})` : ""}`
     : `${destinationStation.stationName}駅(${locationHint(destinationStation)})`;
+  const onStationArrival = isSameStationRailRoute(
+    originStation.stationId,
+    destinationStation.stationId
+  );
+  const onStationSection = onStationArrival
+    ? `【同一駅（鉄道乗車不要）】
+出発駅と目的地の最寄り駅は同一の「${originStation.stationName}駅」(${locationHint(originStation)})です。別駅への鉄道路線・乗換・乗車位置の検索は不要です。改札・出口を目的地「${destinationHint ?? destinationStation.stationName}」へ向かう導線として逆算して特定してください。
+抽出JSONでは lines を ["${ON_STATION_RAIL_LINE_LABEL}"]、transferCount を 0、estimatedMinutes を改札から目的地入口までの概算徒歩時間(整数・1分以上)にしてください。boardingCarNumber 等の号車フィールドは含めないでください。
+
+`
+    : "";
   const facilityOrCatalogSection = catalogGate
     ? `【収録確定の改札】
 到着駅の改札は収録データで「${catalogGate}」に確定しています。改札名・出口名の選定・比較・逆算は行わず、改札・出口は断定しないでください。号車・ドア位置は「${catalogGate}」に近い到着ホーム上の停止位置だけを検索し、確認できた場合は号車を断定してください。理由には「${catalogGate}」またはその語幹を含めてください。他の改札を基準にしないでください。改札が確定していても検索自体を省略してはならない。路線・乗換・所要時間・号車は必ずインターネット検索で確認すること。`
@@ -246,7 +261,7 @@ export function buildNavigatorSearchPrompt(
 
   return `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStation.stationName}駅」(${locationHint(originStation)})から、${destinationTarget}へ向かうルートを知りたいと考えています。回答時には必ずインターネット検索を行い、最新かつ正確なルート・乗換え・改札・出口情報を取得し、出力前にファクトチェックを行います。同じ駅名・施設名が複数存在する場合は、上記の位置に最も近いものを対象にしてください。
 
-${facilityOrCatalogSection}
+${onStationSection}${facilityOrCatalogSection}
 
 【案内範囲(重要)】
 このアプリの役割は、駅構内(乗車位置・降車後の移動・改札)と出口の特定までです。出口から目的地までの徒歩ルート・曲がる方向・目印は案内に含めないでください(ユーザーは出口に出た後、地図アプリ等で目的地へ向かいます)。左折・右折といった方向指示は一切出力しないでください。ただし、出口や改札を選ぶ判断材料として目的地への距離・導線を検索で確認すること自体は引き続き行ってください(出力に含めないだけです)。
@@ -362,11 +377,18 @@ async function toGuide(
     destinationHint: string | null;
     arrivalStationName: string;
     catalogGate: string | null;
+    onStationArrival: boolean;
   }
 ): Promise<SingleCallNavigatorGuide | null> {
-  if (!Array.isArray(raw.lines) || raw.lines.length === 0) return null;
+  const lines =
+    Array.isArray(raw.lines) && raw.lines.length > 0
+      ? raw.lines
+      : context.onStationArrival
+        ? [ON_STATION_RAIL_LINE_LABEL]
+        : null;
+  if (!lines) return null;
   if (
-    !raw.lines.every(
+    !lines.every(
       (l) =>
         typeof l === "string" &&
         l.trim().length > 0 &&
@@ -382,6 +404,9 @@ async function toGuide(
     raw.transferCount < 0 ||
     raw.transferCount > MAX_TRANSFER_COUNT
   ) {
+    return null;
+  }
+  if (context.onStationArrival && raw.transferCount !== 0) {
     return null;
   }
   if (
@@ -427,7 +452,7 @@ async function toGuide(
   }
 
   const guide: SingleCallNavigatorGuide = {
-    lines: raw.lines as string[],
+    lines: lines as string[],
     transferCount: raw.transferCount,
     estimatedMinutes: raw.estimatedMinutes,
     arrivalPlatformNumber: extractArrivalPlatformNumber(raw.arrivalPlatformNumber),
@@ -447,6 +472,10 @@ async function attemptGenerateSingleCallNavigatorGuide(
   catalogGate: string | null,
   searchTimeoutMs?: number
 ): Promise<SingleCallNavigatorGuide | null> {
+  const onStationArrival = isSameStationRailRoute(
+    originStation.stationId,
+    destinationStation.stationId
+  );
   const searchPrompt = buildNavigatorSearchPrompt(
     originStation,
     destinationStation,
@@ -469,6 +498,7 @@ async function attemptGenerateSingleCallNavigatorGuide(
     destinationHint,
     arrivalStationName: destinationStation.stationName,
     catalogGate,
+    onStationArrival,
   });
 }
 

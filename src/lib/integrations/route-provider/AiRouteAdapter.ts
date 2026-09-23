@@ -6,6 +6,7 @@ import {
   generateSingleCallNavigatorRun,
   getSharedSingleCallNavigatorRun,
 } from "@/lib/integrations/ai/single-call-navigator";
+import { isSameStationRailRoute } from "./same-station-route";
 
 /**
  * 全駅間の経路をGeminiのGoogle Search Groundingで検索の裏付けを取って生成する
@@ -62,23 +63,27 @@ export class AiRouteAdapter implements RouteProviderPort {
     ).first;
     if (!guide) return [];
 
+    const onStation = isSameStationRailRoute(originStation.stationId, destinationStation.stationId);
+
     return [
       {
         originStationId: originStation.stationId,
         arrivalStationId: destinationStation.stationId,
-        transferCount: guide.transferCount,
+        transferCount: onStation ? 0 : guide.transferCount,
         estimatedDurationMinutes: guide.estimatedMinutes,
         isAiGenerated: true,
-        segments: [
-          {
-            fromStationId: originStation.stationId,
-            toStationId: destinationStation.stationId,
-            line: guide.lines.join("・"),
-            direction: destinationStation.stationName,
-            platformId: guide.arrivalPlatformNumber ?? "",
-            estimatedMinutes: guide.estimatedMinutes,
-          },
-        ],
+        segments: onStation
+          ? []
+          : [
+              {
+                fromStationId: originStation.stationId,
+                toStationId: destinationStation.stationId,
+                line: guide.lines.join("・"),
+                direction: destinationStation.stationName,
+                platformId: guide.arrivalPlatformNumber ?? "",
+                estimatedMinutes: guide.estimatedMinutes,
+              },
+            ],
       },
     ];
   }
