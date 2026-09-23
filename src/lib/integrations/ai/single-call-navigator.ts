@@ -219,7 +219,9 @@ export function buildNavigatorSearchPrompt(
     : `${destinationStation.stationName}駅(${locationHint(destinationStation)})`;
   const onStationArrival = isSameStationRailRoute(
     originStation.stationId,
-    destinationStation.stationId
+    destinationStation.stationId,
+    originStation,
+    destinationStation
   );
   const onStationSection = onStationArrival
     ? `【同一駅（鉄道乗車不要）】
@@ -478,7 +480,9 @@ async function attemptGenerateSingleCallNavigatorGuide(
 ): Promise<SingleCallNavigatorGuide | null> {
   const onStationArrival = isSameStationRailRoute(
     originStation.stationId,
-    destinationStation.stationId
+    destinationStation.stationId,
+    originStation,
+    destinationStation
   );
   const searchPrompt = buildNavigatorSearchPrompt(
     originStation,

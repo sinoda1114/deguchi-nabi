@@ -63,7 +63,12 @@ export class AiRouteAdapter implements RouteProviderPort {
     ).first;
     if (!guide) return [];
 
-    const onStation = isSameStationRailRoute(originStation.stationId, destinationStation.stationId);
+    const onStation = isSameStationRailRoute(
+      originStation.stationId,
+      destinationStation.stationId,
+      originStation,
+      destinationStation
+    );
 
     return [
       {

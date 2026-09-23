@@ -173,6 +173,46 @@ describe("AiRouteAdapter.findRailRoutes", () => {
     expect(result[0].estimatedDurationMinutes).toBe(5);
   });
 
+  test("HeartRails ID が異なるが同一構内（なんば/難波）なら train segment を省略する", async () => {
+    const nambaHira: Station = {
+      stationId: "hr_%E3%81%AA%E3%82%93%E3%81%B0_135.5003_34.6663",
+      stationName: "なんば駅",
+      operator: "",
+      lines: [],
+      prefecture: "大阪府",
+      latitude: 34.6663,
+      longitude: 135.5003,
+    };
+    const nambaKanji: Station = {
+      stationId: "hr_%E9%9B%A2%E6%B3%A2_135.5019_34.6636",
+      stationName: "難波駅",
+      operator: "",
+      lines: [],
+      prefecture: "大阪府",
+      latitude: 34.6636,
+      longitude: 135.5019,
+    };
+    const stationProvider = fakeStationProvider({
+      [nambaHira.stationId]: nambaHira,
+      [nambaKanji.stationId]: nambaKanji,
+    });
+    const adapter = new AiRouteAdapter("test-key", stationProvider);
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({ ...GENERATED_GUIDE, transferCount: 0, estimatedMinutes: 4 }),
+      final: Promise.resolve({ ...GENERATED_GUIDE, transferCount: 0, estimatedMinutes: 4 }),
+    });
+
+    const result = await adapter.findRailRoutes(
+      nambaHira.stationId,
+      nambaKanji.stationId,
+      "仙太郎 髙島屋大阪店"
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].segments).toEqual([]);
+    expect(result[0].transferCount).toBe(0);
+  });
+
   test("生成が失敗(null)した場合は空配列を返す", async () => {
     const stationProvider = fakeStationProvider({
       [ORIGIN_STATION.stationId]: ORIGIN_STATION,
