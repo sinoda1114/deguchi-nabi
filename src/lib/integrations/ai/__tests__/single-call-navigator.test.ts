@@ -15,6 +15,7 @@ import {
 } from "../single-call-navigator";
 import type { Station } from "@/lib/domain/station";
 import { UECHABE_DOGENZAKA } from "@/lib/eval/exit-quality-gate";
+import { ON_STATION_RAIL_LINE_LABEL } from "@/lib/integrations/route-provider/same-station-route";
 
 const searchAndGenerateStructuredContentWithSearchText = vi.fn();
 vi.mock("@/lib/integrations/ai/GeminiClient", () => ({
@@ -90,6 +91,22 @@ describe("buildNavigatorSearchPrompt", () => {
     expect(prompt).not.toContain("付近の「");
   });
 
+  test("出発駅と到着駅が同一IDのとき同一駅（乗車不要）の指示を含める", () => {
+    const sakae: Station = {
+      stationId: "hr_sakae",
+      stationName: "栄駅",
+      operator: "",
+      lines: ["名古屋市営地下鉄東山線"],
+      prefecture: "愛知県",
+      latitude: 35.17,
+      longitude: 136.908,
+    };
+    const prompt = buildNavigatorSearchPrompt(sakae, sakae, "焼肉ワガママ気まま");
+    expect(prompt).toContain("同一駅（鉄道乗車不要）");
+    expect(prompt).toContain(ON_STATION_RAIL_LINE_LABEL);
+    expect(prompt).toContain("焼肉ワガママ気まま");
+  });
+
   test("実在確認と適合性検証の分離・逆算手順・複数改札比較・確証条件を含める(改善プロンプトの骨子)", () => {
     const prompt = buildNavigatorSearchPrompt(NISHIYA, SHIBUYA, "ウエチャベ");
     expect(prompt).toContain("実在確認と適合性検証は別物");
@@ -141,6 +158,76 @@ describe("generateSingleCallNavigatorGuide", () => {
     mockCreateJevConfig.mockReturnValue(null);
     mockEvaluateRetryGate.mockResolvedValue({ shouldRetry: false });
     mockSelectBestFacilityPair.mockReset();
+  });
+
+  test("同一駅では transferCount 0 と同一駅ラインで guide を組み立てる", async () => {
+    const sakae: Station = {
+      stationId: "hr_sakae",
+      stationName: "栄駅",
+      operator: "",
+      lines: ["名古屋市営地下鉄東山線"],
+      prefecture: "愛知県",
+      latitude: 35.17,
+      longitude: 136.908,
+    };
+    const searchText = "降りる改札は矢場改札、利用する出口はラシック出口です。";
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          lines: [ON_STATION_RAIL_LINE_LABEL],
+          transferCount: 0,
+          estimatedMinutes: 4,
+          facilityCandidates: [
+            { gateName: "矢場改札", exitName: "ラシック出口", confidence: "medium" },
+          ],
+        },
+        searchText
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide(
+      "key",
+      sakae,
+      sakae,
+      "焼肉ワガママ気まま"
+    );
+
+    expect(result?.lines).toEqual([ON_STATION_RAIL_LINE_LABEL]);
+    expect(result?.transferCount).toBe(0);
+    if (result?.facility.state === "confirmed") {
+      expect(result.facility.pair.gate?.name).toBe("矢場改札");
+      expect(result.facility.pair.exit?.name).toBe("ラシック出口");
+    }
+  });
+
+  test("同一駅でモデルが transferCount 1 を返しても 0 に正規化する", async () => {
+    const sakae: Station = {
+      stationId: "hr_sakae",
+      stationName: "栄駅",
+      operator: "",
+      lines: ["名古屋市営地下鉄東山線"],
+      prefecture: "愛知県",
+      latitude: 35.17,
+      longitude: 136.908,
+    };
+    const searchText = "降りる改札は矢場改札、利用する出口はラシック出口です。";
+    searchAndGenerateStructuredContentWithSearchText.mockResolvedValue(
+      mockResult(
+        {
+          lines: ["名古屋市営地下鉄"],
+          transferCount: 1,
+          estimatedMinutes: 3,
+          facilityCandidates: [
+            { gateName: "矢場改札", exitName: "ラシック出口", confidence: "medium" },
+          ],
+        },
+        searchText
+      )
+    );
+
+    const result = await generateSingleCallNavigatorGuide("key", sakae, sakae, "店");
+    expect(result?.transferCount).toBe(0);
+    expect(result?.lines).toEqual([ON_STATION_RAIL_LINE_LABEL]);
   });
 
   test("正常な抽出結果からguideを組み立てる(改札・出口は1組のみ→confirmed)", async () => {

@@ -132,6 +132,47 @@ describe("AiRouteAdapter.findRailRoutes", () => {
     expect(generateSingleCallNavigatorRun).not.toHaveBeenCalled();
   });
 
+  test("出発駅と到着駅が同一の場合は train segment を返さず guide は共有 run から組み立てる", async () => {
+    const sakae: Station = {
+      stationId: "hr_sakae",
+      stationName: "栄駅",
+      operator: "",
+      lines: ["名古屋市営地下鉄東山線"],
+      prefecture: "愛知県",
+      latitude: 35.17,
+      longitude: 136.908,
+    };
+    const stationProvider = fakeStationProvider({
+      [sakae.stationId]: sakae,
+    });
+    const adapter = new AiRouteAdapter("test-key", stationProvider);
+    generateSingleCallNavigatorRun.mockReturnValue({
+      first: Promise.resolve({
+        ...GENERATED_GUIDE,
+        lines: ["同一駅（乗車不要）"],
+        transferCount: 0,
+        estimatedMinutes: 5,
+      }),
+      final: Promise.resolve({
+        ...GENERATED_GUIDE,
+        lines: ["同一駅（乗車不要）"],
+        transferCount: 0,
+        estimatedMinutes: 5,
+      }),
+    });
+
+    const result = await adapter.findRailRoutes(
+      sakae.stationId,
+      sakae.stationId,
+      "焼肉ワガママ気まま"
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].segments).toEqual([]);
+    expect(result[0].transferCount).toBe(0);
+    expect(result[0].estimatedDurationMinutes).toBe(5);
+  });
+
   test("生成が失敗(null)した場合は空配列を返す", async () => {
     const stationProvider = fakeStationProvider({
       [ORIGIN_STATION.stationId]: ORIGIN_STATION,

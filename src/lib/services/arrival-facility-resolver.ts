@@ -8,6 +8,7 @@ import {
   mergeOsmExitsIntoCatalog,
 } from "@/lib/integrations/osm/osm-subway-entrances";
 import { generateSplitFacilityPair } from "@/lib/integrations/ai/split-facility-generation";
+import { enrichPartialFacilityPair } from "@/lib/services/arrival-facility-enrichment";
 
 export interface ArrivalFacilityResolveInput {
   stationId: string;
@@ -28,18 +29,18 @@ function unavailable(reason: string): FacilityRecommendation {
   return { state: "unavailable", reason };
 }
 
-function lastResortOnly(
+async function lastResortWithEnrichment(
+  input: ArrivalFacilityResolveInput,
   last: FacilityRecommendation | null
-): ArrivalFacilityResolveResult {
-  return {
-    recommendation: last ?? unavailable("改札・出口の情報が確認できませんでした"),
-    usedGeminiFinal: true,
-  };
+): Promise<ArrivalFacilityResolveResult> {
+  const base = last ?? unavailable("改札・出口の情報が確認できませんでした");
+  const recommendation = await enrichPartialFacilityPair(input, base);
+  return { recommendation, usedGeminiFinal: true };
 }
 
 /**
- * 収録がある駅 + 目的地座標: 収録 → OSM → 交差検証できた分割生成 → 単一呼び出し。
- * 目的地座標が無い、または収録の無い駅: 既存の単一呼び出しのみ。
+ * 収録がある駅 + 目的地座標: 収録 → OSM → 交差検証できた分割生成 → 単一呼び出し → 片方のみなら補完。
+ * 収録の無い駅: 単一呼び出しのあと、改札・出口の片方だけなら分割検索で補完する。
  */
 export async function resolveArrivalFacility(
   input: ArrivalFacilityResolveInput
@@ -51,7 +52,7 @@ export async function resolveArrivalFacility(
   const catalogRow = lookupCatalogStation(catalogKey);
 
   if (!catalogRow || !input.destinationCoordinates) {
-    return lastResortOnly(await input.lastResortFacility());
+    return lastResortWithEnrichment(input, await input.lastResortFacility());
   }
 
   const catalogResult = resolveFacilityFromCatalog({
@@ -120,14 +121,27 @@ export async function resolveArrivalFacility(
   if (last && isScoringBothHit(last)) {
     return { recommendation: last, usedGeminiFinal: true };
   }
-  if (splitPartial) {
-    return { recommendation: splitPartial, usedGeminiFinal: false };
-  }
-  if (
+
+  type Seed = { recommendation: FacilityRecommendation; usedGeminiFinal: boolean };
+  let seed: Seed | null = null;
+
+  if (last?.state === "confirmed" && (last.pair.gate || last.pair.exit)) {
+    seed = { recommendation: last, usedGeminiFinal: true };
+  } else if (splitPartial) {
+    seed = { recommendation: splitPartial, usedGeminiFinal: false };
+  } else if (
     catalogResult.recommendation.state === "confirmed" &&
     (catalogResult.recommendation.pair.gate || catalogResult.recommendation.pair.exit)
   ) {
-    return { recommendation: catalogResult.recommendation, usedGeminiFinal: false };
+    seed = { recommendation: catalogResult.recommendation, usedGeminiFinal: false };
+  } else if (last) {
+    seed = { recommendation: last, usedGeminiFinal: true };
   }
-  return lastResortOnly(last);
+
+  if (!seed) {
+    return lastResortWithEnrichment(input, last);
+  }
+
+  const enriched = await enrichPartialFacilityPair(input, seed.recommendation);
+  return { recommendation: enriched, usedGeminiFinal: seed.usedGeminiFinal };
 }
