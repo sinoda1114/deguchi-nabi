@@ -11,8 +11,13 @@ import {
   fetchOsmSubwayEntrances,
   mergeOsmExitsIntoCatalog,
 } from "@/lib/integrations/osm/osm-subway-entrances";
-import { generateSplitFacilityPair } from "@/lib/integrations/ai/split-facility-generation";
+import { generateSplitFacilityPair, generateExitOnly } from "@/lib/integrations/ai/split-facility-generation";
 import { enrichPartialFacilityPair } from "@/lib/services/arrival-facility-enrichment";
+
+function pairedGateNameAccepts(gateName: string, pairedGateName: string | null): boolean {
+  if (!pairedGateName) return true;
+  return pairedGateName === gateName;
+}
 
 export interface ArrivalFacilityResolveInput {
   stationId: string;
@@ -173,6 +178,63 @@ export async function resolveArrivalFacility(
   const last = await input.lastResortFacility();
   if (last && isScoringBothHit(last)) {
     return { recommendation: last, usedGeminiFinal: true, knownSeparateExitCount };
+  }
+
+  if (
+    last?.state === "confirmed" &&
+    last.pair.gate &&
+    !last.pair.exit &&
+    input.geminiApiKey.trim().length > 0
+  ) {
+    const splitRetry = await generateSplitFacilityPair({
+      apiKey: input.geminiApiKey,
+      stationName: input.stationName,
+      stationCoordinates: input.stationCoordinates,
+      destinationHint: input.destinationHint,
+    });
+    if (splitRetry.paired && splitRetry.gate && splitRetry.exit) {
+      return successSplit(splitRetry.gate, splitRetry.exit, knownSeparateExitCount);
+    }
+    if (splitRetry.exit) {
+      splitPartial = {
+        state: "confirmed",
+        pair: {
+          gate: last.pair.gate,
+          exit: splitRetry.exit,
+          reason: "単一呼び出し改札確定後に分割出口検索で補完",
+        },
+      };
+      if (isScoringBothHit(splitPartial)) {
+        return { recommendation: splitPartial, usedGeminiFinal: true, knownSeparateExitCount };
+      }
+    }
+    const exitOnly = await generateExitOnly({
+      apiKey: input.geminiApiKey,
+      stationName: input.stationName,
+      stationCoordinates: input.stationCoordinates,
+      destinationHint: input.destinationHint,
+    });
+    if (
+      exitOnly.exit &&
+      pairedGateNameAccepts(last.pair.gate.name, exitOnly.pairedGateName)
+    ) {
+      const paired: FacilityRecommendation = {
+        state: "confirmed",
+        pair: {
+          gate: last.pair.gate,
+          exit: exitOnly.exit,
+          reason: "単一呼び出し改札確定後に出口単体検索で補完",
+        },
+      };
+      return finalizeRecommendation(
+        input,
+        paired,
+        true,
+        facilities,
+        center,
+        knownSeparateExitCount
+      );
+    }
   }
 
   const catalogPartial =
