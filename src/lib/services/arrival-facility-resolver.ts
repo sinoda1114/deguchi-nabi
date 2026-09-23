@@ -8,6 +8,7 @@ import {
   mergeOsmExitsIntoCatalog,
 } from "@/lib/integrations/osm/osm-subway-entrances";
 import { generateSplitFacilityPair } from "@/lib/integrations/ai/split-facility-generation";
+import { enrichPartialFacilityPair } from "@/lib/services/arrival-facility-enrichment";
 
 export interface ArrivalFacilityResolveInput {
   stationId: string;
@@ -28,13 +29,13 @@ function unavailable(reason: string): FacilityRecommendation {
   return { state: "unavailable", reason };
 }
 
-function lastResortOnly(
+async function lastResortWithEnrichment(
+  input: ArrivalFacilityResolveInput,
   last: FacilityRecommendation | null
-): ArrivalFacilityResolveResult {
-  return {
-    recommendation: last ?? unavailable("改札・出口の情報が確認できませんでした"),
-    usedGeminiFinal: true,
-  };
+): Promise<ArrivalFacilityResolveResult> {
+  const base = last ?? unavailable("改札・出口の情報が確認できませんでした");
+  const recommendation = await enrichPartialFacilityPair(input, base);
+  return { recommendation, usedGeminiFinal: true };
 }
 
 /**
@@ -51,7 +52,7 @@ export async function resolveArrivalFacility(
   const catalogRow = lookupCatalogStation(catalogKey);
 
   if (!catalogRow || !input.destinationCoordinates) {
-    return lastResortOnly(await input.lastResortFacility());
+    return lastResortWithEnrichment(input, await input.lastResortFacility());
   }
 
   const catalogResult = resolveFacilityFromCatalog({
@@ -120,14 +121,29 @@ export async function resolveArrivalFacility(
   if (last && isScoringBothHit(last)) {
     return { recommendation: last, usedGeminiFinal: true };
   }
-  if (splitPartial) {
-    return { recommendation: splitPartial, usedGeminiFinal: false };
-  }
-  if (
+
+  let candidate: FacilityRecommendation = unavailable("改札・出口の情報が確認できませんでした");
+  if (last?.state === "confirmed" && (last.pair.gate || last.pair.exit)) {
+    candidate = last;
+  } else if (splitPartial) {
+    candidate = splitPartial;
+  } else if (
     catalogResult.recommendation.state === "confirmed" &&
     (catalogResult.recommendation.pair.gate || catalogResult.recommendation.pair.exit)
   ) {
-    return { recommendation: catalogResult.recommendation, usedGeminiFinal: false };
+    candidate = catalogResult.recommendation;
+  } else if (last) {
+    candidate = last;
   }
-  return lastResortOnly(last);
+
+  const enriched = await enrichPartialFacilityPair(input, candidate);
+  if (isScoringBothHit(enriched)) {
+    const fromSplitOnly =
+      splitPartial !== null &&
+      candidate === splitPartial &&
+      !(last?.state === "confirmed" && (last.pair.gate || last.pair.exit));
+    return { recommendation: enriched, usedGeminiFinal: !fromSplitOnly };
+  }
+
+  return { recommendation: enriched, usedGeminiFinal: true };
 }

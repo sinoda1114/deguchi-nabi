@@ -16,9 +16,14 @@ vi.mock("@/lib/integrations/osm/osm-subway-entrances", async () => {
 
 vi.mock("@/lib/integrations/ai/split-facility-generation", () => ({
   generateSplitFacilityPair: vi.fn(async () => ({ gate: null, exit: null, paired: false })),
+  generateExitOnly: vi.fn(async () => ({ exit: null, pairedGateName: null })),
+  generateGateOnly: vi.fn(async () => ({ gate: null, pairedExitName: null })),
 }));
 
-import { generateSplitFacilityPair } from "@/lib/integrations/ai/split-facility-generation";
+import {
+  generateExitOnly,
+  generateSplitFacilityPair,
+} from "@/lib/integrations/ai/split-facility-generation";
 import { fetchOsmSubwayEntrances } from "@/lib/integrations/osm/osm-subway-entrances";
 
 describe("resolveArrivalFacility", () => {
@@ -69,6 +74,45 @@ describe("resolveArrivalFacility", () => {
     expect(generateSplitFacilityPair).not.toHaveBeenCalled();
     expect(isScoringBothHit(result.recommendation)).toBe(true);
     expect(result.usedGeminiFinal).toBe(true);
+  });
+
+  test("収録の無い駅で last resort が改札のみのとき出口を補完する", async () => {
+    const lastResort = vi.fn(async () => ({
+      state: "confirmed" as const,
+      pair: {
+        gate: {
+          name: "西改札口",
+          confidence: lowConfidence("ai"),
+          provenance: "ai_inferred" as const,
+        },
+        exit: null,
+        reason: null,
+      },
+    }));
+    vi.mocked(generateExitOnly).mockResolvedValue({
+      exit: {
+        name: "8番出入口",
+        confidence: lowConfidence("ai"),
+        provenance: "ai_inferred",
+      },
+      pairedGateName: "西改札口",
+    });
+
+    const result = await resolveArrivalFacility({
+      stationId: "hr_栄_136.9080_35.1700",
+      stationName: "栄駅",
+      stationCoordinates: { lat: 35.17, lng: 136.908 },
+      destinationHint: "焼肉ワガママ気まま",
+      destinationCoordinates: { lat: 35.169, lng: 136.907 },
+      geminiApiKey: "test-key",
+      lastResortFacility: lastResort,
+    });
+
+    expect(lastResort).toHaveBeenCalledOnce();
+    expect(isScoringBothHit(result.recommendation)).toBe(true);
+    if (result.recommendation.state === "confirmed") {
+      expect(result.recommendation.pair.exit?.name).toBe("8番出入口");
+    }
   });
 
   test("渋谷でも目的地座標が無いときは収録を使わず last resort のみ", async () => {
