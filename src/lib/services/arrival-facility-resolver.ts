@@ -238,9 +238,10 @@ function isConfirmed(rec: FacilityRecommendation | null): rec is FacilityRecomme
 
 function pickNamedFrom(
   candidates: FacilityRecommendation[],
-  pick: (rec: FacilityRecommendation) => NamedFacility | null
+  pick: (rec: Extract<FacilityRecommendation, { state: "confirmed" }>) => NamedFacility | null
 ): NamedFacility | null {
   for (const rec of candidates) {
+    if (rec.state !== "confirmed") continue;
     const value = pick(rec);
     if (value) return value;
   }
