@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { resolveArrivalFacility } from "@/lib/services/arrival-facility-resolver";
+import { resolveArrivalFacility, mergeFacilityPartials } from "@/lib/services/arrival-facility-resolver";
 import { UECHABE_DOGENZAKA } from "@/lib/eval/exit-quality-gate";
 import { isScoringBothHit } from "@/lib/eval/both-hit";
 import { lowConfidence } from "@/lib/domain/confidence";
@@ -25,6 +25,36 @@ import {
   generateSplitFacilityPair,
 } from "@/lib/integrations/ai/split-facility-generation";
 import { fetchOsmSubwayEntrances } from "@/lib/integrations/osm/osm-subway-entrances";
+
+describe("mergeFacilityPartials", () => {
+  test("navigator の改札と分割出口を合成する", () => {
+    const merged = mergeFacilityPartials({
+      last: {
+        state: "confirmed",
+        pair: {
+          gate: { name: "中央改札", confidence: lowConfidence("ai"), provenance: "ai_inferred" },
+          exit: null,
+          reason: null,
+        },
+      },
+      splitPartial: {
+        state: "confirmed",
+        pair: {
+          gate: null,
+          exit: { name: "電気街口", confidence: lowConfidence("ai"), provenance: "ai_inferred" },
+          reason: null,
+        },
+      },
+      catalogPartial: null,
+      mergedResult: null,
+    });
+    expect(isScoringBothHit(merged!)).toBe(true);
+    if (merged?.state === "confirmed") {
+      expect(merged.pair.gate?.name).toBe("中央改札");
+      expect(merged.pair.exit?.name).toBe("電気街口");
+    }
+  });
+});
 
 describe("resolveArrivalFacility", () => {
   beforeEach(() => {

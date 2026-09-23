@@ -1,4 +1,4 @@
-import type { FacilityRecommendation } from "@/lib/domain/facility-recommendation";
+import type { FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
 import type { Coordinates, StationFacility } from "@/lib/domain/station";
 import { isScoringBothHit } from "@/lib/eval/both-hit";
 import { lookupCatalogStation, catalogStationNameFrom } from "@/lib/data/station-facility-catalog";
@@ -183,15 +183,18 @@ export async function resolveArrivalFacility(
 
   let usedGeminiFinal = false;
   let seed: FacilityRecommendation;
-  if (isPartialConfirmed(last)) {
-    seed = last!;
-    usedGeminiFinal = true;
-  } else if (isPartialConfirmed(splitPartial)) {
-    seed = splitPartial!;
-  } else if (isPartialConfirmed(catalogPartial)) {
-    seed = catalogPartial!;
-  } else if (isPartialConfirmed(mergedResult)) {
-    seed = mergedResult!;
+  const mergedPartial = mergeFacilityPartials({
+    last,
+    splitPartial,
+    catalogPartial,
+    mergedResult,
+  });
+  if (mergedPartial && isScoringBothHit(mergedPartial)) {
+    seed = mergedPartial;
+    usedGeminiFinal = Boolean(last && mergedPartial.pair.gate === last.pair.gate);
+  } else if (mergedPartial) {
+    seed = mergedPartial;
+    usedGeminiFinal = Boolean(last && mergedPartial.pair.gate === last.pair.gate);
   } else if (last) {
     seed = last;
     usedGeminiFinal = true;
@@ -229,10 +232,44 @@ function successSplit(
   };
 }
 
-function isPartialConfirmed(rec: FacilityRecommendation | null): rec is FacilityRecommendation {
-  return (
-    rec?.state === "confirmed" &&
-    Boolean(rec.pair.gate || rec.pair.exit) &&
-    !isScoringBothHit(rec)
+function isConfirmed(rec: FacilityRecommendation | null): rec is FacilityRecommendation {
+  return rec?.state === "confirmed";
+}
+
+function pickNamedFrom(
+  candidates: FacilityRecommendation[],
+  pick: (rec: FacilityRecommendation) => NamedFacility | null
+): NamedFacility | null {
+  for (const rec of candidates) {
+    const value = pick(rec);
+    if (value) return value;
+  }
+  return null;
+}
+
+/** 単一呼び出し・分割・収録・OSM の片方だけ確定を、改札/出口ごとに優先順位で合成する。 */
+export function mergeFacilityPartials(input: {
+  last: FacilityRecommendation | null;
+  splitPartial: FacilityRecommendation | null;
+  catalogPartial: FacilityRecommendation | null;
+  mergedResult: FacilityRecommendation | null;
+}): FacilityRecommendation | null {
+  const { last, splitPartial, catalogPartial, mergedResult } = input;
+  const gate = pickNamedFrom(
+    [last, splitPartial, catalogPartial, mergedResult].filter(isConfirmed),
+    (rec) => rec.pair.gate
   );
+  const exit = pickNamedFrom(
+    [mergedResult, splitPartial, last, catalogPartial].filter(isConfirmed),
+    (rec) => rec.pair.exit
+  );
+  if (!gate && !exit) return null;
+  return {
+    state: "confirmed",
+    pair: {
+      gate,
+      exit,
+      reason: "複数ソースの片方確定を合成",
+    },
+  };
 }
