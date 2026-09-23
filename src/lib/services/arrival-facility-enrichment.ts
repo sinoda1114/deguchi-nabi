@@ -1,13 +1,21 @@
 import type { FacilityRecommendation, NamedFacility } from "@/lib/domain/facility-recommendation";
+import type { Coordinates } from "@/lib/domain/station";
 import { isScoringBothHit } from "@/lib/eval/both-hit";
 import {
   generateExitOnly,
   generateGateOnly,
   generateSplitFacilityPair,
 } from "@/lib/integrations/ai/split-facility-generation";
-import type { ArrivalFacilityResolveInput } from "@/lib/services/arrival-facility-resolver";
 
-function splitGenInput(input: ArrivalFacilityResolveInput) {
+export interface FacilityEnrichmentInput {
+  geminiApiKey: string;
+  stationName: string;
+  stationCoordinates: Coordinates | null;
+  destinationHint: string | null;
+  destinationCoordinates: Coordinates | null;
+}
+
+function splitGenInput(input: FacilityEnrichmentInput) {
   return {
     apiKey: input.geminiApiKey,
     stationName: input.stationName,
@@ -25,10 +33,10 @@ function confirmedPair(gate: NamedFacility, exit: NamedFacility, reason: string)
 
 /**
  * 単一呼び出し等で改札・出口の片方だけ確定したとき、分割検索で接続が交差検証できる
- * もう片方を補う。両方揃っている、または API キー・目的地座標が無いときはそのまま返す。
+ * もう片方を補う。確定済みの片側を別ペアの AI 結果で置き換えない。
  */
 export async function enrichPartialFacilityPair(
-  input: ArrivalFacilityResolveInput,
+  input: FacilityEnrichmentInput,
   recommendation: FacilityRecommendation
 ): Promise<FacilityRecommendation> {
   if (isScoringBothHit(recommendation)) return recommendation;
@@ -36,16 +44,11 @@ export async function enrichPartialFacilityPair(
     return recommendation;
   }
 
-  const splitInput = splitGenInput(input);
-
   if (recommendation.state !== "confirmed") {
-    const split = await generateSplitFacilityPair(splitInput);
-    if (split.paired && split.gate && split.exit) {
-      return confirmedPair(split.gate, split.exit, "改札・出口を別検索し、接続名が一致した組");
-    }
     return recommendation;
   }
 
+  const splitInput = splitGenInput(input);
   const { gate, exit } = recommendation.pair;
 
   if (gate && !exit) {
@@ -59,12 +62,9 @@ export async function enrichPartialFacilityPair(
     }
     const split = await generateSplitFacilityPair(splitInput);
     if (split.paired && split.gate?.name === gate.name && split.exit) {
-      return confirmedPair(
-        gate,
-        split.exit,
-        "確定改札と接続が一致する出口を分割生成で補完"
-      );
+      return confirmedPair(gate, split.exit, "確定改札と接続が一致する出口を分割生成で補完");
     }
+    return recommendation;
   }
 
   if (exit && !gate) {
@@ -78,17 +78,9 @@ export async function enrichPartialFacilityPair(
     }
     const split = await generateSplitFacilityPair(splitInput);
     if (split.paired && split.exit?.name === exit.name && split.gate) {
-      return confirmedPair(
-        split.gate,
-        exit,
-        "確定出口と接続が一致する改札を分割生成で補完"
-      );
+      return confirmedPair(split.gate, exit, "確定出口と接続が一致する改札を分割生成で補完");
     }
-  }
-
-  const split = await generateSplitFacilityPair(splitInput);
-  if (split.paired && split.gate && split.exit) {
-    return confirmedPair(split.gate, split.exit, "改札・出口を別検索し、接続名が一致した組");
+    return recommendation;
   }
 
   return recommendation;

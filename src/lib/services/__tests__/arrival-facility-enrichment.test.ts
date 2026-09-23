@@ -16,13 +16,11 @@ import {
 } from "@/lib/integrations/ai/split-facility-generation";
 
 const BASE_INPUT = {
-  stationId: "hr_sakae",
   stationName: "栄駅",
   stationCoordinates: { lat: 35.17, lng: 136.908 },
   destinationHint: "焼肉ワガママ気まま",
   destinationCoordinates: { lat: 35.169, lng: 136.907 },
   geminiApiKey: "test-key",
-  lastResortFacility: async () => null,
 };
 
 describe("enrichPartialFacilityPair", () => {
@@ -62,7 +60,7 @@ describe("enrichPartialFacilityPair", () => {
     }
   });
 
-  test("接続改札が一致しない出口は採用しない", async () => {
+  test("接続改札が一致しないとき確定改札を別ペアで置き換えない", async () => {
     vi.mocked(generateExitOnly).mockResolvedValue({
       exit: {
         name: "8番出入口",
@@ -72,9 +70,17 @@ describe("enrichPartialFacilityPair", () => {
       pairedGateName: "矢場改札",
     });
     vi.mocked(generateSplitFacilityPair).mockResolvedValue({
-      gate: null,
-      exit: null,
-      paired: false,
+      gate: {
+        name: "矢場改札",
+        confidence: lowConfidence("ai"),
+        provenance: "ai_inferred",
+      },
+      exit: {
+        name: "8番出入口",
+        confidence: lowConfidence("ai"),
+        provenance: "ai_inferred",
+      },
+      paired: true,
     });
 
     const partial = {
