@@ -8,8 +8,8 @@ export const ON_STATION_RAIL_LINE_LABEL = "同一駅（乗車不要）";
 
 /**
  * HeartRails は同一の駅構内でも出入口・路線ごとに別 stationId（駅名表記や
- * 座標クラスタが異なる）を返す。出発駅と目的地最寄り駅が物理的に同じ構内か
- * を判定する。
+ * 座標クラスタが異なる）を返す。正規化駅名が一致し、かつ座標が同一構内の
+ * 距離内にある場合のみ同一とみなす（同名別都市駅や隣接駅の誤判定を防ぐ）。
  */
 export const SAME_STATION_MAX_DISTANCE_METERS = 400;
 
@@ -43,14 +43,10 @@ function hasUsableCoordinates(station: Station): boolean {
 function stationsAreSamePhysicalPlace(a: Station, b: Station): boolean {
   const keyA = canonicalPlaceKey(a);
   const keyB = canonicalPlaceKey(b);
-  if (keyA.length > 0 && keyA === keyB) return true;
-
-  if (hasUsableCoordinates(a) && hasUsableCoordinates(b)) {
-    const distance = haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude);
-    if (distance <= SAME_STATION_MAX_DISTANCE_METERS) return true;
-  }
-
-  return false;
+  if (keyA.length === 0 || keyB.length === 0 || keyA !== keyB) return false;
+  if (!hasUsableCoordinates(a) || !hasUsableCoordinates(b)) return false;
+  const distance = haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude);
+  return distance <= SAME_STATION_MAX_DISTANCE_METERS;
 }
 
 export function isSameStationRailRoute(

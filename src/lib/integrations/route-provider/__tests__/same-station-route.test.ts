@@ -76,7 +76,56 @@ describe("isSameStationRailRoute", () => {
     expect(ON_STATION_RAIL_LINE_LABEL.length).toBeGreaterThan(0);
   });
 
-  test("SAME_STATION_MAX_DISTANCE_METERS は正の数", () => {
-    expect(SAME_STATION_MAX_DISTANCE_METERS).toBeGreaterThan(0);
+  test("正規化名が違う隣接駅は近くても false", () => {
+    const ginza: Station = {
+      stationId: "hr_ginza",
+      stationName: "銀座駅",
+      operator: "",
+      lines: [],
+      prefecture: "東京都",
+      latitude: 35.6717,
+      longitude: 139.7649,
+    };
+    const yurakucho: Station = {
+      stationId: "hr_yurakucho",
+      stationName: "有楽町駅",
+      operator: "",
+      lines: [],
+      prefecture: "東京都",
+      latitude: 35.675,
+      longitude: 139.763,
+    };
+    expect(isSameStationRailRoute(ginza.stationId, yurakucho.stationId, ginza, yurakucho)).toBe(
+      false
+    );
+  });
+
+  test("正規化名は同じが遠隔の同名駅は false", () => {
+    const nihonbashiTokyo: Station = {
+      stationId: "hr_nihonbashi_t",
+      stationName: "日本橋駅",
+      operator: "",
+      lines: [],
+      prefecture: "東京都",
+      latitude: 35.686,
+      longitude: 139.774,
+    };
+    const nihonbashiOsaka: Station = {
+      stationId: "hr_nihonbashi_o",
+      stationName: "日本橋駅",
+      operator: "",
+      lines: [],
+      prefecture: "大阪府",
+      latitude: 34.687,
+      longitude: 135.506,
+    };
+    expect(
+      isSameStationRailRoute(
+        nihonbashiTokyo.stationId,
+        nihonbashiOsaka.stationId,
+        nihonbashiTokyo,
+        nihonbashiOsaka
+      )
+    ).toBe(false);
   });
 });

@@ -62,6 +62,11 @@ const MAX_CAR_NUMBER = 16;
 // nullの場合のみ丸ごと1回だけ再試行する(合計最大2試行)。
 const MAX_ATTEMPTS = 2;
 
+function stationLabelForPrompt(station: Station): string {
+  const normalized = station.stationName.normalize("NFKC").trim();
+  return normalized.endsWith("駅") ? normalized : `${normalized}駅`;
+}
+
 /** 収録プロンプトは逆算条項が無いので 100s フルは使わない。 */
 export const CATALOG_FIRST_SEARCH_TIMEOUT_MS = 70_000;
 /** Preview 120s 待ちに収める。抽出 15s を残して再試行の検索時間を決める。 */
@@ -215,8 +220,8 @@ export function buildNavigatorSearchPrompt(
     ? `緯度${destinationPlaceCoordinates.lat.toFixed(4)}・経度${destinationPlaceCoordinates.lng.toFixed(4)}付近`
     : null;
   const destinationTarget = destinationHint
-    ? `${destinationStation.stationName}駅(${locationHint(destinationStation)})付近の「${destinationHint}」${destinationPlaceLocationHint ? `(${destinationPlaceLocationHint})` : ""}`
-    : `${destinationStation.stationName}駅(${locationHint(destinationStation)})`;
+    ? `${stationLabelForPrompt(destinationStation)}(${locationHint(destinationStation)})付近の「${destinationHint}」${destinationPlaceLocationHint ? `(${destinationPlaceLocationHint})` : ""}`
+    : `${stationLabelForPrompt(destinationStation)}(${locationHint(destinationStation)})`;
   const onStationArrival = isSameStationRailRoute(
     originStation.stationId,
     destinationStation.stationId,
@@ -225,7 +230,7 @@ export function buildNavigatorSearchPrompt(
   );
   const onStationSection = onStationArrival
     ? `【同一駅（鉄道乗車不要）】
-出発駅と目的地の最寄り駅は同一の「${originStation.stationName}駅」(${locationHint(originStation)})です。別駅への鉄道路線・乗換・乗車位置の検索は不要です。改札・出口を目的地「${destinationHint ?? destinationStation.stationName}」へ向かう導線として逆算して特定してください。
+出発駅と目的地の最寄り駅は同一の「${stationLabelForPrompt(originStation)}」(${locationHint(originStation)})です。別駅への鉄道路線・乗換・乗車位置の検索は不要です。改札・出口を目的地「${destinationHint ?? stationLabelForPrompt(destinationStation)}」へ向かう導線として逆算して特定してください。
 抽出JSONでは lines を ["${ON_STATION_RAIL_LINE_LABEL}"]、transferCount を 0、estimatedMinutes を改札から目的地入口までの概算徒歩時間(整数・1分以上)にしてください。boardingCarNumber 等の号車フィールドは含めないでください。
 
 `
@@ -265,7 +270,7 @@ export function buildNavigatorSearchPrompt(
 号車・ドア位置は上記に加えて、到着ホーム・進行方向・編成両数まで確認できた場合のみ断定してください。
 いずれか1つでも確認できない場合は、該当する項目(改札名/出口番号/号車のいずれか)を個別に断定せず、確認できた項目のみを案内し、未確認の項目は「降車後、ホーム上の改札案内表示に従ってください」のように断定を避けてください。`;
 
-  return `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${originStation.stationName}駅」(${locationHint(originStation)})から、${destinationTarget}へ向かうルートを知りたいと考えています。回答時には必ずインターネット検索を行い、最新かつ正確なルート・乗換え・改札・出口情報を取得し、出力前にファクトチェックを行います。同じ駅名・施設名が複数存在する場合は、上記の位置に最も近いものを対象にしてください。
+  return `あなたは日本の鉄道に詳しい乗換えナビゲーターです。ユーザーは「${stationLabelForPrompt(originStation)}」(${locationHint(originStation)})から、${destinationTarget}へ向かうルートを知りたいと考えています。回答時には必ずインターネット検索を行い、最新かつ正確なルート・乗換え・改札・出口情報を取得し、出力前にファクトチェックを行います。同じ駅名・施設名が複数存在する場合は、上記の位置に最も近いものを対象にしてください。
 
 ${onStationSection}${facilityOrCatalogSection}
 

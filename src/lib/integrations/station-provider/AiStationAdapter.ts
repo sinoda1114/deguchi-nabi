@@ -421,18 +421,6 @@ export class AiStationAdapter implements StationProviderPort {
     const guide = await startSharedRun().final;
     if (!guide && resolved.recommendation.state === "unavailable") return null;
 
-    const guideFacility = guide
-      ? resolveFacilityRecommendationConfidence(guide.facility)
-      : null;
-    const facility =
-      isScoringBothHit(resolved.recommendation)
-        ? resolved.recommendation
-        : guideFacility && isScoringBothHit(guideFacility)
-          ? guideFacility
-          : resolved.recommendation.state !== "unavailable"
-            ? resolved.recommendation
-            : guideFacility ?? resolved.recommendation;
-
     return {
       boardingPosition: guide?.boarding
         ? {
@@ -442,7 +430,13 @@ export class AiStationAdapter implements StationProviderPort {
             confidence: groundedAiConfidence(guide.boarding.confidenceLevel),
           }
         : null,
-      facility,
+      facility: isScoringBothHit(resolved.recommendation)
+        ? resolved.recommendation
+        : resolved.recommendation.state !== "unavailable"
+          ? resolved.recommendation
+          : guide
+            ? resolveFacilityRecommendationConfidence(guide.facility)
+            : resolved.recommendation,
       walkingSteps: [],
     };
   }
