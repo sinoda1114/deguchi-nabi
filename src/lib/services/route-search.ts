@@ -22,6 +22,7 @@ import {
   catalogStationNameFrom,
   lookupCatalogStation,
 } from "@/lib/data/station-facility-catalog";
+import { countKnownSeparateExits } from "@/lib/services/deterministic-gate-exit-pair";
 import type {
   RailRouteCandidate,
   RouteProviderPort,
@@ -592,9 +593,11 @@ export async function buildTransferAndExitSegments(
     arrivalLine,
     arrivalOperator,
     stationLines: arrivalStationLines,
-    knownSeparateExitCount: catalogRow
-      ? catalogRow.facilities.filter((facility) => facility.facilityType === "exit").length
-      : null,
+    knownSeparateExitCount:
+      unified?.knownSeparateExitCount ??
+      (catalogRow
+        ? countKnownSeparateExits(catalogRow.facilities, candidate.arrivalStationCoordinates)
+        : null),
   });
   const exitPresentation = exitPresentationFor(gateExitRelation, {
     exitNames,

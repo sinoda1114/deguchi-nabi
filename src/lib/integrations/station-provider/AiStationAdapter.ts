@@ -415,6 +415,7 @@ export class AiStationAdapter implements StationProviderPort {
         facility: resolved.recommendation,
         walkingSteps: [],
         omitIndependentBoarding: true,
+        knownSeparateExitCount: resolved.knownSeparateExitCount,
       };
     }
 
@@ -438,6 +439,7 @@ export class AiStationAdapter implements StationProviderPort {
             ? resolveFacilityRecommendationConfidence(guide.facility)
             : resolved.recommendation,
       walkingSteps: [],
+      knownSeparateExitCount: resolved.knownSeparateExitCount,
     };
   }
 }

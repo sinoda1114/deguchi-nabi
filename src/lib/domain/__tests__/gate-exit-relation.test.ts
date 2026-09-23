@@ -34,6 +34,11 @@ describe("hasSurfaceGateCue", () => {
     expect(hasSurfaceGateCue("中央改札")).toBe(false);
     expect(hasSurfaceGateCue("統合生成改札")).toBe(false);
   });
+
+  test("地上の改札口表記は合図にする", () => {
+    expect(hasSurfaceGateCue("博多改札口")).toBe(true);
+    expect(hasSurfaceGateCue("地下1階 改札口")).toBe(false);
+  });
 });
 
 describe("looksLikeSubwayContext", () => {

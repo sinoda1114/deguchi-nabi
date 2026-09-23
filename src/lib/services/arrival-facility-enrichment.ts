@@ -31,6 +31,12 @@ function confirmedPair(gate: NamedFacility, exit: NamedFacility, reason: string)
   };
 }
 
+/** 接続名が無いときは確定済み改札/出口を維持。明示的に別名のときだけ拒否。 */
+function pairedNameMatches(fixedName: string, pairedName: string | null): boolean {
+  if (!pairedName) return true;
+  return pairedName === fixedName;
+}
+
 /**
  * 単一呼び出し等で改札・出口の片方だけ確定したとき、分割検索で接続が交差検証できる
  * もう片方を補う。確定済みの片側を別ペアの AI 結果で置き換えない。
@@ -53,7 +59,7 @@ export async function enrichPartialFacilityPair(
 
   if (gate && !exit) {
     const exitSearch = await generateExitOnly(splitInput);
-    if (exitSearch.exit && exitSearch.pairedGateName === gate.name) {
+    if (exitSearch.exit && pairedNameMatches(gate.name, exitSearch.pairedGateName)) {
       return confirmedPair(
         gate,
         exitSearch.exit,
@@ -69,7 +75,7 @@ export async function enrichPartialFacilityPair(
 
   if (exit && !gate) {
     const gateSearch = await generateGateOnly(splitInput);
-    if (gateSearch.gate && gateSearch.pairedExitName === exit.name) {
+    if (gateSearch.gate && pairedNameMatches(exit.name, gateSearch.pairedExitName)) {
       return confirmedPair(
         gateSearch.gate,
         exit,

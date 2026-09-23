@@ -53,6 +53,8 @@ const UNDERGROUND = /地下/;
 const BASEMENT_FLOOR = /B[1-9]階/;
 const FLOOR_OR_SURFACE = /[1-9]階|地上/;
 const NAMED_EXIT_GATE = /口改札/;
+/** 地上改札で「〜改札口」と呼ばれる JR 等の表記(地下階表記が無いときのみ)。 */
+const SURFACE_GATE_MOUTH = /改札口$/;
 
 export function looksLikeSubwayContext(
   line: string | null,
@@ -72,7 +74,11 @@ export function looksLikeSubwayContext(
 export function hasSurfaceGateCue(name: string): boolean {
   const normalized = name.normalize("NFKC");
   if (UNDERGROUND.test(normalized) || BASEMENT_FLOOR.test(normalized)) return false;
-  return FLOOR_OR_SURFACE.test(normalized) || NAMED_EXIT_GATE.test(normalized);
+  return (
+    FLOOR_OR_SURFACE.test(normalized) ||
+    NAMED_EXIT_GATE.test(normalized) ||
+    SURFACE_GATE_MOUTH.test(normalized)
+  );
 }
 
 function hasConfirmedSurfaceArrival(
