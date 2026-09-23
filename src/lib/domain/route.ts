@@ -167,6 +167,11 @@ export interface UnifiedArrivalGuide {
    * boardingPosition（共有 .first）か、無いときだけ getBoardingForChosenGate。
    */
   omitIndependentBoarding?: boolean;
+  /**
+   * 収録・OSM で独立した出口が何件あるか。無いとき null。
+   * 改札＝出口の保守的判定で、地図上に別出口があるのに gate-only 成功にしない。
+   */
+  knownSeparateExitCount?: number | null;
 }
 
 export interface RouteGuide {

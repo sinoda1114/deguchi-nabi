@@ -28,7 +28,11 @@ import { fetchOsmSubwayEntrances } from "@/lib/integrations/osm/osm-subway-entra
 
 describe("resolveArrivalFacility", () => {
   beforeEach(() => {
+    vi.mocked(generateSplitFacilityPair).mockClear();
     vi.mocked(generateSplitFacilityPair).mockResolvedValue({ gate: null, exit: null, paired: false });
+    vi.mocked(generateExitOnly).mockClear();
+    vi.mocked(generateExitOnly).mockResolvedValue({ exit: null, pairedGateName: null });
+    vi.mocked(fetchOsmSubwayEntrances).mockClear();
     vi.mocked(fetchOsmSubwayEntrances).mockResolvedValue([]);
   });
 
@@ -52,7 +56,8 @@ describe("resolveArrivalFacility", () => {
     expect(generateSplitFacilityPair).not.toHaveBeenCalled();
   });
 
-  test("収録の無い駅は last resort のみ(分割生成しない)", async () => {
+  test("収録の無い駅も OSM と分割生成を試してから last resort する", async () => {
+    vi.mocked(fetchOsmSubwayEntrances).mockResolvedValue([]);
     const lastResort = vi.fn(async () => ({
       state: "confirmed" as const,
       pair: {
@@ -71,9 +76,44 @@ describe("resolveArrivalFacility", () => {
       lastResortFacility: lastResort,
     });
     expect(lastResort).toHaveBeenCalledOnce();
-    expect(generateSplitFacilityPair).not.toHaveBeenCalled();
+    expect(generateSplitFacilityPair).toHaveBeenCalledOnce();
     expect(isScoringBothHit(result.recommendation)).toBe(true);
     expect(result.usedGeminiFinal).toBe(true);
+  });
+
+  test("収録の無い駅で last resort が改札のみのとき OSM 出口とペアできる", async () => {
+    vi.mocked(fetchOsmSubwayEntrances).mockResolvedValue([
+      { osmId: "osm_east", name: "東口", coordinates: { lat: 35.9065, lng: 139.626 } },
+    ]);
+    const lastResort = vi.fn(async () => ({
+      state: "confirmed" as const,
+      pair: {
+        gate: {
+          name: "中央改札",
+          confidence: lowConfidence("ai"),
+          provenance: "ai_inferred" as const,
+        },
+        exit: null,
+        reason: null,
+      },
+    }));
+    vi.mocked(generateExitOnly).mockResolvedValue({ exit: null, pairedGateName: null });
+
+    const result = await resolveArrivalFacility({
+      stationId: "hr_大宮_139.6241_35.9064",
+      stationName: "大宮駅",
+      stationCoordinates: { lat: 35.9064, lng: 139.6241 },
+      destinationHint: "店",
+      destinationCoordinates: { lat: 35.9065, lng: 139.626 },
+      geminiApiKey: "test-key",
+      lastResortFacility: lastResort,
+    });
+
+    expect(isScoringBothHit(result.recommendation)).toBe(true);
+    expect(result.knownSeparateExitCount).toBe(1);
+    if (result.recommendation.state === "confirmed") {
+      expect(result.recommendation.pair.exit?.name).toBe("東口");
+    }
   });
 
   test("収録の無い駅で last resort が改札のみのとき出口を補完する", async () => {

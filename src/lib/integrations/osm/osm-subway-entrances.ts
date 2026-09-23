@@ -21,7 +21,10 @@ const OSM_CONFIDENCE: Confidence = {
 
 export function buildSubwayEntranceQuery(center: Coordinates): string {
   return `[out:json][timeout:6];
-node(around:${OSM_AROUND_METERS},${center.lat},${center.lng})[railway=subway_entrance];
+(
+  node(around:${OSM_AROUND_METERS},${center.lat},${center.lng})[railway=subway_entrance];
+  node(around:${OSM_AROUND_METERS},${center.lat},${center.lng})[railway=train_station_entrance];
+);
 out body;`;
 }
 
