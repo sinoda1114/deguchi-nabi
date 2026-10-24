@@ -14,7 +14,7 @@
     "@heroui/react": "3.2.2",
     "@heroui/styles": "3.2.2",
     "@langfuse/otel": "5.9.1",
-    "@langfuse/vercel-ai-sdk": "5.9.1",
+    "@langfuse/vercel-ai-sdk": "5.14.0",
     "@libsql/client": "0.17.4",
     "@opentelemetry/sdk-trace-node": "2.9.0",
     "@typesafe-ai/sdk": "0.6.0",
@@ -37,7 +37,7 @@
     "jsdom": "30.1.0",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "4.1.10"
+    "vitest": "5.0.5"
   },
   "overrides": {
     "postcss": "8.5.30",
