@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/google": "4.0.18",
+    "@ai-sdk/google": "4.0.24",
     "@heroui/react": "3.2.2",
     "@heroui/styles": "3.2.2",
     "@langfuse/otel": "5.9.1",
