@@ -32,9 +32,13 @@ describe("fetchImageAsInlineData (実 undici)", () => {
   test("対照: ガード無しの Agent ならローカルサーバに到達できる（テスト環境が有効であることの確認）", async () => {
     hitCount = 0;
     const agent = new Agent();
-    const res = await undiciFetch(`http://127.0.0.1:${port}/a.png`, { dispatcher: agent });
-    await res.arrayBuffer();
-    await agent.close();
+    let res: Awaited<ReturnType<typeof undiciFetch>>;
+    try {
+      res = await undiciFetch(`http://127.0.0.1:${port}/a.png`, { dispatcher: agent });
+      await res.arrayBuffer();
+    } finally {
+      await agent.close();
+    }
     expect(res.status).toBe(200);
     expect(hitCount).toBe(1);
   });
@@ -49,11 +53,14 @@ describe("fetchImageAsInlineData (実 undici)", () => {
   test("ガードで止まった理由が SSRF ガード由来であること（フック破損による別理由の失敗と区別する）", async () => {
     hitCount = 0;
     const agent = new Agent({ connect: { lookup: createSsrfSafeLookup() } });
-    const error = await undiciFetch(`http://localhost:${port}/a.png`, { dispatcher: agent }).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    await agent.close();
+    let error: unknown = null;
+    try {
+      await undiciFetch(`http://localhost:${port}/a.png`, { dispatcher: agent });
+    } catch (e) {
+      error = e;
+    } finally {
+      await agent.close();
+    }
     const causeMessage = (error as { cause?: { message?: string } } | null)?.cause?.message ?? "";
     expect(causeMessage).toContain("SSRF guard");
     expect(hitCount).toBe(0);
