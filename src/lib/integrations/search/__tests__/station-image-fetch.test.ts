@@ -479,3 +479,109 @@ describe("createSsrfSafeLookup", () => {
     expect(address).toEqual([]);
   });
 });
+
+/**
+ * CGNAT・NAT64・6to4 の追加ブロック(PR #145 の own-security 強化提案)。
+ * 名前解決経路(connect.lookup)と IP リテラル URL 経路の両方で同じ判定を
+ * 使っていることを確かめるため、両経路でテストする。
+ */
+describe("SSRF ブロックリスト: CGNAT・NAT64・6to4", () => {
+  beforeEach(() => {
+    dnsLookup.mockReset();
+    undiciFetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function lookupErrorFor(ip: string): Promise<Error | null> {
+    dnsLookup.mockImplementation((_hostname, _opts, cb) => {
+      cb(null, [{ address: ip, family: ip.includes(":") ? 6 : 4 }]);
+    });
+    return new Promise((resolve) => {
+      createSsrfSafeLookup()("target.example.com", { all: true }, (err) => resolve(err));
+    });
+  }
+
+  function urlFor(ip: string): string {
+    return ip.includes(":") ? `http://[${ip}]/a.png` : `http://${ip}/a.png`;
+  }
+
+  const NEWLY_BLOCKED = [
+    "100.64.0.1", // CGNAT 100.64.0.0/10 の下端付近
+    "100.127.255.254", // CGNAT の上端付近
+    "::ffff:100.64.0.1", // IPv4-mapped 経由の CGNAT
+    "64:ff9b::7f00:1", // NAT64 well-known prefix 経由の 127.0.0.1
+    "64:ff9b::a9fe:a9fe", // NAT64 経由の 169.254.169.254
+    "64:ff9b:1::a00:1", // ローカル用 NAT64 64:ff9b:1::/48
+    "2002:7f00:1::1", // 6to4 経由の 127.0.0.1
+    "2002:a00:1::1", // 6to4 経由の 10.0.0.1
+    "2002:c0a8:101::1", // 6to4 経由の 192.168.1.1
+  ];
+
+  const EXISTING_BLOCKED = [
+    "0.0.0.0",
+    "127.0.0.1",
+    "127.255.255.254",
+    "10.0.0.1",
+    "172.16.0.1",
+    "172.31.255.254",
+    "192.168.1.1",
+    "169.254.169.254",
+    "224.0.0.1",
+    "255.255.255.255",
+    "::1",
+    "::",
+    "fc00::1",
+    "fd12:3456:789a::1",
+    "fe80::1",
+    "ff02::1",
+    "::ffff:7f00:1",
+    "::ffff:a9fe:a9fe",
+  ];
+
+  const PUBLIC_ALLOWED = [
+    "100.63.255.255", // CGNAT の直前
+    "100.128.0.0", // CGNAT の直後
+    "8.8.8.8",
+    "2001:4860:4860::8888",
+  ];
+
+  test.each(NEWLY_BLOCKED)("名前解決先が %s ならエラーをcallbackへ渡す", async (ip) => {
+    expect(await lookupErrorFor(ip)).not.toBeNull();
+  });
+
+  test.each(NEWLY_BLOCKED)("ホスト名が IP リテラル %s ならfetchせずnullを返す", async (ip) => {
+    expect(await fetchImageAsInlineData(urlFor(ip))).toBeNull();
+    expect(undiciFetchMock).not.toHaveBeenCalled();
+  });
+
+  test("NAT64 / 6to4 は埋め込み IPv4 が公開アドレスでもプレフィックスごと拒否する(安全側)", async () => {
+    // 64:ff9b::808:808 = NAT64 経由の 8.8.8.8、2002:808:808::1 = 6to4 経由の 8.8.8.8
+    for (const ip of ["64:ff9b::808:808", "2002:808:808::1"]) {
+      expect(await lookupErrorFor(ip)).not.toBeNull();
+    }
+  });
+
+  test.each(EXISTING_BLOCKED)("既存の拒否範囲 %s は引き続きエラーをcallbackへ渡す", async (ip) => {
+    expect(await lookupErrorFor(ip)).not.toBeNull();
+  });
+
+  test.each(PUBLIC_ALLOWED)("公開アドレス %s への名前解決は許可する", async (ip) => {
+    expect(await lookupErrorFor(ip)).toBeNull();
+  });
+
+  test.each(PUBLIC_ALLOWED)("公開アドレスの IP リテラル %s は許可してfetchする", async (ip) => {
+    undiciFetchMock.mockResolvedValue(
+      fakeImageResponse({
+        contentType: "image/png",
+        contentLength: String(PNG_MAGIC.byteLength),
+        bodyBytes: PNG_MAGIC,
+      })
+    );
+
+    expect(await fetchImageAsInlineData(urlFor(ip))).not.toBeNull();
+    expect(undiciFetchMock).toHaveBeenCalledTimes(1);
+  });
+});
