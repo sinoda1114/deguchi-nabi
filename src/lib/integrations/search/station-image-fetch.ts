@@ -102,10 +102,19 @@ function isFetchableUrl(url: string): boolean {
  * バグを突ける)。Node標準の`net.BlockList`はアドレスをバイト単位で解釈し、
  * IPv4-mapped IPv6の正規化も内部で行うため、表記ゆれによるバイパスが
  * 構造的に発生しない。
+ *
+ * NAT64(64:ff9b::/96, 64:ff9b:1::/48)と6to4(2002::/16)はIPv4アドレスを
+ * 埋め込んだIPv6で、経路上の変換装置を通じて埋め込み先のIPv4(127.0.0.1や
+ * 10.0.0.1等)へ届きうる。埋め込みIPv4を取り出して上のIPv4判定にかける
+ * 方式は、IPv4側のリストの抜け(未登録の予約範囲)をそのまま引き継ぎ、
+ * 64:ff9b:1::/48 は埋め込み位置が変換装置の設定次第で一意に決まらない。
+ * 公開画像の取得でこれらの経路が要る場面はまず無い(6to4はRFC 7526で非推奨)
+ * ため、プレフィックスごと拒否する安全側の判定にした(PR #145 own-security指摘)。
  */
 const PRIVATE_BLOCK_LIST = new BlockList();
 PRIVATE_BLOCK_LIST.addSubnet("0.0.0.0", 8, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("10.0.0.0", 8, "ipv4");
+PRIVATE_BLOCK_LIST.addSubnet("100.64.0.0", 10, "ipv4"); // CGNAT(RFC 6598)
 PRIVATE_BLOCK_LIST.addSubnet("127.0.0.0", 8, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("169.254.0.0", 16, "ipv4");
 PRIVATE_BLOCK_LIST.addSubnet("172.16.0.0", 12, "ipv4");
@@ -117,6 +126,9 @@ PRIVATE_BLOCK_LIST.addAddress("::", "ipv6");
 PRIVATE_BLOCK_LIST.addSubnet("fc00::", 7, "ipv6"); // unique-local
 PRIVATE_BLOCK_LIST.addSubnet("fe80::", 10, "ipv6"); // link-local
 PRIVATE_BLOCK_LIST.addSubnet("ff00::", 8, "ipv6"); // multicast
+PRIVATE_BLOCK_LIST.addSubnet("64:ff9b::", 96, "ipv6"); // NAT64 well-known(RFC 6052)
+PRIVATE_BLOCK_LIST.addSubnet("64:ff9b:1::", 48, "ipv6"); // NAT64 ローカル用(RFC 8215)
+PRIVATE_BLOCK_LIST.addSubnet("2002::", 16, "ipv6"); // 6to4(RFC 3056)
 
 function isPrivateOrReservedIp(address: string, family: number): boolean {
   try {
